@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light dark;
+
+  --bg: light-dark(oklch(0.985 0 0), oklch(0.18 0 0));
+  --surface: light-dark(oklch(1 0 0), oklch(0.23 0 0));
+  --fg: light-dark(oklch(0.21 0.01 260), oklch(0.96 0 0));
+  --muted: light-dark(oklch(0.45 0.01 260), oklch(0.72 0 0));
+  --line: light-dark(oklch(0.88 0.01 260), oklch(0.32 0 0));
+  /* A control's outline: at least 3:1 against bg and surface (WCAG 1.4.11). */
+  --control: light-dark(oklch(0.62 0.01 260), oklch(0.55 0 0));
+  --accent: light-dark(oklch(0.46 0.16 260), oklch(0.72 0.14 260));
+  --accent-fg: light-dark(oklch(1 0 0), oklch(0.15 0 0));
+  --danger: light-dark(oklch(0.5 0.19 27), oklch(0.72 0.17 22));
+}
+
+/* Only role colours exist as utilities: bg-red-500 generates nothing. */
+@theme {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --grid-template-columns-label: auto 1fr;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-control: var(--control);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+}
+
+@layer base {
+  /* iOS 26 Safari: Base UI backdrops switch to position: absolute and need a positioned body. */
+  body {
+    position: relative;
+  }
+
+  html {
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  a {
+    color: var(--color-accent);
+    text-underline-offset: 2px;
+  }
+
+  a:hover {
+    text-decoration-line: underline;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Base UI's scrollbar rules, which <CSPProvider disableStyleElements> stops it injecting. */
+.base-ui-disable-scrollbar {
+  scrollbar-width: none;
+}
+
+.base-ui-disable-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Popups portal to <body>; the app root is its own stacking context so they always sit above it. */
+#root {
+  isolation: isolate;
+}

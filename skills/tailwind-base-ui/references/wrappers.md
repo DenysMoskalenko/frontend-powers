@@ -1,0 +1,399 @@
+# Base UI wrappers in `src/shared/ui`
+
+Complete wrappers, compiled against `@base-ui/react` 1.9 under the scaffold's `tsconfig.json` and
+`biome.json`. Copy them when an app first needs the part.
+
+## Contents
+
+- Data attributes and CSS variables
+- Button and a link that looks like a button
+- Dialog
+- Menu
+- Select
+- Composing them in a feature
+- Toasts
+- Field
+
+## Data attributes and CSS variables
+
+Every attribute below works as a Tailwind variant: `data-open:`, `not-data-disabled:`,
+`in-data-open:` (an ancestor has it), `data-[side=top]:` (an attribute with a value). Each part's
+page under `node_modules/@base-ui/react/docs/react/components/` lists exactly which it sets.
+
+| Attribute | Set on | Meaning |
+| --- | --- | --- |
+| `data-disabled` | most parts | disabled |
+| `data-open`, `data-closed` | popups, triggers' popups, collapsibles | open state |
+| `data-popup-open` | a trigger | its popup is open |
+| `data-starting-style`, `data-ending-style` | anything that mounts or unmounts | the first and last frame: transition from or to these |
+| `data-highlighted` | menu, select, combobox items | keyboard or pointer highlight |
+| `data-pressed` | toggle, toggle-group items | pressed |
+| `data-checked`, `data-unchecked`, `data-indeterminate` | checkbox, radio, switch, checkable menu items | checked state |
+| `data-valid`, `data-invalid`, `data-dirty`, `data-touched`, `data-filled`, `data-focused` | Field parts and the control inside `Field.Root` | field state |
+| `data-required`, `data-readonly` | form controls | attributes mirrored |
+| `data-side`, `data-align` | positioners and popups | where it was placed: `data-[side=top]:` |
+| `data-instant` | tooltip, popover, menu popups | open without animation (keyboard, a second tooltip) |
+| `data-nested`, `data-nested-dialog-open` | menus, dialogs | nesting |
+| `data-orientation` | tabs, slider, separator, toolbar | `data-[orientation=vertical]:` |
+| `data-type` | toast root | the `type` passed to `add()`: `data-[type=error]:` |
+| `data-limited`, `data-expanded`, `data-behind` | toast root and content | over the limit, stack expanded, behind the front toast |
+| `data-swiping`, `data-swipe-direction` | toast root, drawer | swipe gestures |
+
+CSS variables Base UI sets, read with the parenthesis shorthand:
+
+| Variable | Set on | Typical class |
+| --- | --- | --- |
+| `--transform-origin` | popup | `origin-(--transform-origin)` |
+| `--anchor-width`, `--anchor-height` | positioner | `min-w-(--anchor-width)` |
+| `--available-width`, `--available-height` | positioner | `max-h-(--available-height)` |
+| `--positioner-width`, `--popup-width` (and `-height`) | positioner, popup | size transitions |
+| `--toast-index`, `--toast-offset-y`, `--toast-height`, `--toast-frontmost-height` | toast root | stacked toasts |
+| `--toast-swipe-movement-x`, `--toast-swipe-movement-y` | toast root | swipe-to-dismiss |
+
+## Button and a link that looks like a button
+
+The scaffold's `Button` plus a `danger` variant, with its look exported so a second component can
+share it. Base UI forbids rendering a link through `Button` (`nativeButton={false}` is for a `div`,
+never an `a`), so the link is its own component built on `useRender`.
+
+```tsx,verify
+// file: src/shared/ui/button.tsx
+import { Button as BaseButton } from "@base-ui/react/button";
+import { cx } from "./cx";
+
+const base =
+  "inline-flex h-9 items-center justify-center gap-2 rounded-md px-4 font-medium text-sm transition-colors data-disabled:opacity-50";
+
+const variants = {
+  primary: "bg-accent text-accent-fg hover:not-data-disabled:bg-accent/90",
+  secondary: "border border-control bg-surface text-fg hover:not-data-disabled:bg-bg",
+  danger: "bg-danger text-danger-fg hover:not-data-disabled:bg-danger/90",
+} as const;
+
+export type ButtonVariant = keyof typeof variants;
+
+/** The button look, shared with `ButtonLink`. */
+export const buttonClass = (variant: ButtonVariant, className: string | undefined) =>
+  cx(base, variants[variant], className);
+
+interface ButtonProps extends Omit<BaseButton.Props, "className"> {
+  variant?: ButtonVariant | undefined;
+  /** Layout only (margin, width, placement); looks come from `variant`. */
+  className?: string | undefined;
+}
+
+export function Button({ variant = "secondary", className, ...props }: ButtonProps) {
+  return <BaseButton {...props} className={buttonClass(variant, className)} />;
+}
+```
+
+`danger` needs one token the scaffold lacks, the text colour on `danger`. These values give 6.6:1
+(light) and 7.4:1 (dark) by the WCAG 2 formula, and at least 5.7:1 under the hover's `/90`; a
+design that changes `--danger` takes its values from `frontend-design` and checks 4.5:1 again.
+
+```css
+:root {
+  --danger-fg: light-dark(oklch(1 0 0), oklch(0.15 0 0));
+}
+
+@theme inline {
+  --color-danger-fg: var(--danger-fg);
+}
+```
+
+The link cancels the scaffold's `a:hover` underline with `no-underline`: utilities sit in a later
+cascade layer than `@layer base`, so the class wins without a hover variant.
+
+```tsx,verify
+// file: src/shared/ui/button-link.tsx
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
+import { type ButtonVariant, buttonClass } from "./button";
+import { cx } from "./cx";
+
+interface ButtonLinkProps extends Omit<useRender.ComponentProps<"a">, "className"> {
+  variant?: ButtonVariant | undefined;
+  /** Layout only (margin, width, placement); looks come from `variant`. */
+  className?: string | undefined;
+}
+
+/** A link with the Button look and link semantics: `render={<Link to="/users/new" />}`. */
+export function ButtonLink({
+  variant = "secondary",
+  className,
+  render,
+  ...props
+}: ButtonLinkProps) {
+  return useRender({
+    defaultTagName: "a",
+    render,
+    props: mergeProps<"a">(props, {
+      className: cx("no-underline", buttonClass(variant, className)),
+    }),
+  });
+}
+```
+
+## Dialog
+
+Root, trigger and close are Base UI's parts unchanged; the wrapper owns the portal, backdrop and
+popup. Under reduced motion the popups still fade, only the scale goes, as in the scaffold's toast.
+
+A confirmation of a destructive action ("Delete user?") is `AlertDialog` from
+`@base-ui/react/alert-dialog`, not `Dialog`: it has `role="alertdialog"` and an outside click does
+not dismiss it. It has the same parts, so `alert-dialog.tsx` is this file with `AlertDialog` in
+place of `Dialog`, and its confirm button is `<Button variant="danger">`.
+
+The backdrop needs a `scrim` token, which the scaffold lacks:
+
+```css
+:root {
+  --scrim: light-dark(oklch(0 0 0 / 0.3), oklch(0 0 0 / 0.6));
+}
+
+@theme inline {
+  --color-scrim: var(--scrim);
+}
+```
+
+```tsx,verify
+// file: src/shared/ui/dialog.tsx
+import { Dialog as BaseDialog } from "@base-ui/react/dialog";
+import type { ReactNode } from "react";
+import { cx } from "./cx";
+
+export const Dialog = BaseDialog.Root;
+export const DialogTrigger = BaseDialog.Trigger;
+export const DialogClose = BaseDialog.Close;
+
+interface DialogPopupProps
+  extends Omit<BaseDialog.Popup.Props, "className" | "children" | "title"> {
+  title: ReactNode;
+  description?: ReactNode | undefined;
+  children?: ReactNode | undefined;
+  /** Layout only (width, placement of the content). */
+  className?: string | undefined;
+}
+
+export function DialogPopup({
+  title,
+  description,
+  children,
+  className,
+  ...props
+}: DialogPopupProps) {
+  return (
+    <BaseDialog.Portal>
+      <BaseDialog.Backdrop className="fixed inset-0 min-h-dvh bg-scrim transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 supports-[-webkit-touch-callout:none]:absolute" />
+      <BaseDialog.Popup
+        {...props}
+        className={cx(
+          "-translate-1/2 fixed top-1/2 left-1/2 flex w-[min(28rem,calc(100vw-2rem))] flex-col gap-3 rounded-lg bg-surface p-6 text-fg shadow-lg transition-[opacity,scale] duration-150 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-opacity",
+          className,
+        )}
+      >
+        <BaseDialog.Title className="font-semibold text-lg">{title}</BaseDialog.Title>
+        {description === undefined ? null : (
+          <BaseDialog.Description className="text-muted text-sm">
+            {description}
+          </BaseDialog.Description>
+        )}
+        {children}
+      </BaseDialog.Popup>
+    </BaseDialog.Portal>
+  );
+}
+```
+
+`supports-[-webkit-touch-callout:none]:absolute` is Base UI's iOS 26 Safari fix; it pairs with
+`body { position: relative }` in `styles.css`.
+
+## Menu
+
+```tsx,verify
+// file: src/shared/ui/menu.tsx
+import { Menu as BaseMenu } from "@base-ui/react/menu";
+import type { ReactNode } from "react";
+
+export const Menu = BaseMenu.Root;
+export const MenuTrigger = BaseMenu.Trigger;
+
+interface MenuPopupProps {
+  children: ReactNode;
+  side?: BaseMenu.Positioner.Props["side"] | undefined;
+}
+
+export function MenuPopup({ children, side = "bottom" }: MenuPopupProps) {
+  return (
+    <BaseMenu.Portal>
+      <BaseMenu.Positioner side={side} sideOffset={6} className="outline-hidden">
+        <BaseMenu.Popup className="min-w-40 origin-(--transform-origin) rounded-lg border border-line bg-surface p-1 text-fg shadow-md outline-hidden transition-[opacity,scale] duration-100 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-opacity">
+          {children}
+        </BaseMenu.Popup>
+      </BaseMenu.Positioner>
+    </BaseMenu.Portal>
+  );
+}
+
+const item =
+  "flex h-8 cursor-default select-none items-center rounded-md px-2 text-sm outline-hidden data-disabled:opacity-50 data-highlighted:bg-accent data-highlighted:text-accent-fg";
+
+export function MenuItem(props: Omit<BaseMenu.Item.Props, "className">) {
+  return <BaseMenu.Item {...props} className={item} />;
+}
+
+/** Navigation inside a menu: `<MenuLinkItem render={<Link to="/users" />}>Users</MenuLinkItem>`. */
+export function MenuLinkItem(props: Omit<BaseMenu.LinkItem.Props, "className">) {
+  return <BaseMenu.LinkItem {...props} className={item} />;
+}
+```
+
+## Select
+
+A select is a field, the shape of the scaffold's `TextField`: `Field.Root invalid` sets
+`data-invalid` on the trigger and `Field.Error match` shows the message. `items` lets
+`Select.Value` show the label of the chosen value. `<CSPProvider disableStyleElements>` already
+stops the `<style>` Select would inject.
+
+```tsx,verify
+// file: src/shared/ui/select-field.tsx
+import { Field } from "@base-ui/react/field";
+import { Select } from "@base-ui/react/select";
+import { cx } from "./cx";
+
+interface SelectFieldProps<Value extends string>
+  extends Omit<Select.Root.Props<Value>, "items" | "multiple" | "children"> {
+  label: string;
+  items: { value: Value; label: string }[];
+  placeholder?: string | undefined;
+  /** A server or form-library error; marks the field invalid. */
+  error?: string | undefined;
+  /** Layout only (margin, width, placement). */
+  className?: string | undefined;
+}
+
+export function SelectField<Value extends string>({
+  label,
+  items,
+  placeholder,
+  error,
+  className,
+  ...props
+}: SelectFieldProps<Value>) {
+  return (
+    <Field.Root invalid={error !== undefined} className={cx("flex flex-col gap-1", className)}>
+      {/* The trigger is a button: a div label avoids a native label's click and hover forwarding. */}
+      <Field.Label nativeLabel={false} render={<div />} className="font-medium text-sm">
+        {label}
+      </Field.Label>
+      <Select.Root {...props} items={items}>
+        <Select.Trigger className="flex h-9 items-center justify-between gap-2 rounded-md border border-control bg-surface px-3 text-sm data-invalid:border-danger">
+          <Select.Value placeholder={placeholder} className="data-placeholder:text-muted" />
+          <Select.Icon className="text-muted">
+            <svg aria-hidden viewBox="0 0 16 16" fill="currentColor" className="size-4">
+              <path d="M11 10H5l3 3.5zm0-4H5l3-3.5z" />
+            </svg>
+          </Select.Icon>
+        </Select.Trigger>
+        <Select.Portal>
+          <Select.Positioner alignItemWithTrigger={false} sideOffset={6} className="outline-hidden">
+            <Select.Popup className="min-w-(--anchor-width) origin-(--transform-origin) rounded-lg border border-line bg-surface p-1 text-fg shadow-md outline-hidden transition-[opacity,scale] duration-100 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-opacity">
+              <Select.List className="max-h-(--available-height) overflow-y-auto">
+                {items.map((item) => (
+                  <Select.Item
+                    key={item.value}
+                    value={item.value}
+                    className="flex h-8 cursor-default select-none items-center rounded-md px-2 text-sm outline-hidden data-disabled:opacity-50 data-selected:font-medium data-highlighted:bg-accent data-highlighted:text-accent-fg"
+                  >
+                    <Select.ItemText>{item.label}</Select.ItemText>
+                  </Select.Item>
+                ))}
+              </Select.List>
+            </Select.Popup>
+          </Select.Positioner>
+        </Select.Portal>
+      </Select.Root>
+      <Field.Error match={error !== undefined} className="text-danger text-sm">
+        {error}
+      </Field.Error>
+    </Field.Root>
+  );
+}
+```
+
+Use it with a typed list: `<SelectField label="Status" items={statuses} value={status}
+onValueChange={setStatus} />`, where `statuses` is `{ value: OrderStatus; label: string }[]`; in a
+test the trigger is `getByRole("combobox", { name: "Status" })` and each choice an `option`.
+
+## Composing them in a feature
+
+`render` puts a Base UI trigger on a kit `Button` (the trigger's ref and focus return go through),
+and puts the router's `Link` inside `ButtonLink` and `MenuLinkItem`. A component raises a toast
+through `Toast.useToastManager()`; there is no module-level toast object.
+
+```tsx,verify
+// file: src/features/users/user-actions.tsx
+import { Toast } from "@base-ui/react/toast";
+import { Link } from "@tanstack/react-router";
+import type { UserResponse } from "@/api/generated/api";
+import { Button } from "@/shared/ui/button";
+import { ButtonLink } from "@/shared/ui/button-link";
+import { Dialog, DialogClose, DialogPopup, DialogTrigger } from "@/shared/ui/dialog";
+import { Menu, MenuItem, MenuLinkItem, MenuPopup, MenuTrigger } from "@/shared/ui/menu";
+
+export function UserActions({ user }: { user: UserResponse }) {
+  const toasts = Toast.useToastManager();
+  const copyEmail = () =>
+    navigator.clipboard
+      .writeText(user.email)
+      .then(() => toasts.add({ title: "Email copied" }), reportError);
+
+  return (
+    <div className="flex gap-2">
+      <ButtonLink
+        variant="primary"
+        render={<Link to="/users/$userId" params={{ userId: user.id }} />}
+      >
+        Open
+      </ButtonLink>
+      <Menu>
+        <MenuTrigger render={<Button />}>More</MenuTrigger>
+        <MenuPopup>
+          <MenuItem onClick={copyEmail}>Copy email</MenuItem>
+          <MenuLinkItem render={<Link to="/users/new" />}>New user</MenuLinkItem>
+        </MenuPopup>
+      </Menu>
+      <Dialog>
+        <DialogTrigger render={<Button />}>Details</DialogTrigger>
+        <DialogPopup title={user.name} description={user.email}>
+          <DialogClose render={<Button className="self-end" />}>Close</DialogClose>
+        </DialogPopup>
+      </Dialog>
+    </div>
+  );
+}
+```
+
+## Toasts
+
+The scaffold's `src/shared/ui/toast.tsx` renders the toasts; `createAppRouter` creates one manager
+per router and hands it to `ToastProvider` and to the `createQueryClient` callback, which turns a
+failed refresh or mutation into a toast titled from `NOTICES` in `router.tsx`; each test's router
+has its own toasts. Inside React, `Toast.useToastManager().add({ title, description, type })`.
+Outside React (a socket handler), pass the manager in from where the router is created; never
+create a second manager at module scope, or its toasts never render.
+
+A `Toast.Root` is a non-modal dialog named by its title; testing toasts belongs to `frontend-testing`.
+
+To style a toast by `type`, add `data-[type=error]:border-danger` to the root's class string in
+`toast.tsx`; to add an action, `actionProps: { children: "Retry", onClick }` on `add()` and a
+`<Toast.Action />` part in the list.
+
+## Field
+
+`TextField` in the scaffold is the contract `frontend-forms` wires to form state: `error` set makes
+`Field.Root invalid`, which sets `data-invalid` on the control (`data-invalid:border-danger`), and
+`Field.Error match={error !== undefined}` shows the message whatever the native validity says.
+A checkbox or switch field follows the same shape as `TextField` and `SelectField`: `Field.Root
+invalid`, the Base UI control, `Field.Error match`. A control's outline (a select trigger, a checkbox box, an input) is
+`border-control`, which keeps 3:1 against `bg` and `surface`; `border-line` is for dividers.

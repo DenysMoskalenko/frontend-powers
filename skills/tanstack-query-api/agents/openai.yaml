@@ -1,0 +1,6 @@
+interface:
+  display_name: "TanStack Query API"
+  short_description: "orval client, queries, errors"
+
+policy:
+  allow_implicit_invocation: true

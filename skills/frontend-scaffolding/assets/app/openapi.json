@@ -1,0 +1,166 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "app", "version": "0.1.0" },
+  "paths": {
+    "/users": {
+      "get": {
+        "tags": ["users"],
+        "summary": "List users, newest first.",
+        "description": "# Errors\n422 when `limit` is outside 1..=100 or `offset` is past 10 000.",
+        "operationId": "list_users",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of users",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Page_UserResponse" } }
+            }
+          },
+          "422": {
+            "description": "`limit` is outside 1..=100, or `offset` is past 10 000",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["users"],
+        "summary": "Create a user.",
+        "description": "# Errors\n422 when the body fails validation, 409 when the email is taken.",
+        "operationId": "create_user",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateUser" } }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The created user",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/UserResponse" } }
+            }
+          },
+          "409": {
+            "description": "The email is taken",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } }
+            }
+          },
+          "422": {
+            "description": "The body failed validation",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } }
+            }
+          }
+        }
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "tags": ["users"],
+        "summary": "Fetch one user. Note `{id}`, not axum 0.7's `:id`.",
+        "description": "# Errors\n404 when no user has that id.",
+        "operationId": "get_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The user",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/UserResponse" } }
+            }
+          },
+          "404": {
+            "description": "No user has that id",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateUser": {
+        "type": "object",
+        "required": ["email", "name"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "ada@example.com" },
+          "name": { "type": "string", "example": "Ada Lovelace", "maxLength": 100, "minLength": 1 }
+        },
+        "additionalProperties": false
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "The wire shape of every error response, fallbacks included.",
+        "required": ["error"],
+        "properties": {
+          "details": { "description": "Field to messages for 422, absent otherwise." },
+          "error": { "type": "string", "example": "validation failed" },
+          "request_id": {
+            "type": ["string", "null"],
+            "description": "Echoes `x-request-id` so a user-reported failure can be found in the logs."
+          }
+        }
+      },
+      "Page_UserResponse": {
+        "type": "object",
+        "description": "The pagination envelope every list endpoint returns.",
+        "required": ["items", "total", "limit", "offset"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/UserResponse" } },
+          "limit": { "type": "integer", "format": "int64", "minimum": 0 },
+          "offset": { "type": "integer", "format": "int64", "minimum": 0 },
+          "total": { "type": "integer", "format": "int64", "minimum": 0 }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "description": "The response DTO. Separate from the entity on purpose: an entity field is a\nstorage decision, a response field is a public contract.",
+        "required": ["id", "email", "name", "created_at"],
+        "properties": {
+          "created_at": { "type": "string", "format": "date-time" },
+          "email": { "type": "string" },
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" }
+        }
+      }
+    }
+  },
+  "tags": [{ "name": "users", "description": "User management" }]
+}

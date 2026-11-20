@@ -1,0 +1,28 @@
+.DS_Store
+.idea/
+
+# Local environment
+.env
+.env.*
+!.env.example
+# The scaffold template ships its development origin
+!skills/frontend-scaffolding/assets/app/.env.development
+
+# Generated eval cases and their results (scripts/build_eval_cases.py)
+evals/.run/
+
+# Installs and build output; skills/ must never hold them (the plugin root is the repository root)
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+.tanstack/
+
+# Local Cursor MCP config (may contain tokens)
+.cursor/mcp.json
+/.cursor/
+__pycache__/
+
+# Local research and review notes; only evals/ is tracked
+tmp/

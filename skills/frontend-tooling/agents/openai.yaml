@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend Tooling"
+  short_description: "pnpm, Biome, Vite, CI configs"
+
+policy:
+  allow_implicit_invocation: true

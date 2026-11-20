@@ -1,0 +1,24 @@
+repos:
+  - repo: builtin
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-json
+        # tsconfig and VS Code settings are JSON with comments.
+        exclude: (^|/)(tsconfig[^/]*\.json|\.vscode/[^/]*\.json)$
+      - id: check-yaml
+        # pnpm 12 writes the lockfile as two YAML documents.
+        args: [--allow-multiple-documents]
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: validate-skills
+        name: validate skills
+        entry: python3 scripts/validate_skills.py
+        language: system
+        pass_filenames: false
+        files: ^(skills/|evals/|scripts/validate_skills\.py$|STACK\.md$|\.claude-plugin/|\.codex-plugin/|\.cursor-plugin/)

@@ -1,0 +1,15 @@
+# 3 days: npm's 72-hour unpublish window. Set explicitly, the cooldown is strict.
+minimumReleaseAge: 4320
+saveExact: true
+trustPolicy: no-downgrade
+# Only releases from the last 30 days are checked; older transitive packages predate provenance.
+trustPolicyIgnoreAfter: 43200
+allowBuilds:
+  # Both postinstalls only re-check the platform binary that an optional dependency already installed.
+  esbuild: false
+  workerd: false
+permissions:
+  "@tanstack/react-router":
+    skills: false
+  "@tanstack/router-plugin":
+    skills: false

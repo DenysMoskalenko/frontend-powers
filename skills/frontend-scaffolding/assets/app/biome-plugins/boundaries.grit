@@ -1,0 +1,31 @@
+language js
+
+JsModuleSource() as $source where {
+  or {
+    and {
+      $source <: r"[\"']\.\./.*[\"']",
+      register_diagnostic(span=$source, message="Import from another folder with the @/ alias, not ../")
+    },
+    and {
+      $filename <: r".*/src/features/([^/]+)/.*"($feature),
+      $source <: r"[\"']@/features/([^/]+)/.*[\"']"($target),
+      not $target <: $feature,
+      register_diagnostic(span=$source, message="A feature never imports another feature: compose both in the route, or move the domain-free part to @/shared.")
+    },
+    and {
+      $filename <: r".*/src/(?:features|shared|api)/.*",
+      $source <: r"[\"']@/(?:routes|app)/.*[\"']",
+      register_diagnostic(span=$source, message="features/, shared/ and api/ never import routes/ or app/.")
+    },
+    and {
+      $filename <: r".*/src/(?:shared|api)/.*",
+      $source <: r"[\"']@/features/.*[\"']",
+      register_diagnostic(span=$source, message="shared/ and api/ never import a feature.")
+    },
+    and {
+      $source <: r"[\"']@/test/.*[\"']",
+      not $filename <: r".*(?:/src/test/.*|\.test\.tsx?)",
+      register_diagnostic(span=$source, message="Only tests import @/test/.")
+    }
+  }
+}

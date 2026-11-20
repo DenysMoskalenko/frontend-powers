@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend Testing"
+  short_description: "Route tests, MSW, Playwright"
+
+policy:
+  allow_implicit_invocation: true

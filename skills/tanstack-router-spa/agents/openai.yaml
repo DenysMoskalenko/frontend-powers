@@ -1,0 +1,6 @@
+interface:
+  display_name: "TanStack Router SPA"
+  short_description: "File routes, search, loaders"
+
+policy:
+  allow_implicit_invocation: true

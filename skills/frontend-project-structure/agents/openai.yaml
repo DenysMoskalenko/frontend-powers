@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend Project Structure"
+  short_description: "Place files and import layers"
+
+policy:
+  allow_implicit_invocation: true

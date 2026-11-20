@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend Forms"
+  short_description: "TanStack Form, zod, Base UI"
+
+policy:
+  allow_implicit_invocation: true
