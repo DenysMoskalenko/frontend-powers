@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend i18n"
+  short_description: "i18next keys, gates, typed t()"
+
+policy:
+  allow_implicit_invocation: true

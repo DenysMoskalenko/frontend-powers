@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend Deploy"
+  short_description: "Build config, CSP and hosting"
+
+policy:
+  allow_implicit_invocation: true

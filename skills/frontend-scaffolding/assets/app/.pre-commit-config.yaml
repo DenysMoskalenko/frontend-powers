@@ -1,0 +1,40 @@
+repos:
+  - repo: builtin
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-yaml
+        # pnpm 12 writes the lockfile as two YAML documents (package manager, then dependencies).
+        args: [--allow-multiple-documents]
+      - id: check-json
+        exclude: ^(tsconfig\.json|\.vscode/.*\.json)$
+
+  - repo: local
+    hooks:
+      - id: biome
+        name: biome check
+        entry: pnpm exec biome check --write --no-errors-on-unmatched --files-ignore-unknown=true
+        language: system
+        types_or: [javascript, jsx, ts, tsx, json, css]
+      - id: tsc
+        name: tsc
+        entry: pnpm exec tsc
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false
+      - id: knip
+        name: knip
+        entry: pnpm exec knip
+        language: system
+        files: \.(ts|tsx|json)$
+        pass_filenames: false
+      - id: pnpm-audit
+        name: pnpm audit
+        entry: pnpm audit --audit-level=high
+        language: system
+        files: ^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$
+        pass_filenames: false

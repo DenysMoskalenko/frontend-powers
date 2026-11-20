@@ -1,0 +1,6 @@
+interface:
+  display_name: "Tailwind and Base UI"
+  short_description: "Tailwind 4 tokens, Base UI kit"
+
+policy:
+  allow_implicit_invocation: true

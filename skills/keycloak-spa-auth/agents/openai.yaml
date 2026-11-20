@@ -1,0 +1,6 @@
+interface:
+  display_name: "Keycloak SPA Auth"
+  short_description: "Session, tokens, guards"
+
+policy:
+  allow_implicit_invocation: true

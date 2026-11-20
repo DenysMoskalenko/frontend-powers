@@ -1,0 +1,31 @@
+{
+  "name": "frontend-powers",
+  "owner": {
+    "name": "Denys Moskalenko",
+    "email": "denysmoskalenko11@gmail.com"
+  },
+  "description": "Opinionated Vite, React, TypeScript, TanStack Router and Query, orval, Tailwind and Base UI, Biome, Vitest, Playwright, and pnpm engineering skills for client-rendered SPAs",
+  "version": "0.1.0",
+  "metadata": {
+    "description": "Opinionated Vite, React, TypeScript, TanStack Router and Query, orval, Tailwind and Base UI, Biome, Vitest, Playwright, and pnpm engineering skills for client-rendered SPAs",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "frontend-powers",
+      "source": "./",
+      "description": "Fourteen engineering skills for client-rendered Vite SPAs in TypeScript and React: TanStack Router and Query, orval, Tailwind and Base UI, Biome, Vitest, Playwright, and pnpm, plus greenfield app scaffolding.",
+      "category": "developer-tools",
+      "tags": [
+        "frontend",
+        "react",
+        "vite",
+        "typescript",
+        "tanstack",
+        "tailwind",
+        "testing",
+        "scaffolding"
+      ]
+    }
+  ]
+}

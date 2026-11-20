@@ -1,0 +1,73 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+  auto_cancel:
+    on_new_commit: interruptible
+
+variables:
+  PNPM_VERSION: 12.21.0
+  PNPM_CONFIG_STORE_DIR: $CI_PROJECT_DIR/.pnpm-store
+  # A placeholder: this build proves the bundle compiles and fits its budget; deploys build per environment.
+  PUBLIC_API_ORIGIN: https://api.example.com
+
+default:
+  image: node:26.13.1-trixie-slim
+  interruptible: true
+  # Node 26 ships no corepack. pnpm then switches to devEngines.packageManager and installs devEngines.runtime.
+  before_script:
+    - npm install --global pnpm@$PNPM_VERSION
+    - pnpm install --frozen-lockfile
+  cache:
+    key:
+      files: [pnpm-lock.yaml]
+    paths: [.pnpm-store/]
+
+stages: [check, e2e]
+
+check:
+  stage: check
+  script:
+    - pnpm dedupe --check
+    - pnpm exec biome ci --reporter=default --reporter=gitlab --reporter-file=gl-code-quality.json
+    - pnpm typecheck
+    - pnpm knip
+    # The committed client must be what openapi.json generates (the image has no git).
+    - cp -R src/api/generated /tmp/generated-committed
+    - pnpm api:generate && diff -r /tmp/generated-committed src/api/generated
+    - pnpm exec vitest run --coverage --reporter=default --reporter=junit --outputFile.junit=test-results/vitest-junit.xml
+    - pnpm build
+  coverage: '/Lines\s*:\s*(\d+(?:\.\d+)?)%/'
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      codequality: gl-code-quality.json
+      junit: test-results/vitest-junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+
+audit:
+  stage: check
+  before_script:
+    - npm install --global pnpm@$PNPM_VERSION
+  cache: []
+  script:
+    - pnpm audit --audit-level=high
+
+e2e:
+  stage: e2e
+  # The tag matches @playwright/test in package.json exactly; the image carries the browsers.
+  image: mcr.microsoft.com/playwright:v1.65.1-noble
+  script:
+    - pnpm test:e2e
+  artifacts:
+    when: on_failure
+    expire_in: 2 weeks
+    paths: [test-results/]
+    reports:
+      junit: test-results/junit.xml

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend Shared Packages"
+  short_description: "pnpm workspace, shared kit/API"
+
+policy:
+  allow_implicit_invocation: true
