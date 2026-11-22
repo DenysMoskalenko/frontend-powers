@@ -4,7 +4,7 @@ A React single-page app for the users API in `openapi.json`.
 
 ## Run
 
-Needs pnpm 12 (`npm install --global pnpm@12.21.0`); pnpm installs the Node version in `devEngines`.
+Needs pnpm 12 (`npm install --global pnpm@12.22.0`); pnpm installs the Node version in `devEngines`.
 
 ```bash
 pnpm install

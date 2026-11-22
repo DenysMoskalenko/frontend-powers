@@ -108,7 +108,7 @@
 
 ### Probe 1 - deprecated loader read
 
-**Prompt**: "In our TanStack Router 1 + TanStack Query 5.107 app, orval generated getGetOrderQueryOptions(id) and getGetOrderSuspenseQueryOptions(id). Write the loader for /orders/$orderId so the order is in the Query cache before the page renders."
+**Prompt**: "In our TanStack Router 1 + TanStack Query 5.108 app, orval generated getGetOrderQueryOptions(id) and getGetOrderSuspenseQueryOptions(id). Write the loader for /orders/$orderId so the order is in the Query cache before the page renders."
 
 **Fixture**: empty
 
@@ -118,7 +118,7 @@
 
 ### Probe 2 - suspense options in a loader
 
-**Prompt**: "In our TanStack Router 1 + TanStack Query 5.107 app, orval generated getGetOrderQueryOptions(id) and getGetOrderSuspenseQueryOptions(id). The order page component reads useSuspenseQuery(getGetOrderSuspenseQueryOptions(orderId)). Write its loader so loader and component share the same query options."
+**Prompt**: "In our TanStack Router 1 + TanStack Query 5.108 app, orval generated getGetOrderQueryOptions(id) and getGetOrderSuspenseQueryOptions(id). The order page component reads useSuspenseQuery(getGetOrderSuspenseQueryOptions(orderId)). Write its loader so loader and component share the same query options."
 
 **Fixture**: empty
 
@@ -142,7 +142,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `onSuccess(?::\s*(?:async\s*)?\([^)]*\)\s*=>\s*|\s*\([^)]*\)\s*)\{\s*(?:void\s+)?[\w.]*invalidateQueries\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:onSuccess(?::\s*(?:async\s*)?\([^)]*\)\s*=>\s*|\s*\([^)]*\)\s*)\{\s*(?:void\s+)?[\w.]*invalidateQueries\()`
 
 ### Probe 5 - client from the callback context
 
@@ -150,7 +150,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `const\s+\w+\s*=\s*useQueryClient\(\)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:const\s+\w+\s*=\s*useQueryClient\(\))`
 
 ### Probe 6 - backend message on screen
 
@@ -158,7 +158,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `\{\s*[\w.]*(?:[eE]rror|\berr)\??\.message\s*\}`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\{\s*[\w.]*(?:[eE]rror|\berr)\??\.message\s*\})`
 
 ### Probe 7 - fetch outside the client
 
@@ -176,7 +176,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:=|=>|return|\()\s*(?:\w+\.)?(?:ListUsersResponse|GetUserResponse|CreateUserResponse)\.(?:parse|safeParse)\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:=|=>|return|\()\s*(?:\w+\.)?(?:ListUsersResponse|GetUserResponse|CreateUserResponse)\.(?:parse|safeParse)\()`
 
 ### Probe 9 - retrying a write
 
@@ -184,7 +184,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:mutations?:\s*\{|useMutation\(\s*\{)[^}]*\bretry:\s*(?:[1-9]|true|\()`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:mutations?:\s*\{|useMutation\(\s*\{)[^}]*\bretry:\s*(?:[1-9]|true|\())`
 
 ### Probe 10 - deferred read in a loader
 
@@ -192,7 +192,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `\.prefetchQuery\(|await\s+(?:context\.)?queryClient\.query\(\s*(?:\{\s*\.\.\.)?get\w*Audit\w*Options`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.prefetchQuery\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:await\s+(?:context\.)?queryClient\.query\(\s*(?:\{\s*\.\.\.)?get\w*Audit\w*Options)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:await\s+(?:context\.)?queryClient\s*\.query\((?:(?!\bloader\b|\x60\x60\x60)[\s\S])*?\bvoid\s+(?:context\.)?queryClient\s*\.query\(\s*\{\s*\.\.\.get\w*Audit)`
 
 **Right answer**: `void\s+(?:context\.)?queryClient\s*\.query\([\s\S]*?\.catch\(\s*\(\)\s*=>\s*undefined\s*\)`
 
@@ -210,6 +210,26 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `refetchType:\s*["']all["']|staleTime:\s*0\b`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:refetchType:\s*["']all["'])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:staleTime:\s*0\b)`
 
 **Right answer**: `removeQueries\(\s*\{[^}]*type:\s*["']inactive["']|setQueriesData\(`
+
+### Probe 13 - raw path parameter
+
+**Prompt**: "The backend has `GET /files/{path}/meta`, where `path` is a file name the user typed. It is not in openapi.json yet; the backend adds it next sprint. Add a `useFileMeta(path)` query hook for it."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bapiFetch(?:<[^>()]*>)?\(\s*\x60[^\x60]*?\$\{(?!\s*encodeURIComponent\())`
+
+**Right answer**: `encodeURIComponent\(`
+
+### Probe 14 - delete from the detail page
+
+**Prompt**: "Add a Delete button on /users/$userId that deletes the user and returns to /users. orval generated `getDeleteUserMutationOptions` for `DELETE /users/{id}`."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:onSuccess\b(?:(?!removeQueries|navigate\()[\s\S])*?invalidateQueries\(\s*\{\s*queryKey:\s*getListUsersQueryKey\(\s*\))`
+
+**Right answer**: `removeQueries\(\s*\{\s*queryKey:\s*getGetUserQueryKey\(`

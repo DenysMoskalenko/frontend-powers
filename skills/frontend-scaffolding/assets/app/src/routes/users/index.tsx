@@ -25,7 +25,7 @@ export const Route = createFileRoute("/users/")({
       const last = pageCount(users);
       throw redirect({
         to: "/users",
-        search: { page: last > 1 ? last : undefined },
+        search: (prev) => ({ ...prev, page: last > 1 ? last : undefined }),
         replace: true,
       });
     }
@@ -48,7 +48,7 @@ function UsersPage() {
       <nav aria-label="Pagination" className="flex items-center gap-4">
         <Link
           from={Route.fullPath}
-          search={{ page: page > 2 ? page - 1 : undefined }}
+          search={(prev) => ({ ...prev, page: page > 2 ? page - 1 : undefined })}
           disabled={page <= 1}
         >
           Previous
@@ -56,7 +56,11 @@ function UsersPage() {
         <span>
           Page {page} of {pages}
         </span>
-        <Link from={Route.fullPath} search={{ page: page + 1 }} disabled={page >= pages}>
+        <Link
+          from={Route.fullPath}
+          search={(prev) => ({ ...prev, page: page + 1 })}
+          disabled={page >= pages}
+        >
           Next
         </Link>
       </nav>

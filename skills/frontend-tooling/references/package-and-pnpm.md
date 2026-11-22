@@ -1,6 +1,6 @@
 # package.json, pnpm-workspace.yaml and dependency procedures
 
-Both files verbatim, identical to the scaffold's, then the procedures and the exact pnpm 12.21
+Both files verbatim, identical to the scaffold's, then the procedures and the exact pnpm 12.22
 messages. In an existing project merge only the entries a change needs into its own files.
 
 ## Contents
@@ -39,7 +39,7 @@ messages. In an existing project merge only the entries a change needs into its 
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "12.21.0",
+      "version": "12.22.0",
       "onFail": "download"
     },
     "runtime": {
@@ -51,7 +51,7 @@ messages. In an existing project merge only the entries a change needs into its 
   "dependencies": {
     "@base-ui/react": "1.9.0",
     "@tanstack/react-form": "1.33.5",
-    "@tanstack/react-query": "5.107.1",
+    "@tanstack/react-query": "5.108.0",
     "@tanstack/react-router": "1.170.46",
     "react": "19.3.1",
     "react-dom": "19.3.1",
@@ -68,24 +68,24 @@ messages. In an existing project merge only the entries a change needs into its 
     "@tailwindcss/vite": "4.3.5",
     "@tanstack/router-plugin": "1.169.0",
     "@testing-library/dom": "10.4.2",
-    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/jest-dom": "8.0.0",
     "@testing-library/react": "16.3.3",
-    "@testing-library/user-event": "14.6.12",
+    "@testing-library/user-event": "14.6.13",
     "@types/node": "26.6.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.3.0",
-    "@vitest/coverage-v8": "5.1.0",
+    "@vitest/coverage-v8": "5.1.1",
     "babel-plugin-react-compiler": "1.0.0",
-    "jsdom": "30.1.3",
-    "knip": "6.45.1",
-    "msw": "3.0.6",
+    "jsdom": "31.0.1",
+    "knip": "6.46.1",
+    "msw": "3.0.7",
     "orval": "8.48.0",
     "tailwindcss": "4.3.5",
     "typescript": "7.0.2",
     "vite": "8.3.8",
-    "vitest": "5.1.0",
-    "wrangler": "4.163.0"
+    "vitest": "5.1.1",
+    "wrangler": "4.165.0"
   }
 }
 ```
@@ -93,7 +93,7 @@ messages. In an existing project merge only the entries a change needs into its 
 - Every version is exact. Build tools sit in `devDependencies`; nothing is published, so the
   split only documents what reaches the bundle.
 - `devEngines` pins both pnpm and Node with `onFail: "download"`: a pnpm of any 12.x switches to
-  12.21.0 and installs Node 26.13.1 into `node_modules`, locked with integrity in
+  12.22.0 and installs Node 26.13.1 into `node_modules`, locked with integrity in
   `pnpm-lock.yaml` (`pnpm exec node -v` prints `v26.13.1` whatever Node the machine has). There
   is no `packageManager` field, no corepack, no `.nvmrc`.
 - `hooks` exists so a fresh clone runs `pnpm hooks` once; there is no `prepare` script, so an
@@ -131,7 +131,7 @@ permissions:
 | `trustPolicy: no-downgrade` | Refuses a version published with weaker provenance than an earlier one (a possible account takeover). |
 | `trustPolicyIgnoreAfter: 43200` | Minutes (30 days). Older releases are not checked, because many transitive packages were published before provenance existed. |
 | `allowBuilds` | One line per package with a lifecycle script: `true` runs it, `false` skips it. Each entry carries a comment with the reason. An undecided package fails the install. |
-| `permissions` | pnpm 12.21 records what a dependency may do. `skills: false` declines the agent skills a package ships. Its `build` capability does what `allowBuilds` does and takes precedence over it. |
+| `permissions` | pnpm 12 records what a dependency may do. `skills: false` declines the agent skills a package ships. Its `build` capability does what `allowBuilds` does and takes precedence over it. |
 
 pnpm 12 reads project settings only from this file: `.npmrc` settings and `npm_config_*`
 variables no longer configure the project (`PNPM_CONFIG_STORE_DIR` is the CI store variable).
@@ -151,11 +151,13 @@ ignored, which is worse.
 | Upgrade one package | `pnpm update <pkg> --latest` | Writes the new exact version and moves the lockfile. |
 | Upgrade Vitest | `pnpm update vitest @vitest/coverage-v8 --latest` | The two move together, at the same version. |
 | Upgrade Biome | `pnpm update @biomejs/biome --latest`, then `pnpm exec biome migrate --write` | Rewrites renamed keys; nursery rules can change in a minor. |
-| Upgrade Playwright | `pnpm update @playwright/test --latest` | Change the image tag in both CI files to the same version in the same commit. |
+| Upgrade Playwright | `pnpm update @playwright/test --latest` | Change both CI files' Playwright image, digest and tag comment, to the same version in the same commit. |
 
 `saveExact` applies only to a bare name: `pnpm add pkg@3` or `pkg@^3` writes `^3.0.6`, `pkg@~3.0`
 writes `~3.0.6`, and a bare `pnpm add pkg` on a package already listed keeps its existing range.
-Fix it with `pnpm add pkg@<the resolved exact version>`, which rewrites the entry exact.
+Fix it with `pnpm add pkg@<the resolved exact version>`, which rewrites the entry exact. In a
+project without `saveExact: true` a bare `pnpm add pkg` writes `^1.2.3`; there `pnpm add -E pkg`
+writes it exact.
 
 Add a dependency in the same change as its first import: knip reports a dependency nothing
 imports, and Biome `noUndeclaredDependencies` reports an import of a package `package.json`
@@ -245,7 +247,7 @@ Fix the spelling or replace the key with its pnpm 12 name.
 
 ## Agent skills that dependencies ship
 
-pnpm 12.21 links the agent skills a direct dependency ships (`skills/<name>/SKILL.md`) into the
+pnpm 12 links the agent skills a direct dependency ships (`skills/<name>/SKILL.md`) into the
 project's agent directories after approval, and an install prints:
 
 ```text
@@ -262,7 +264,9 @@ pnpm approve '!@tanstack/react-router' '!@tanstack/router-plugin'
 
 That writes `permissions.<pkg>.skills: false` (with single quotes around scoped names; either
 quoting is valid YAML). `pnpm approve <pkg>` approves instead; `pnpm permissions` lists what is
-granted, denied and waiting.
+granted, denied and waiting. Always name the packages: without a terminal (an agent's shell, CI)
+a bare `pnpm approve` fails with `"pnpm approve" without package arguments or --all requires an
+interactive terminal`.
 
 ## Lockfile, dedupe and audit
 
@@ -277,17 +281,28 @@ granted, denied and waiting.
   Fix with `pnpm audit --fix` (an override in `pnpm-workspace.yaml`) or `pnpm audit --fix update`
   (re-resolves inside existing ranges). An advisory that does not apply is ignored with
   `pnpm audit --ignore GHSA-...`, which writes it under `auditConfig.ignoreGhsas` in
-  `pnpm-workspace.yaml`; add a comment there saying why.
+  `pnpm-workspace.yaml`; add a comment there saying why. Before pnpm 12.22 the audit dropped
+  advisories with a string id and reported none.
+- `pnpm audit signatures` runs first in both CI `check` jobs: it needs the installed tree and
+  prints `<n> packages have verified registry signatures`, also when installs go through a
+  mirror or proxy. A failure names a tarball without a valid registry signature: stop and tell
+  the user, never skip the step.
 
 ## Bumping pnpm or Node
 
+`pnpm outdated` never lists the two `devEngines` pins. On every audit compare them by hand:
+`pnpm view pnpm time --json` for the newest pnpm 12 past the cooldown, and
+`https://nodejs.org/dist/index.json` for the newest release of the pinned Node LTS line.
+
 Edit `devEngines` in `package.json` and run `pnpm install`, which locks the new runtime. Then
 change the same pnpm version in `.gitlab-ci.yml` (`PNPM_VERSION`) and in the Dockerfile's
-bootstrap line, and the Node version in the GitLab default image tag and the Dockerfile's base
-image (the Dockerfile is `frontend-deploy`'s file). A Node 25 or later image has no corepack, so
+bootstrap line, and the Node version in the GitLab default image and the Dockerfile's base
+image (the Dockerfile is `frontend-deploy`'s file). CI images are pinned by digest with the tag
+in a comment; `docker buildx imagetools inspect node:<tag>` prints the digest (its `Digest:`
+line) for the new tag. A Node 25 or later image has no corepack, so
 images bootstrap pnpm with exactly one npm command, after which pnpm switches to the pinned
 version:
 
 ```bash
-npm install --global pnpm@12.21.0
+npm install --global pnpm@12.22.0
 ```

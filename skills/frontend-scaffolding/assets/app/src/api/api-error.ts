@@ -39,13 +39,19 @@ const text = (value: unknown) => (typeof value === "string" && value ? value : u
 const joinPath = (prefix: string, key: string) =>
   /^\d+$/.test(key) ? `${prefix}[${key}]` : prefix ? `${prefix}.${key}` : key;
 
-// axum + validator: `{ field: [{ code, message }] }`, a nested struct as a nested object.
-function fromValidatorDetails(details: unknown, prefix = "", out: FieldErrors = {}): FieldErrors {
-  if (!isRecord(details)) return out;
+// axum + validator: `{ field: [{ code, message }] }`, a nested struct as a nested object. The depth cap
+// keeps a hostile body from overflowing the stack, which would throw something other than ApiError.
+function fromValidatorDetails(
+  details: unknown,
+  prefix = "",
+  out: FieldErrors = {},
+  depth = 0,
+): FieldErrors {
+  if (!isRecord(details) || depth > 32) return out;
   for (const [key, value] of Object.entries(details)) {
     const path = joinPath(prefix, key);
     if (!Array.isArray(value)) {
-      fromValidatorDetails(value, path, out);
+      fromValidatorDetails(value, path, out, depth + 1);
       continue;
     }
     const first: unknown = value[0];
@@ -54,13 +60,17 @@ function fromValidatorDetails(details: unknown, prefix = "", out: FieldErrors = 
   return out;
 }
 
-// FastAPI: `[{ loc: ["body", ...path], msg }]`; the first `loc` entry names the request part.
+// FastAPI: `[{ loc: ["body", ...path], msg }]`; the first `loc` entry names the request part. pydantic
+// prefixes a custom validator's message with its error type, which the user should not see.
 function fromFastApiDetail(detail: unknown[]): FieldErrors {
   const out: FieldErrors = {};
   for (const item of detail) {
     if (!isRecord(item) || !Array.isArray(item.loc)) continue;
     const path = item.loc.slice(1).map(String).reduce(joinPath, "");
-    if (path && !(path in out)) out[path] = text(item.msg) ?? "invalid";
+    if (path && !Object.hasOwn(out, path)) {
+      const message = text(item.msg)?.replace(/^(Value error|Assertion failed), /, "");
+      out[path] = text(message) ?? "invalid";
+    }
   }
   return out;
 }

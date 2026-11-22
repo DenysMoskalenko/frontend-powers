@@ -25,12 +25,26 @@ const cases: [string, string, string | null][] = [
   ["src/routes/a.tsx", "@/features/users/b", null],
   ["src/routes/b.tsx", "@/shared/ui/a", null],
   ["src/app/a.ts", "@/routes/index", null],
+  ["src/features/users/g.ts", "./../orders/b", "Import from another folder with the @/ alias"],
+  [
+    "src/features/users/h.ts",
+    "import:@/features/orders/b",
+    "A feature never imports another feature",
+  ],
+  ["src/shared/lib/b.ts", "import:@/app/router", "features/, shared/ and api/ never import"],
+  ["src/features/users/i.ts", "import:./c", null],
 ];
+
+// `import:` marks a dynamic import(), the shape `lazy(() => import(...))` uses.
+const moduleText = (specifier: string) =>
+  specifier.startsWith("import:")
+    ? `export const y = () => import("${specifier.slice("import:".length)}");\n`
+    : `import { x } from "${specifier}";\nexport const y = x;\n`;
 
 function lintSandbox() {
   for (const [file, specifier] of cases) {
     mkdirSync(dirname(join(sandbox, file)), { recursive: true });
-    writeFileSync(join(sandbox, file), `import { x } from "${specifier}";\nexport const y = x;\n`);
+    writeFileSync(join(sandbox, file), moduleText(specifier));
   }
   const result = spawnSync("biome", ["lint", "--reporter=json", relative(root, sandbox)], {
     cwd: root,
@@ -42,7 +56,10 @@ function lintSandbox() {
   return report.diagnostics.filter((diagnostic) => diagnostic.category === "plugin");
 }
 
-test("the boundary rule flags every layer crossing and allows the rest", () => {
+// Spawns Biome over the sandbox: about a second idle, several on a loaded CI runner.
+test("the boundary rule flags every layer crossing and allows the rest", {
+  timeout: 30_000,
+}, () => {
   const diagnostics = lintSandbox();
 
   const found = cases.map(([file, specifier]) => {

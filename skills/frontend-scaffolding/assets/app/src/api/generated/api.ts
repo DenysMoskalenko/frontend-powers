@@ -408,7 +408,7 @@ export const getGetUserUrl = (id: string,) => {
 
 
 
-  return `/users/${id}`
+  return `/users/${encodeURIComponent(String(id))}`
 }
 
 /**

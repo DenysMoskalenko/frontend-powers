@@ -5,7 +5,7 @@
 - Tailwind configuration and at-rules
 - Tailwind utilities and variants
 - Base UI and React
-- Libraries and lint
+- Libraries and lint, and what Biome misses
 
 Each Tailwind row was compiled with Tailwind 4.3. "Still compiles" means the old form builds without
 an error, which is why a wrong habit survives review.
@@ -73,9 +73,14 @@ New in 4.x and worth reaching for: `not-*`, `in-*`, `starting:` (`@starting-styl
 | --- | --- |
 | `sonner` `<Toaster />` and `toast()` | Base UI Toast: the scaffold's `ToastProvider`, `Toast.useToastManager().add()` |
 | `next-themes` `ThemeProvider` | OS-driven `light-dark()` tokens; the `public/theme.js` add-on for a user choice |
-| `framer-motion` | `motion` (`motion/react`) when a design needs it, without `AnimatePresence mode="popLayout"` |
+| `framer-motion` | `motion` (`motion/react`) when a design needs it, without `AnimatePresence mode="popLayout"` or `AnimateView` (both append a `<style>`) |
 | `cn()` from `clsx` and `tailwind-merge` | `cx()` from `src/shared/ui/cx.ts` |
 | `cva()`, `tailwind-variants` | a `const` record of complete class strings keyed by `variant` |
 | `@tanstack/react-virtual` `useVirtualizer`, `react-virtuoso` | virtua `VList` |
 | TanStack Table 8 `useReactTable`, `getCoreRowModel` | Table 9 `useTable({ features, columns, data })`, `tableFeatures({})` |
 | Biome `useSortedClasses` | not enabled; the Biome 2.6 `noTailwind*` and `useTailwind*` rules are |
+
+`pnpm format` applies the safe fixes (`noTailwindLegacyUtilities`, `useTailwindVariablesShorthand`).
+The `useTailwindShorthandClasses` fix is unsafe: write `size-4` by hand or run
+`pnpm exec biome check --write --unsafe <file>`. Nothing reports `bg-opacity-50`, `outline-none`, or
+a resized `rounded` or `shadow`: the tables above are the only check.

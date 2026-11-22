@@ -5,7 +5,7 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import type { Plugin } from "vite";
 import { defineConfig } from "vitest/config";
-import { caddyHeaders, cloudflareHeaders, headersFor } from "./deploy/headers.ts";
+import { caddyHeaders, cloudflareHeaders, headersFor, isBareOrigin } from "./deploy/headers.ts";
 
 // The only variables that reach the bundle. Each is public, and each is an origin the CSP allows.
 const PUBLIC_ENV = ["PUBLIC_API_ORIGIN"];
@@ -23,7 +23,7 @@ function securityHeaders(names: readonly string[]): Plugin {
         const value: unknown = env[name];
         if (typeof value !== "string" || !value) throw new Error(`${name} is not set`);
         // The value goes into the CSP as is: anything past a bare origin could add a directive.
-        if (URL.parse(value)?.origin !== value) {
+        if (!isBareOrigin(value)) {
           throw new Error(`${name} is not a bare origin: ${value}`);
         }
         return value;

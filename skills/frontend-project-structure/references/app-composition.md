@@ -101,13 +101,18 @@ add-on lists into the existing file; never replace it. The rules that make the f
 | --- | --- |
 | `createAppRouter` | One object parameter, one key per add-on: `createAppRouter({ session, i18n, history })`. `history` stays optional; only tests pass it. |
 | `Wrap` order | `CSPProvider > I18nextProvider > QueryClientProvider > RealtimeContext > ToastProvider`: the CSP provider outermost, the toasts innermost so they render inside every other provider. |
-| Start-up | Each waiting add-on contributes a promise: `ready.then(render, startFailed)` for one, `Promise.all([...]).then(render, startFailed)` for several. `render` receives the results in array order. `startFailed` reports the error and renders `<p role="alert">The app could not start. Reload the page to try again.</p>`, the same name and copy in every add-on, never a blank page. |
+| Start-up | Each waiting add-on contributes a promise: `ready.then(render, startFailed)` for one, `Promise.all([...]).then(render, startFailed)` for several. `render` receives the results in array order. `startFailed` reports the error and renders `<p role="alert">The app could not start. Reload the page to try again.</p>`, the same name and copy in every add-on, never a blank page. Faro telemetry (`frontend-deploy`) never waits: it starts before the others, its failure is reported, and `render` hands it the session's opaque user id once both exist. |
 | `renderRoute` | `renderRoute(path, { session, language })`, each option defaulted (a signed-in fake identity, `"en"`), returns `{ user, router, i18n }`. Existing `renderRoute("/users")` calls keep working. |
-| `env.ts`, `src/vite-env.d.ts`, `src/test/setup.ts` | Each add-on's lines side by side. |
-| `src/routes/__root.tsx` | Each add-on's context key and header control. One `ms-auto`, on the first right-hand control (the language select), and `items-center` on the nav; the sign-in button follows without it. |
+| `env.ts`, `src/vite-env.d.ts`, `src/test/setup.ts` | Each add-on's lines side by side. A request the root layout makes on every page gets its one neutral handler in the setup's `beforeEach` (`frontend-testing`). |
+| `src/routes/__root.tsx` | Each add-on's context key and header control. In the nav (`items-center`), the links come first, then the controls in this order: language select, theme toggle, any other control, sign-in or sign-out button last. Only the first control carries `ms-auto`, whichever add-ons are present; a strip that is not a control (a notification feed) goes after the `nav`, inside the `header`. |
+| `e2e/fixtures.ts`, `playwright.config.ts` | One `test.extend` with every add-on's fixtures and options, one `webServer` array with every add-on's container; each server chosen by its own `E2E_<NAME>_ORIGIN`, never by `CI`. `frontend-testing`'s Playwright reference has both files for sign-in plus realtime. |
+| the CI `e2e` job | One job with every add-on's service, on one network with the job; the same reference has it for GitHub and GitLab. |
 
-With all three add-ons, the three composed files are below (checked with `tsc`, Biome and every
-add-on's tests). With two, leave out the third's lines.
+With all three add-ons and Faro, the three composed files are below (checked with `tsc`, Biome and
+every add-on's tests). With fewer, leave out the missing add-ons' lines. `createAppRouter` keeps the
+template's search parser and focus subscription whatever the add-ons. The toast titles are the
+`i18n.t` calls `frontend-i18n` gives, once `common.json` has `notices.*`; without i18n they stay
+the template's `NOTICES`.
 
 ```tsx
 // src/main.tsx
@@ -122,9 +127,12 @@ import { createI18n, pickLanguage, storedLanguage } from "@/app/i18n";
 import { startKeycloak } from "@/app/keycloak";
 import { createAppRouter } from "@/app/router";
 import { createSession, type IdentityProvider } from "@/app/session";
+import { startTelemetry } from "@/app/telemetry";
 import "@/styles.css";
 
 reloadOnStaleChunk();
+const telemetry = env.faroUrl ? startTelemetry(env.faroUrl) : undefined;
+telemetry?.catch(reportError);
 
 const { i18n, ready } = createI18n(pickLanguage([storedLanguage(), ...navigator.languages]));
 const container = document.getElementById("root");
@@ -133,6 +141,13 @@ const root = createRoot(container, rootErrorHandlers);
 
 function render([provider]: [IdentityProvider, unknown]) {
   const session = createSession(provider);
+  const userId = session.userId();
+  // The opaque subject id only, never a name or an email; a failed start was reported above.
+  if (userId)
+    void telemetry?.then(
+      (faro) => faro.api.setUser({ id: userId }),
+      () => {},
+    );
   configureApi({ baseUrl: env.apiOrigin, getToken: session.token, retryToken: session.retryToken });
   root.render(
     <StrictMode>
@@ -160,7 +175,12 @@ Promise.all([
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { Toast } from "@base-ui/react/toast";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { createRouter, type RouterHistory } from "@tanstack/react-router";
+import {
+  createRouter,
+  parseSearchWith,
+  type RouterHistory,
+  stringifySearchWith,
+} from "@tanstack/react-router";
 import type { i18n as I18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { ApiError } from "@/api/api-error";
@@ -174,10 +194,13 @@ import { RouteError } from "@/shared/ui/route-error";
 import { ToastProvider } from "@/shared/ui/toast";
 import { createQueryClient } from "./query-client";
 
-const NOTICES = {
-  refresh: "Could not refresh the data",
-  mutation: "The change was not saved",
-} as const;
+// The default parser rewrites `?q=1.50` to 1.5 and ids past 2^53 to another number: a top-level
+// value is a number only when it prints back as typed, so free text and long ids stay text.
+const exactJson = (value: string): unknown => {
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed === "number" && String(parsed) !== value) throw new Error("not exact");
+  return parsed;
+};
 
 /** The whole app: route tree, QueryClient, providers. `main.tsx` and every route test build it. */
 export function createAppRouter({
@@ -192,8 +215,11 @@ export function createAppRouter({
   const toastManager = Toast.createToastManager();
   const queryClient = createQueryClient((reason, error) =>
     toastManager.add({
-      title: NOTICES[reason],
-      description: error instanceof ApiError && error.requestId && `Request id: ${error.requestId}`,
+      title: reason === "refresh" ? i18n.t("notices.refresh") : i18n.t("notices.mutation"),
+      description:
+        error instanceof ApiError &&
+        error.requestId &&
+        i18n.t("notices.requestId", { requestId: error.requestId }),
     }),
   );
   // The token goes in connect data, which a Centrifugo connect proxy checks; never in the URL.
@@ -201,10 +227,12 @@ export function createAppRouter({
     url: `${env.realtimeOrigin}/connection/websocket`,
     getData: async () => ({ token: await apiToken() }),
   });
-  return createRouter({
+  const router = createRouter({
     routeTree,
     context: { queryClient, session },
     ...(history && { history }),
+    parseSearch: parseSearchWith(exactJson),
+    stringifySearch: stringifySearchWith(JSON.stringify, exactJson),
     defaultPreload: "intent",
     // Query owns freshness: the router always runs loaders, and they read the cache.
     defaultPreloadStaleTime: 0,
@@ -226,6 +254,15 @@ export function createAppRouter({
       </CSPProvider>
     ),
   });
+  // A screen reader hears nothing after a client-side navigation unless focus moves to the new page.
+  // Not on the first render or a search-only change; `preventScroll` leaves scroll restoration alone.
+  router.subscribe("onRendered", ({ fromLocation, pathChanged }) => {
+    const heading = fromLocation && pathChanged && document.querySelector<HTMLElement>("main h1");
+    if (!heading) return;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  });
+  return router;
 }
 
 declare module "@tanstack/react-router" {
@@ -300,11 +337,11 @@ export function renderRoute(
 
 | File | Holds | Read by |
 | --- | --- | --- |
-| `router.tsx` | `createAppRouter`, the `Register` declaration | `main.tsx`, `src/test/render-route.tsx` |
+| `router.tsx` | `createAppRouter` (with the search parser and the focus move after a navigation), the `Register` declaration | `main.tsx`, `src/test/render-route.tsx` |
 | `query-client.ts` | `createQueryClient(notify)`, Query's `Register` | `router.tsx` |
 | `error-reporting.ts` | `rootErrorHandlers`, `reloadOnStaleChunk` | `main.tsx` |
 | `env.ts` | `env`, the only reader of `import.meta.env` | `main.tsx`; pass values down, since `features/` and `shared/` cannot import it |
 | `zod-config.ts` | `z.config({ jitless: true })` | `main.tsx`, first import |
 
-Add-on setup modules (`i18n.ts`, the session, telemetry) also live here; their contents belong to
-their skills.
+Add-on setup modules (`i18n.ts`, the session, `telemetry.ts`) also live here; their contents belong
+to their skills.

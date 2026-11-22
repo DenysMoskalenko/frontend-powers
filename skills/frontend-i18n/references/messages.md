@@ -86,7 +86,8 @@ react-i18next 18:
 ## Dates and numbers outside messages
 
 A value standing alone (a table cell, a chart axis) is formatted in code with the active language.
-The scaffold's formatter takes it as a parameter, so `tsc` lists every caller that still lacks it
+The scaffold's `formatDateTime(iso)` formats in English; this add-on replaces the file and adds the
+language as a second parameter, so `tsc` lists every caller that still lacks it
 (`TS2554: Expected 2 arguments, but got 1.`):
 
 ```ts,verify
@@ -173,7 +174,9 @@ export function UserDetails({ user }: { user: UserResponse }) {
 ```
 
 User content (a name, an email) is never a key. A page title is text like any other, and `lint`
-reports an untranslated `<title>`. The scaffold's `src/routes/users/new.tsx`, translated:
+reports an untranslated `<title>`. The scaffold's `src/routes/users/new.tsx`, translated (with
+`keycloak-spa-auth` the file is `src/routes/_signed-in/users/new.tsx` and its id
+`/_signed-in/users/new`; merge the translation into it):
 
 ```tsx,verify
 import { createFileRoute } from "@tanstack/react-router";
@@ -310,6 +313,7 @@ import { useBlocker } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
+import type * as z from "zod";
 import { ApiError } from "@/api/api-error";
 import {
   getCreateUserMutationOptions,
@@ -320,7 +324,7 @@ import { CreateUserBody } from "@/api/generated/api.zod";
 import { Button } from "@/shared/ui/button";
 import { TextField } from "@/shared/ui/text-field";
 
-const emptyUser = { email: "", name: "" };
+const emptyUser: z.input<typeof CreateUserBody> = { email: "", name: "" };
 
 /** `fieldInfo`: the form's rendered fields, keyed by name (`email`, `items[0].name`). */
 function submitErrors(error: unknown, fieldInfo: object, t: TFunction<"users">) {
@@ -471,4 +475,5 @@ error under a Russian UI reads `Слишком маленькое значени
 | Base UI `NumberField`, `Slider`, `Progress`, `Meter`, `Combobox` filtering | the browser's locale when `locale` is not passed | pass `locale={i18n.language}` |
 | Base UI direction-aware parts (popup positioning, `Slider`, `ScrollArea`, arrow keys in `Tabs`, `Toolbar`, `Menu`) | `ltr` unless a `DirectionProvider` says otherwise, whatever `<html dir>` is | for a right-to-left language, a provider in `Wrap` that reads `useTranslation()` and renders `<DirectionProvider direction={i18n.dir()}>` |
 | Labels you pass to Base UI (`Toast.Close`'s "Dismiss", an `aria-label`) | whatever you wrote | keys, like any other text |
+| Labels Base UI writes itself: `Toast.Viewport`'s `aria-label="Notifications"`, `NumberField`'s "Increase" and "Decrease" buttons and `aria-roledescription="Number field"` | English, whatever the language; `lint` cannot see them | pass the attribute: `<Toast.Viewport aria-label={t("notifications")}>` in `src/shared/ui/toast.tsx`; a passed prop wins over Base UI's (checked at 1.9.0) |
 | Native validation bubbles, `<input type="date">` pickers, `confirm()` buttons | the browser's UI language | prefer the app's own messages; a `frontend-forms` form sets `noValidate` |

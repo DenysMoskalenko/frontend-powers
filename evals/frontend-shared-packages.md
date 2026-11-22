@@ -46,7 +46,7 @@
 - an `@/` import inside `packages/`
 - React or `@base-ui/react` in a package's `dependencies` instead of `peerDependencies`
 - TypeScript project references (`composite`, `references`, `tsc -b`)
-- a task runner or release tool other than pnpm (`turborepo`, `lerna`, `@changesets/cli`)
+- a task runner or release tool other than pnpm (`turbo` (Turborepo), `lerna`, `@changesets/cli`)
 
 ### Eval 2 - publishing for another repository
 
@@ -111,7 +111,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `export\s+(\*|\{[^}]*\})\s+from\s+["']\./`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:export\s+(\*|\{[^}]*\})\s+from\s+["']\./)`
 
 **Right answer**: `"\./button"\s*:\s*"\./src/button\.tsx"`
 
@@ -121,7 +121,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:^|\n)\s*"(?:main|types|typings)"\s*:\s*"(?:\./)?dist/|"\.\/dist\/`
+**Wrong answer**: `(?:^|\n)\s*"(?:main|types|typings)"\s*:\s*"(?:\./)?dist/|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:"\.\/dist\/)`
 
 **Right answer**: `"exports"\s*:`
 
@@ -131,7 +131,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `"dependencies"\s*:\s*\{[^}]*"(react|@base-ui/react)"`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:"dependencies"\s*:\s*\{[^}]*"(react|@base-ui/react)")`
 
 **Right answer**: `"peerDependencies"\s*:\s*\{[^}]*"react"\s*:\s*"catalog:"`
 
@@ -141,7 +141,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `pnpm add[^\n]*@changesets\/cli|"@changesets\/cli"\s*:|(?:^|\n)\s*(?:pnpm\s+(?:exec\s+)?|npx\s+)?changeset\s+(?:version|publish)\b`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:pnpm add[^\n]*@changesets\/cli)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:"@changesets\/cli"\s*:)|(?:^|\n)\s*(?:pnpm\s+(?:exec\s+)?|npx\s+)?changeset\s+(?:version|publish)\b`
 
 **Right answer**: `pnpm change`
 
@@ -151,7 +151,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `>>?\s*(\./)?\.npmrc\b`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:>>?\s*(\./)?\.npmrc\b)`
 
 **Right answer**: `~\/\.npmrc|\$HOME\/\.npmrc|--location[= ](?:user|global)\b`
 
@@ -191,7 +191,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `from\s+["']@/shared/`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:from\s+["']@/shared/)`
 
 ### Probe 10 - template copied into a repository
 
@@ -199,7 +199,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `cp\s+-R\b[^\n]*assets/app[^\n]*\s(?:\./)?apps/admin`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:cp\s+-R\b[^\n]*assets/app[^\n]*\s(?:\./)?apps/admin)`
 
 **Right answer**: `apps/\*`
 
@@ -212,3 +212,13 @@
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:"workspace:\*")`
 
 **Right answer**: `src\/shared`
+
+### Probe 12 - a helper both apps need
+
+**Prompt**: "Our repository is a pnpm workspace with `apps/web`, `apps/admin`, `packages/ui` (`@org/ui`) and `packages/api` (`@org/api`). Both apps now need `formatMoney` from apps/web/src/shared/lib/format-money.ts. Where should it live? Make the change."
+
+**Fixture**: empty
+
+**Wrong answer**: `packages/(?:lib|libs|utils?|shared|common|core|helpers)/[\w.-]`
+
+**Right answer**: `packages/ui/src/format-money`

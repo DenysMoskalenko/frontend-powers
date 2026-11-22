@@ -158,17 +158,22 @@ Fix the pattern: move ref access into an effect or handler, copy before changing
 `items.push()` or `items.sort()` on a prop or state compiles without a finding and renders stale
 output, so copy first there too.
 
-The opt-out is the `"use no memo"` directive as the first statement of a function. Use it only
-when a compiled component misbehaves because a third-party hook returns a mutable object that
-changes without a new identity, and say so:
+The opt-out is the `"use no memo"` directive as the first statement of a function, with a `TODO`
+comment naming the library. Use it only when a compiled component misbehaves because a third-party
+hook returns a mutable object that changes without a new identity. The compiler already skips, by
+itself, a component that calls a hook on its built-in known-incompatible list; the directive is for a
+hook it does not know:
 
 ```tsx
-export function DataGrid({ rows }: GridProps) {
-  // TODO: remove when the table hook returns new objects on change; compiled, the grid never re-renders.
+export function SalesChart({ points }: { points: readonly Point[] }) {
+  // TODO: remove when the chart library's useChart returns a new object on change; compiled, the legend goes stale.
   "use no memo";
   ...
 }
 ```
+
+A library with its own compiler guidance is fixed its way instead: a table on TanStack Table 9 reads
+state through its `Subscribe` component (the pick is `tailwind-base-ui`'s), never this directive.
 
 Biome still reports `useReactCompiler` findings inside an opted-out component, so the directive
 is never the fix for a finding.

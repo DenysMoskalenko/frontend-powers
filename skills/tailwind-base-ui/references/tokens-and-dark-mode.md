@@ -75,6 +75,11 @@
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
   }
+
+  /* The heading createAppRouter focuses after a navigation is a reading position, not a control. */
+  h1[tabindex="-1"]:focus-visible {
+    outline: none;
+  }
 }
 
 /* Base UI's scrollbar rules, which <CSPProvider disableStyleElements> stops it injecting. */
@@ -171,7 +176,8 @@ Vite on the built CSS, rewrites each `light-dark(a, b)` into a pair of `--lightn
 ## Add-on: a user-selectable theme
 
 Add this only when the product asks for a light/dark/system switch. The baseline follows the OS
-with no script.
+with no script. The toggle in the root layout adds about 4.6 KB gzip to the entry (measured on the
+scaffold: Base UI `ToggleGroup` and `Toggle`); the entry budget is `frontend-tooling`'s.
 
 How it works: an external, classic, render-blocking script in `<head>` copies a stored choice to
 `<html data-theme>` before first paint; no stored choice means no attribute and the CSS follows the
@@ -310,7 +316,8 @@ test("anything but light or dark is read as system", () => {
 ```
 
 The toggle, a Base UI toggle group. Pressing the pressed item again yields `[]`, which keeps the
-current choice.
+current choice. In a translated app the labels, `aria-label` included, are `t()` calls inside the
+component (`frontend-i18n`): no gate finds text in a record.
 
 ```tsx,verify
 // file: src/shared/ui/theme-toggle.tsx
@@ -352,5 +359,6 @@ export function ThemeToggle() {
 ```
 
 Render `<ThemeToggle />` in the root layout's header. The E2E axe scan then also needs a pass with
-each explicit choice; that test is `frontend-testing`'s. `theme-color` metas belong to
+each explicit choice, stored before the page loads; `frontend-testing`'s Playwright reference shows
+it. `theme-color` metas belong to
 `mobile-native`; if the app has them, `theme.js` updates them too.

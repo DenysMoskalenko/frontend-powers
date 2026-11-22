@@ -74,3 +74,40 @@ test("array items use TanStack Form's index syntax in both validation shapes", (
   expect(axum.fieldErrors).toEqual({ "items[0].name": "length" });
   expect(fastApi.fieldErrors).toEqual({ "items[0].name": "Field required" });
 });
+
+test("pydantic's error-type prefix is dropped from a FastAPI field message", () => {
+  const error = toApiError(response(422), {
+    detail: [
+      { type: "value_error", loc: ["body", "name"], msg: "Value error, name is reserved" },
+      { type: "assertion_error", loc: ["body", "email"], msg: "Assertion failed, not allowed" },
+      { type: "assertion_error", loc: ["body", "role"], msg: "Assertion failed, " },
+    ],
+  });
+
+  expect(error.fieldErrors).toEqual({
+    name: "name is reserved",
+    email: "not allowed",
+    role: "invalid",
+  });
+});
+
+test("a FastAPI field named like an Object.prototype member keeps its message", () => {
+  const error = toApiError(response(422), {
+    detail: [
+      { loc: ["body", "constructor"], msg: "required" },
+      { loc: ["body", "toString"], msg: "too long" },
+    ],
+  });
+
+  expect(error.fieldErrors).toEqual({ constructor: "required", toString: "too long" });
+});
+
+test("a hostile, deeply nested error body still becomes an ApiError", () => {
+  let details: Record<string, unknown> = { leaf: [{ code: "x", message: "deep" }] };
+  for (let level = 0; level < 5_000; level++) details = { nested: details };
+
+  expect(toApiError(response(422), { error: "validation failed", details })).toMatchObject({
+    status: 422,
+    message: "validation failed",
+  });
+});

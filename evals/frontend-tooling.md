@@ -4,7 +4,7 @@
 
 **Should load**
 
-1. "`pnpm add -D @testing-library/jest-dom@8.0.0` fails with `ERR_PNPM_NO_MATURE_MATCHING_VERSION`, how do I get it in"
+1. "`pnpm add -D @testing-library/jest-dom@8.1.0` fails with `ERR_PNPM_NO_MATURE_MATCHING_VERSION`, how do I get it in"
 2. "pnpm install dies with `ERR_PNPM_IGNORED_BUILDS` `Ignored build scripts: esbuild@0.28.2`, what now"
 3. "add zustand to the project"
 4. "tsc says `TS5102: Option 'baseUrl' has been removed` after I pasted our old tsconfig, how do I keep the @ alias"
@@ -29,15 +29,15 @@
 
 ### Eval 1 - a dependency younger than the cooldown
 
-**Prompt**: "We need `@testing-library/jest-dom` 8.0.0, it was released this morning. `pnpm add -D @testing-library/jest-dom@8.0.0` fails with `ERR_PNPM_NO_MATURE_MATCHING_VERSION`. Get it installed."
+**Prompt**: "We need `@testing-library/jest-dom` 8.1.0, it was released this morning. `pnpm add -D @testing-library/jest-dom@8.1.0` fails with `ERR_PNPM_NO_MATURE_MATCHING_VERSION`. Get it installed."
 
 **Fixture**: scaffold
 
 **Must produce**:
 
 - names the cause: `minimumReleaseAge: 4320` in `pnpm-workspace.yaml`, a three-day cooldown
-- keeps the installed mature version, says 8.0.0 is inside the cooldown and what the cooldown protects against, and asks the user to confirm before adding an exception
-- the exception it proposes for after that confirmation: a `minimumReleaseAgeExclude` entry for exactly `"@testing-library/jest-dom@8.0.0"` (plus every other package the error names, each exact) with a comment naming the date to remove it
+- keeps the installed mature version, says 8.1.0 is inside the cooldown and what the cooldown protects against, and asks the user to confirm before adding an exception
+- the exception it proposes for after that confirmation: a `minimumReleaseAgeExclude` entry for exactly `"@testing-library/jest-dom@8.1.0"` (plus every other package the error names, each exact) with a comment naming the date to remove it
 - `pnpm check` after the change
 
 **Must not produce**:
@@ -46,7 +46,7 @@
 - a `--config.minimum-release-age` style flag on the install command
 - a bare package name, with no version, in `minimumReleaseAgeExclude`
 - the exclusion written before the user confirms, treating the request that names the version as that confirmation
-- a caret range such as `"^8.0.0"` in `package.json`
+- a caret range such as `"^8.1.0"` in `package.json`
 
 ### Eval 2 - an ignored build script
 
@@ -147,7 +147,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `(?:onlyBuiltDependencies|neverBuiltDependencies)"?\s*:`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:onlyBuiltDependencies|neverBuiltDependencies)"?\s*:)`
 
 **Right answer**: `allowBuilds`
 
@@ -165,7 +165,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `(?:rollupOptions|manualChunks|advancedChunks)\s*[:(]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:rollupOptions|manualChunks|advancedChunks)\s*[:(])`
 
 **Right answer**: `codeSplitting`
 
@@ -175,7 +175,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:(?:^|\n)\s*|\[\s*)react\(\s*\{\s*babel\s*:`
+**Wrong answer**: `(?:^|\n)\s*react\(\s*\{\s*babel\s*:|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\[\s*react\(\s*\{\s*babel\s*:)`
 
 ### Probe 5 - adding with a range
 
@@ -183,9 +183,9 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:^|\n)\s*(?:\$\s*)?pnpm add (?:-D )?date-fns@[\^~]?\d+(?:\.\d+)?(?![.\d])|"date-fns"\s*:\s*"[\^~]`
+**Wrong answer**: `(?:^|\n)\s*(?:\$\s*)?pnpm add (?:-D )?date-fns@[\^~]?\d+(?:\.\d+)?(?![.\d])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:"date-fns"\s*:\s*"[\^~])`
 
-**Right answer**: `pnpm add date-fns(?!@)`
+**Right answer**: `pnpm add (?:-[DE] )?date-fns(?:@4\.\S+\.\S+|(?![@\w-]))`
 
 ### Probe 6 - a hook manager with a prepare script
 
@@ -193,7 +193,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `pnpm add[^\n]*\b(?:husky|lint-staged|lefthook)\b|"(?:prepare|lint-staged)"\s*:|npx\s+husky`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:pnpm add[^\n]*\b(?:husky|lint-staged|lefthook)\b)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:"(?:prepare|lint-staged)"\s*:)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:npx\s+husky)`
 
 ### Probe 7 - corepack pin
 
@@ -201,17 +201,17 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `(?:(?:^|\n)\s*|[{,]\s*)"packageManager"\s*:\s*"pnpm@|(?:^|\n)\s*(?:RUN\s+|\$\s*)?corepack enable`
+**Wrong answer**: `(?:^|\n)\s*"packageManager"\s*:\s*"pnpm@|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:[{,]\s*"packageManager"\s*:\s*"pnpm@)|(?:^|\n)\s*(?:RUN\s+|\$\s*)?corepack enable`
 
 **Right answer**: `devEngines`
 
 ### Probe 8 - turning the cooldown off
 
-**Prompt**: "Install vitest 5.1.1, it came out yesterday and fixes our flaky test."
+**Prompt**: "Install vitest 5.1.2, it came out yesterday and fixes our flaky test."
 
 **Fixture**: scaffold
 
-**Wrong answer**: `minimumReleaseAge:\s*(?:\d{1,3}|[0-3]\d{3}|4[0-2]\d\d|43[01]\d)\b|--config\.minimum-release-age|#\s*minimumReleaseAge`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:minimumReleaseAge:\s*(?:\d{1,3}|[0-3]\d{3}|4[0-2]\d\d|43[01]\d)\b)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:--config\.minimum-release-age)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:#\s*minimumReleaseAge)`
 
 ### Probe 9 - tsconfig-paths plugin
 
@@ -219,6 +219,6 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `from\s+["']vite-tsconfig-paths["']|pnpm add[^\n]*vite-tsconfig-paths|(?:^|[\s\[,])tsconfigPaths\(\)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:from\s+["']vite-tsconfig-paths["'])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:pnpm add[^\n]*vite-tsconfig-paths)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:^|[\s\[,])tsconfigPaths\(\))`
 
 **Right answer**: `tsconfigPaths:\s*true`

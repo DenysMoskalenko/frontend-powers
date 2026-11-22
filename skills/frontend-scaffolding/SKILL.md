@@ -7,7 +7,7 @@ metadata:
 
 # Frontend Scaffolding (Greenfield Only)
 
-Assumes pnpm 12.21, Node 26.13, Vite 8.3, TypeScript 7.0, orval 8.48, Playwright 1.65.
+Assumes pnpm 12.22, Node 26.13, Vite 8.3, TypeScript 7.0, orval 8.48, Playwright 1.65.
 
 ## Important
 
@@ -16,17 +16,19 @@ Assumes pnpm 12.21, Node 26.13, Vite 8.3, TypeScript 7.0, orval 8.48, Playwright
   exact versions and configs already pass together.
 - Only into a new or empty directory (step 2). When the target already holds an app, stop and
   name the skill that applies.
-- The gate is green before any feature code. A red baseline is a skipped step, never a reason to
-  edit template code, switch off a rule or lower a threshold.
-- Replace the `users` example with the real domain; never ship both.
+- The gate (step 7: `pnpm check`, the build, `pnpm test:e2e`) is green before any feature code. A
+  red baseline is a skipped step, never a reason to edit template code, switch off a rule or lower
+  a threshold.
+- Keep the `users` example until the first real list, detail and form compile, then delete it;
+  never ship both.
 - Day one changes names, the API origin and the example domain only. Versions, lint rules, the
   CSP and the folder layout stay as shipped until their owner in `references/file-map.md` changes
   them; a new origin goes into `PUBLIC_ENV` through `frontend-deploy`.
 
 ## References
 
-- `references/file-map.md` - open to learn what a template file is, whether it is part of the
-  `users` example, and which skill owns it.
+- `references/file-map.md` - open to learn what a template file is, which skill owns it, and the
+  full list of `users` example files to delete.
 
 ## When it applies
 
@@ -34,15 +36,13 @@ Assumes pnpm 12.21, Node 26.13, Vite 8.3, TypeScript 7.0, orval 8.48, Playwright
 | --- | --- |
 | A new client-rendered app, empty directory or a fresh `git init` | this one |
 | A new app in a subdirectory of an existing repository (`web/` beside a backend) | this one, with "In an existing repository" below |
-| A feature, page or endpoint in an existing app | `frontend-project-structure`, then the domain skill |
-| Bringing an existing app onto this stack | not a scaffold: change it in place with `frontend-tooling` and the domain skills |
-| A second deployable next to an existing app | `frontend-shared-packages` |
+| Bringing an existing app onto this stack | not a scaffold: `frontend-project-structure` (its adoption reference gives the order of single-concern changes) |
 | A server-rendered or static content site | out of scope: this stack is client-rendered only; say so |
 
 ## 1. Prerequisites
 
-`git`, network access, and any `pnpm` on the `PATH` (it switches itself to 12.21.0). Without
-pnpm: `npm install --global pnpm@12.21.0`; on `EACCES` ask the user to install it, never `sudo`.
+`git`, network access, and any `pnpm` on the `PATH` (it switches itself to 12.22.0). Without
+pnpm: `npm install --global pnpm@12.22.0`; on `EACCES` ask the user to install it, never `sudo`.
 
 ## 2. Copy the template and rename
 
@@ -84,9 +84,9 @@ pnpm exec playwright install chromium   # once per machine; on Linux add --with-
 `--with-deps` needs root; without root, ask the user to run
 `sudo pnpm exec playwright install-deps chromium`.
 
-From `devEngines`, pnpm switches to 12.21.0 and installs Node 26.13.1 into the project; `pnpm`
+From `devEngines`, pnpm switches to 12.22.0 and installs Node 26.13.1 into the project; `pnpm`
 scripts and `pnpm exec` run on that Node, a bare `node` does not. Green ends with
-`Done in ... using pnpm v12.21.0`. A frozen-lockfile error means `package.json` was edited: revert
+`Done in ... using pnpm v12.22.0`. A frozen-lockfile error means `package.json` was edited: revert
 it.
 
 ## 5. Install the hooks
@@ -127,7 +127,7 @@ every Playwright test passes. A build reads no `.env.development`, hence the exp
 | --- | --- |
 | `PUBLIC_API_ORIGIN is not set` from `pnpm build` | the origin was not exported for the build |
 | `Executable doesn't exist` from Playwright | step 4's browser install was skipped |
-| `Not in a Git repository` from `pnpm hooks` | step 3 was skipped |
+| `Not in a Git repository` from `pnpm hooks` | step 3 was skipped; never automate it with a `prepare` script (the container build has no `.git`) |
 | `ERR_CONNECTION_REFUSED` or `ECONNREFUSED` from Playwright | outside CI it reuses any server on 4010 or 4173, another project's too; stop it |
 | an advisory from `pnpm audit` | published after the lockfile: `frontend-tooling` |
 
@@ -154,15 +154,16 @@ When `<dest>` is a subdirectory of a repository:
   not cover the app.
 - `AGENTS.md`, `CLAUDE.md` and `.editorconfig` stay and apply to `<dest>` only; `.vscode/` applies
   when `<dest>` is opened as the workspace folder.
-- Commit only `<dest>` (step 8's `git add -A .`), and only when the user asked for a commit.
+- Stage `<dest>` (`git add -A .` from it) and the root CI file you merged, by path; never
+  `git add -A` at the root. Commit only when the user asked.
 
 ## Connect the real backend
 
 1. Copy the backend's document over `openapi.json`, run `pnpm format`, and commit it: CI fails
    when `pnpm api:generate` changes the generated client.
 2. `pnpm api:generate` rewrites `src/api/generated/`; never edit it.
-3. `pnpm exec tsc` now fails only in the example files listed below, unless the backend still has
-   `/users`.
+3. `pnpm exec tsc` now fails only in the example files (`references/file-map.md`), unless the
+   backend still has `/users`.
 4. `PUBLIC_API_ORIGIN` stays a bare origin, never with a path; a path prefix the document's paths
    already include needs nothing. A prefix they leave out, or an error body other than axum
    `ErrorBody`, FastAPI `detail` or RFC 9457, is handled on this side by `tanstack-query-api`,
@@ -171,22 +172,9 @@ When `<dest>` is a subdirectory of a repository:
 
 ## Replace the example domain
 
-The example is everything named `users`:
-
-- `src/routes/users/` - `index.tsx` (list with paging in the URL and the past-the-end redirect),
-  `$userId.tsx` (detail; a malformed id or a 404 is not-found), `new.tsx` (form), each with its
-  `.test.tsx` and each page with its `<title>`.
-- `src/features/users/` - `user-table.tsx`, `user-details.tsx`, `create-user-form.tsx`,
-  `pagination.ts` and its test.
-- `src/test/factories/user.ts`.
-- `e2e/smoke.spec.ts` and `e2e/stub-api.ts`.
-- `--grid-template-columns-label` in `src/styles.css` (only `user-details.tsx` uses `grid-cols-label`).
-- Lines in skeleton files: the two nav links and the not-found link in `src/routes/__root.tsx`,
-  the redirect target in `src/routes/index.tsx`, the redirect test in `src/routes/index.test.tsx`,
-  the line under the `README.md` heading.
-
-`/users` in `src/api/*.test.ts`, `deploy/headers.test.ts` and `biome-plugins/boundaries.test.ts`
-is test data: keep it.
+The example is everything named `users` (list in `references/file-map.md`); `/users` in
+`src/api/*.test.ts`, `deploy/headers.test.ts` and `biome-plugins/boundaries.test.ts` is test data:
+keep it.
 
 Write the first real list, detail and form in the example's shapes; delete the example as soon as
 they compile. Then:

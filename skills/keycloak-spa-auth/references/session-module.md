@@ -7,6 +7,7 @@
 - [`src/app/keycloak.ts`](#srcappkeycloakts)
 - [keycloak-js 26.2 facts](#keycloak-js-262-facts)
 - [`src/main.tsx` and `src/app/env.ts`](#srcmaintsx-and-srcappenvts)
+- [The CSP: `deploy/headers.ts` and `vite.config.ts`](#the-csp-deployheadersts-and-viteconfigts)
 - [`src/app/router.tsx`](#srcapproutertsx)
 - [`src/routes/__root.tsx`](#srcroutes__roottsx)
 - [The guard and a protected route](#the-guard-and-a-protected-route)
@@ -29,12 +30,14 @@ reference shows the combined files.
 | `src/app/keycloak.ts` | new | `startKeycloak`, the only importer of `keycloak-js` |
 | `src/main.tsx` | changed | `startKeycloak(...).then(render, startFailed)`; `render` creates the session, moves the scaffold's `configureApi` call inside with `getToken` and `retryToken`, and passes `session` to `createAppRouter` |
 | `src/app/env.ts` | changed | `authOrigin`; the rest of `PUBLIC_AUTH_ORIGIN` is `frontend-deploy`'s procedure |
+| `deploy/headers.ts`, `headers.test.ts`, `vite.config.ts` | changed | the Keycloak origin in the CSP's `form-action`, for the sign-out form |
 | `src/app/router.tsx` | changed | a required `session: Session` key in the parameter, `session` in `context` |
 | `src/routes/__root.tsx` | changed | `session: Session` in the context type; Sign in or Sign out at the end of the nav |
 | `src/routes/_signed-in.tsx` | new | the guard; protected routes move under `src/routes/_signed-in/` |
 | `src/shared/ui/route-error.tsx` | changed | a 403 reads as no access, in the title and the heading |
 | `src/shared/lib/safe-url.ts`, `safe-url.test.ts` | new, or present | `frontend-deploy`'s files, unchanged: `sameOriginPath` checks the return path |
 | `src/test/identity.ts`, `src/test/render-route.tsx` | new, changed | the test seam: a `session` option, `configureApi` given its token functions (auth-tests reference) |
+| `e2e/fixtures.ts`, `e2e/keycloak-realm.ts`, `e2e/sign-out.spec.ts`, `playwright.config.ts`, both CI files | changed, new | a real Keycloak for `pnpm test:e2e` (auth-tests reference) |
 
 `features/` and `shared/` cannot import `src/app/`, so no component there reads the session: a route
 reads `context.session` and passes what a feature needs as props.
@@ -85,14 +88,19 @@ export function createSession(provider: IdentityProvider): Session {
   let forcing: Promise<string | undefined> | undefined;
   let ended = false;
 
-  // Only the fact travels between tabs; each tab holds its own tokens.
-  const tabs = new BroadcastChannel("session");
+  // Only the fact travels between tabs; each tab holds its own tokens. Named after Vite's `base`, so
+  // two apps under one origin do not sign each other out.
+  const tabs = new BroadcastChannel(`session:${import.meta.env.BASE_URL}`);
   tabs.onmessage = (event) => {
     if (event.data === SIGNED_OUT && provider.userId()) void provider.signIn(currentPath());
   };
   // Sent from the page the logout came back to: a tab told earlier signs in again before the
   // logout lands, gets a code the logout then invalidates, and fails to start.
   if (provider.justSignedOut) tabs.postMessage(SIGNED_OUT);
+  // A page the back-forward cache restores missed that message and still holds its tokens and data.
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) location.reload();
+  });
 
   const end = () => {
     if (ended) return;
@@ -155,6 +163,8 @@ function currentPath() {
 - Sign-out tells the other tabs only from the page Keycloak sends back, when the session has ended
   (`justSignedOut`). Posted before leaving, the other tabs reached Keycloak while the session still
   lived, and their code exchange then failed: reproduced against Keycloak 26.8.
+- A page restored from the back-forward cache (`pageshow` with `persisted`) reloads: it may have
+  missed the sign-out message, and it still holds the tokens and data it had when it was left.
 
 ## `src/app/keycloak.ts`
 
@@ -171,8 +181,9 @@ interface KeycloakSettings {
   clientId: string;
 }
 
-const RETURN_PATH_KEY = "auth.return-path";
-const SIGNED_OUT_KEY = "auth.signed-out";
+// Prefixed with Vite's `base`: two apps under one origin share a tab's sessionStorage.
+const RETURN_PATH_KEY = `${import.meta.env.BASE_URL}auth.return-path`;
+const SIGNED_OUT_KEY = `${import.meta.env.BASE_URL}auth.signed-out`;
 
 /**
  * Runs once before the first render. Completes a sign-in when the URL carries Keycloak's answer,
@@ -190,6 +201,9 @@ export async function startKeycloak(settings: KeycloakSettings): Promise<Identit
     // Its session iframe needs third-party cookies, which Safari and Firefox block.
     checkLoginIframe: false,
     redirectUri: appUrl,
+    // A form POST keeps the ID token, which spares the user Keycloak's confirmation page, out of
+    // every URL; the CSP's form-action allows the Keycloak origin for it.
+    logoutMethod: "POST",
   });
   const justSignedOut = take(SIGNED_OUT_KEY) !== null && !signedIn;
   if (signedIn) {
@@ -217,8 +231,7 @@ export async function startKeycloak(settings: KeycloakSettings): Promise<Identit
     async signOut() {
       // The page Keycloak sends back reads it and tells the other tabs.
       save(SIGNED_OUT_KEY, "1");
-      // Carries id_token_hint while the ID token is held, so Keycloak skips its confirmation page.
-      location.replace(keycloak.createLogoutUrl());
+      await keycloak.logout();
       return new Promise<never>(() => {});
     },
     justSignedOut,
@@ -247,6 +260,8 @@ function take(key: string) {
 
 - The return path and the sign-out flag are the only entries the module writes, both in
   `sessionStorage` and both removed on the next start; tokens stay in the keycloak-js instance.
+- `logout()` appends a hidden form carrying `id_token_hint`, `client_id` and
+  `post_logout_redirect_uri` and submits it; no request URL carries the ID token.
 - The return path is a router path, without Vite's `base`; `sameOriginPath` turns anything that
   is not a path of this origin into `/`, and the `.` prefix keeps the result below the app's root.
 
@@ -258,6 +273,7 @@ Read in `keycloak-js` 26.2.5 `lib/keycloak.js` and `lib/keycloak.d.ts`; the beha
 | Item | Fact |
 |---|---|
 | `new Keycloak({ url, realm, clientId })` | builds the endpoints from `url` and `realm` with no request; a string argument fetches a JSON file instead |
+| import | `import Keycloak from "keycloak-js"`: ESM only, exports `.` and `./authz`; older examples import `keycloak-js/dist/keycloak` |
 | `init()` twice | throws `A 'Keycloak' instance can only be initialized once.`: create one instance, outside React (StrictMode runs effects twice) |
 | `init()` resolves | `true` only after it processed a valid callback in the URL (or `token`/`refreshToken` options); `false` otherwise. It rejects when the callback carries `error=` (with the plain object `{ error, error_description }`, not an `Error`) or the code exchange fails (run) |
 | callback handling | reads `code`, `state`, `session_state`, `iss`, `error*` from the fragment, removes them with `history.replaceState`, and looks the `state` up in `localStorage` (`kc-callback-<state>`, one hour, removed on use; a cookie when storage is blocked). An unknown `state` is ignored and `init` resolves `false` |
@@ -272,7 +288,7 @@ Read in `keycloak-js` 26.2.5 `lib/keycloak.js` and `lib/keycloak.d.ts`; the beha
 | refresh failure | a 400 from the token endpoint clears every token before the rejection reaches the caller; a network error or 5xx keeps them (run) |
 | `clearToken()` | `Promise<void>` since 26.2; fires `onAuthLogout`; with `loginRequired` it then calls `login()` |
 | `isTokenExpired(s)` | throws `Not authenticated` without a token; corrects for `timeSkew`, computed from `iat` at each token set |
-| `createLogoutUrl()` | GET to `/protocol/openid-connect/logout` with `client_id`, `post_logout_redirect_uri` and `id_token_hint` while the ID token is held (run) |
+| `logoutMethod` (init option) | default `"GET"`: `logout()` replaces the page with the logout URL, `id_token_hint` in its query. `"POST"`: `logout()` submits a hidden form to `/protocol/openid-connect/logout` with `id_token_hint` (while the ID token is held), `client_id` and `post_logout_redirect_uri`, and `createLogoutUrl()` returns the bare endpoint (run) |
 | refresh request | `POST <realm>/protocol/openid-connect/token` with `credentials: "include"`, so the realm's CORS must allow the app origin |
 | events | `onReady`, `onAuthSuccess`, `onAuthError`, `onAuthRefreshSuccess`, `onAuthRefreshError`, `onAuthLogout`, `onTokenExpired` (a `setTimeout` at expiry), `onActionUpdate`. The session reads state on demand and assigns none |
 | nonce, state | generated and checked by keycloak-js (`useNonce` default `true`); it does not verify token signatures |
@@ -339,14 +355,256 @@ export const env = {
 `PUBLIC_AUTH_ORIGIN` goes through `frontend-deploy`'s procedure for a new origin; `env.ts` is one of
 its steps.
 
+## The CSP: `deploy/headers.ts` and `vite.config.ts`
+
+The sign-out form posts to Keycloak, so `form-action` gains the Keycloak origin and nothing else:
+`form-action 'self' <PUBLIC_AUTH_ORIGIN>`. The scaffold's `deploy/headers.ts` with a second,
+optional list of origins, `formOrigins`:
+
+```ts,verify
+// file: deploy/headers.ts
+// The one source of the response headers: `_headers` (Cloudflare), `headers.caddy` (the container)
+// and `vite preview` are all rendered from `headerRules`, so they cannot drift.
+
+type Scope = "all" | "assets";
+
+/**
+ * `connectOrigins`: every origin the browser calls (API, identity provider, realtime, telemetry).
+ * `formOrigins`: every origin a page posts a form to (the identity provider's sign-out).
+ */
+function csp(connectOrigins: readonly string[], formOrigins: readonly string[]) {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self'",
+    ["connect-src 'self'", ...connectOrigins].join(" "),
+    "object-src 'none'",
+    "base-uri 'none'",
+    ["form-action 'self'", ...formOrigins].join(" "),
+    "frame-ancestors 'none'",
+    "require-trusted-types-for 'script'",
+    "trusted-types 'none'",
+  ].join("; ");
+}
+
+function headerRules(
+  connectOrigins: readonly string[],
+  formOrigins: readonly string[],
+): Record<Scope, Record<string, string>> {
+  return {
+    all: {
+      // Everything unhashed revalidates: index.html, the SPA fallback, files from public/.
+      "Cache-Control": "no-cache",
+      "Content-Security-Policy": csp(connectOrigins, formOrigins),
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Resource-Policy": "same-origin",
+    },
+    // Vite writes every content-hashed file, and only those, under /assets/.
+    assets: { "Cache-Control": "public, max-age=31536000, immutable" },
+  };
+}
+
+/** The headers one request path gets. */
+export function headersFor(
+  path: string,
+  connectOrigins: readonly string[],
+  formOrigins: readonly string[] = [],
+) {
+  const { all, assets } = headerRules(connectOrigins, formOrigins);
+  return path.startsWith("/assets/") ? { ...all, ...assets } : all;
+}
+
+// Cloudflare joins a header that two matching rules set with a comma, so the `/assets/*` rule first
+// detaches (`! Name`) what the `/*` rule set.
+export function cloudflareHeaders(
+  connectOrigins: readonly string[],
+  formOrigins: readonly string[] = [],
+) {
+  const { all, assets } = headerRules(connectOrigins, formOrigins);
+  const lines = (headers: Record<string, string>) =>
+    Object.entries(headers).map(([name, value]) => `  ${name}: ${value}`);
+  return [
+    "/*",
+    ...lines(all),
+    "/assets/*",
+    ...Object.keys(assets).map((name) => `  ! ${name}`),
+    ...lines(assets),
+    "",
+  ].join("\n");
+}
+
+// Named snippets that deploy/Caddyfile imports; it applies `assets_headers` to found files only.
+export function caddyHeaders(
+  connectOrigins: readonly string[],
+  formOrigins: readonly string[] = [],
+) {
+  return Object.entries(headerRules(connectOrigins, formOrigins))
+    .flatMap(([scope, headers]) => [
+      `(${scope}_headers) {`,
+      ...Object.entries(headers).map(([name, value]) => `\t${name} ${JSON.stringify(value)}`),
+      "}",
+    ])
+    .join("\n")
+    .concat("\n");
+}
+
+// DNS labels or an IPv6 literal only: WHATWG hosts also allow `* ; , { } ' $`, which would widen the
+// CSP or become a Caddy placeholder.
+const ORIGIN = /^(https?|wss?):\/\/([a-z0-9-]+(\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])(:\d+)?$/;
+
+/** A value that may go into `connect-src` as is: scheme, host and port, nothing else. */
+export const isBareOrigin = (value: string) =>
+  ORIGIN.test(value) && URL.parse(value)?.origin === value;
+```
+
+`deploy/headers.test.ts` keeps its tests and gains one:
+
+```ts,verify,test
+// file: deploy/headers.test.ts
+import { expect, test } from "vitest";
+import { caddyHeaders, cloudflareHeaders, headersFor, isBareOrigin } from "./headers.ts";
+
+const api = ["https://api.example.com"];
+
+test("the CSP allows the app's own scripts and styles and the given origins only", () => {
+  expect(headersFor("/", api)["Content-Security-Policy"]).toBe(
+    "default-src 'self'; script-src 'self'; style-src 'self'; " +
+      "connect-src 'self' https://api.example.com; object-src 'none'; base-uri 'none'; " +
+      "form-action 'self'; frame-ancestors 'none'; " +
+      "require-trusted-types-for 'script'; trusted-types 'none'",
+  );
+});
+
+test("a form may post to the given origins only: the identity provider's sign-out", () => {
+  const policy = headersFor("/", api, ["https://auth.example.com"])["Content-Security-Policy"];
+
+  expect(policy).toContain("; form-action 'self' https://auth.example.com; ");
+  expect(caddyHeaders(api, ["https://auth.example.com"])).toContain(
+    "form-action 'self' https://auth.example.com;",
+  );
+});
+
+test("only hashed assets are cached for a year", () => {
+  expect(headersFor("/users/1", api)["Cache-Control"]).toBe("no-cache");
+  expect(headersFor("/assets/index-abc.js", api)["Cache-Control"]).toBe(
+    "public, max-age=31536000, immutable",
+  );
+});
+
+test("Cloudflare's /assets/* rule detaches the Cache-Control that /* sets", () => {
+  const lines = cloudflareHeaders(api).split("\n");
+  const assets = lines.indexOf("/assets/*");
+
+  expect(lines.slice(assets)).toEqual([
+    "/assets/*",
+    "  ! Cache-Control",
+    "  Cache-Control: public, max-age=31536000, immutable",
+    "",
+  ]);
+});
+
+test("the Caddy snippets carry the same headers, quoted", () => {
+  expect(caddyHeaders(api)).toContain(
+    '(assets_headers) {\n\tCache-Control "public, max-age=31536000, immutable"\n}',
+  );
+  expect(caddyHeaders(api)).toContain('\tX-Content-Type-Options "nosniff"\n');
+});
+
+test.each([
+  "https://api.example.com",
+  "http://localhost:5173",
+  "wss://rt.example.com",
+  "http://[::1]:8080",
+  "https://xn--e1afmkfd.xn--p1ai",
+])("%s is a bare origin", (value) => {
+  expect(isBareOrigin(value)).toBe(true);
+});
+
+// Each would widen the CSP (a wildcard, a second source or directive) or become a Caddy placeholder.
+test.each([
+  "https://*",
+  "https://*.example.com",
+  "wss://*",
+  "https://a;b",
+  "https://a,b",
+  "https://{http.request.header.x}",
+  "https://$x",
+  "https://a'b",
+  "https://api.example.com/",
+  "https://api.example.com 'unsafe-inline'",
+  "data:",
+])("%s is refused", (value) => {
+  expect(isBareOrigin(value)).toBe(false);
+});
+```
+
+`vite.config.ts`, after `frontend-deploy`'s procedure has added `PUBLIC_AUTH_ORIGIN` to
+`PUBLIC_ENV`, gets the edits below. Each is placed by a line that the scaffold and
+`frontend-deploy`'s telemetry add-on both leave in place, so the two add-ons apply in either order
+and give the same file; that add-on's reference shows the file with both.
+
+1. Directly above `const ENTRY_BUDGET_BYTES`:
+
+```ts
+// keycloak-js posts its sign-out form there, so the ID token stays out of every URL.
+const FORM_ACTION_ENV = ["PUBLIC_AUTH_ORIGIN"];
+```
+
+2. The signature becomes
+   `function securityHeaders(names: readonly string[], formNames: readonly string[]): Plugin {`,
+   and `let formOrigins: string[] = [];` goes directly below `let origins: string[] = [];`.
+3. In `configResolved`, the per-name check becomes a named function that returns a list. On the
+   bare scaffold it is the `origins = names.map((name) => { ... });` callback: it becomes
+   `const toOrigins = (name: string) => { ... };`, its `return value;` becomes `return [value];`,
+   and `origins = names.flatMap(toOrigins);` follows it. The telemetry add-on makes the same
+   change; once `toOrigins` exists, skip that part. Then, directly below
+   `origins = names.flatMap(toOrigins);`, add `formOrigins = formNames.flatMap(toOrigins);`, so a
+   form origin passes the same bare-origin check.
+4. `generateBundle` and the preview middleware pass `formOrigins` as the last argument, in the
+   form Biome gives them, and `plugins` calls `securityHeaders(PUBLIC_ENV, FORM_ACTION_ENV)`:
+
+```ts
+this.emitFile({
+  type: "asset",
+  fileName: "_headers",
+  source: cloudflareHeaders(origins, formOrigins),
+});
+this.emitFile({
+  type: "asset",
+  fileName: "headers.caddy",
+  source: caddyHeaders(origins, formOrigins),
+});
+```
+
+```ts
+for (const [name, value] of Object.entries(
+  headersFor(request.url ?? "/", origins, formOrigins),
+)) {
+```
+
+`pnpm build` then writes `form-action 'self' <the auth origin>` into `dist/_headers` and
+`dist/headers.caddy`, and `vite preview` sends it; the end-to-end spec in the auth-tests reference
+asserts the header.
+
 ## `src/app/router.tsx`
+
+The scaffold's file with `session` added to the parameter and the context; nothing else changes.
 
 ```tsx,verify
 // file: src/app/router.tsx
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { Toast } from "@base-ui/react/toast";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { createRouter, type RouterHistory } from "@tanstack/react-router";
+import {
+  createRouter,
+  parseSearchWith,
+  type RouterHistory,
+  stringifySearchWith,
+} from "@tanstack/react-router";
 import { ApiError } from "@/api/api-error";
 import type { Session } from "@/app/session";
 import { routeTree } from "@/routeTree.gen";
@@ -358,6 +616,14 @@ const NOTICES = {
   refresh: "Could not refresh the data",
   mutation: "The change was not saved",
 } as const;
+
+// The default parser rewrites `?q=1.50` to 1.5 and ids past 2^53 to another number: a top-level
+// value is a number only when it prints back as typed, so free text and long ids stay text.
+const exactJson = (value: string): unknown => {
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed === "number" && String(parsed) !== value) throw new Error("not exact");
+  return parsed;
+};
 
 /** The whole app: route tree, QueryClient, providers. `main.tsx` and every route test build it. */
 export function createAppRouter({
@@ -374,10 +640,12 @@ export function createAppRouter({
       description: error instanceof ApiError && error.requestId && `Request id: ${error.requestId}`,
     }),
   );
-  return createRouter({
+  const router = createRouter({
     routeTree,
     context: { queryClient, session },
     ...(history && { history }),
+    parseSearch: parseSearchWith(exactJson),
+    stringifySearch: stringifySearchWith(JSON.stringify, exactJson),
     defaultPreload: "intent",
     // Query owns freshness: the router always runs loaders, and they read the cache.
     defaultPreloadStaleTime: 0,
@@ -395,6 +663,15 @@ export function createAppRouter({
       </CSPProvider>
     ),
   });
+  // A screen reader hears nothing after a client-side navigation unless focus moves to the new page.
+  // Not on the first render or a search-only change; `preventScroll` leaves scroll restoration alone.
+  router.subscribe("onRendered", ({ fromLocation, pathChanged }) => {
+    const heading = fromLocation && pathChanged && document.querySelector<HTMLElement>("main h1");
+    if (!heading) return;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  });
+  return router;
 }
 
 declare module "@tanstack/react-router" {
@@ -485,8 +762,12 @@ export const Route = createFileRoute("/_signed-in")({
   only cancels the preload. Without the check, hovering a protected link signs the user in.
 - `location.href` is the router's path, search and hash (no origin, no `base`): the return path.
 
-Protected routes move into `src/routes/_signed-in/`; their URLs do not change. `git mv` the file and
-update the id in its `createFileRoute(...)` call (the generator rewrites it on the next `pnpm dev`):
+Protected routes move into `src/routes/_signed-in/`; their URLs do not change. `git mv` the file (its
+test with it) and update the id in its `createFileRoute(...)` call, then run `pnpm test` or
+`pnpm dev` once before `pnpm check`: `tsc` reads the committed `routeTree.gen.ts`, which only the
+router plugin rewrites, and fails with `TS2345: Argument of type '"/_signed-in/users/"' is not
+assignable to parameter of type 'keyof FileRoutesByPath | undefined'` until then. A complete route file another skill gives for `src/routes/users/…` then lives at
+`src/routes/_signed-in/users/…` with the id `/_signed-in/users/…`; merge it into the moved file.
 
 ```tsx,verify
 // file: src/routes/_signed-in/account.tsx
@@ -606,8 +887,15 @@ fixed number without the build (the plugin is
 `frontend-tooling`'s); a dynamic `import("@/app/keycloak")` only moves the same bytes behind one
 more round trip before first render.
 
-With these files, the scaffold's `pnpm test:e2e` (the production build behind the generated CSP with
-Trusted Types, and the guard fixture that fails on any console error, page error or CSP violation)
-passes. Against a real Keycloak 26.8 (public client, PKCE, refresh-token rotation) the production
-build signs in, refreshes after a 401, signs out without a confirmation page, and a sign-out in one
-tab sends a second signed-in tab to Keycloak's login form, with no CSP violation.
+With these files and the end-to-end files of the auth-tests reference, the scaffold's
+`pnpm test:e2e` passes with the users pages moved under `_signed-in/`: the production build behind
+the generated CSP with Trusted Types, against Keycloak 26.8.2 (public client, PKCE, refresh-token
+rotation) on another site than the app. In Chromium, Firefox and WebKit it signs in, signs out by
+form POST without a confirmation page and back at the app's root, sends a second signed-in tab to
+Keycloak's form through the broadcast, puts `id_token_hint` in no URL and reports no CSP violation.
+
+The back-forward cache, shown in Chromium (Playwright's default `--disable-back-forward-cache`
+removed): a signed-in page left for another site comes back with `persisted` and, without the
+`pageshow` listener, stays signed in; with it, it reloads. A page that receives the sign-out message
+while cached is evicted instead (`notRestoredReasons`: `broadcastchannel-message`). Firefox and
+WebKit under Playwright restored no page at all, so the listener is unproven there.

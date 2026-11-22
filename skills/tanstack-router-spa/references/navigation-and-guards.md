@@ -6,7 +6,7 @@
 - `navigate` and `redirect`
 - A pathless guard layout and context extension
 - `useBlocker`
-- `createAppRouter` options
+- `createAppRouter` options and focus after navigation
 - Pending, error and not-found placement
 
 ## `Link` options
@@ -97,7 +97,7 @@ export function LeavePrompt({ isDirty }: { isDirty: () => boolean }) {
 
 `isDirty` is a function so the blocker reads the state at navigation time: a value passed as a prop is the last render's, which is still dirty right after a successful submit resets the form and blocks the navigation that follows it.
 
-## `createAppRouter` options
+## `createAppRouter` options and focus after navigation
 
 | Option | Scaffold | Default | Why |
 |---|---|---|---|
@@ -105,12 +105,15 @@ export function LeavePrompt({ isDirty }: { isDirty: () => boolean }) {
 | `context` | `{ queryClient }` | — | loaders and guards reach the client without a module singleton |
 | `history` | browser; memory in tests | browser history | `renderRoute` passes `createMemoryHistory({ initialEntries: [path] })` |
 | `defaultPreload` | `"intent"` | `false` | hover, focus or touch on a link runs its loaders, so the next page is often cached |
-| `defaultPreloadStaleTime` | `0` | `30_000` | with the default the router skips a loader preloaded in the last 30 s; with 0 the loader always runs and Query decides from its own `staleTime` |
+| `defaultPreloadStaleTime` | `0` | `30_000` | with the default the router skips a loader preloaded in the last 30 s; with 0 the loader always runs and Query decides from its own `staleTime`. Never remove it: Query owns freshness |
+| `parseSearch`, `stringifySearch` | `parseSearchWith(exactJson)`, `stringifySearchWith(JSON.stringify, exactJson)` | `JSON.parse` on every value | a value becomes a number only when it prints back as typed, so `?q=1.50` and long ids stay text |
 | `scrollRestoration` | `true` | `false` | back and forward restore the scroll position |
 | `Wrap` | `CSPProvider`, `QueryClientProvider`, `ToastProvider` | — | app-wide providers outside the router; `InnerWrap` is for a provider that needs router hooks |
 | `defaultPendingMs`, `defaultPendingMinMs` | not set | `1000`, `500` | see below |
 | `defaultErrorComponent` | `RouteError` | — | every route's error screen, inside its parent's layout; a route's own `errorComponent` overrides it |
 | `notFoundMode` | not set | `"fuzzy"` | an unknown URL renders the nearest matched parent's `notFoundComponent` |
+
+After the router is built, `createAppRouter` subscribes to `onRendered`: when `fromLocation` is set (not the first render) and `pathChanged` (not a search- or hash-only change), it gives the first `h1` inside `main` `tabIndex = -1` and focuses it with `preventScroll: true`, so a screen reader announces the new page and scroll restoration still holds on Back. The pinned router has no focus management of its own. A page therefore renders exactly one `h1`, inside the root layout's `main`, and sets no `tabIndex` itself.
 
 The `Register` declaration at the bottom of `src/app/router.tsx` is what types `Link`, `useNavigate` and `getRouteApi` everywhere; it names `ReturnType<typeof createAppRouter>`, so a new router option needs no type change.
 

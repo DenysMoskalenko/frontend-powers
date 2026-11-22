@@ -6,11 +6,13 @@ Contents:
 - [Data no loader owns](#data-no-loader-owns)
 - [Parallel reads](#parallel-reads)
 - [Mutations and invalidation](#mutations-and-invalidation)
+- [A delete from the entity's own page](#a-delete-from-the-entitys-own-page)
 - [Optimistic UI from the mutation's variables](#optimistic-ui-from-the-mutations-variables)
 - [Optimistic UI in the cache](#optimistic-ui-in-the-cache)
 - [Pagination](#pagination)
 - [Infinite lists](#infinite-lists)
 - [An endpoint outside openapi.json](#an-endpoint-outside-openapijson)
+- [Older v5 and v4 names](#older-v5-and-v4-names)
 
 Every example uses the scaffold's generated client for `list_users`, `get_user` and `create_user`.
 The loader that fills the cache first is `tanstack-router-spa`'s; these blocks are what goes inside it
@@ -156,15 +158,17 @@ true }` because the form shows its own errors (`frontend-forms`).
 
 - Invalidate only what the mutation changed. Only active queries refetch at once; inactive ones are
   marked stale and refetch when next used.
-- After a delete or an update of one entity, `getListUsersQueryKey()` still covers both the lists and
-  that entity's detail key. Use `getGetUserQueryKey(id)` alone when the lists cannot have changed.
+- After an update of one entity, `getListUsersQueryKey()` covers both the lists and that entity's
+  detail key. Use `getGetUserQueryKey(id)` alone when the lists cannot have changed. A delete is the
+  exception: the deleted entity's detail must not be refetched (next section).
 - `setQueryData` on the detail shows the server's answer at once, but does not save a request: the
   list invalidation refetches that detail too while it is on screen.
 - A list off screen keeps its old rows for the loader's `staleTime: "static"` read, invalidated or
   not; removing the inactive entries makes that read wait for the server. The test below pins both.
 - `mutateAsync` returns the data and rejects with the `ApiError`: use it where the caller continues
   (a form's submit handler, navigation to the new entity) and catches. `mutate` returns nothing and
-  never rejects; the error lands in `mutation.error` and the MutationCache toast.
+  never rejects; the error lands in `mutation.error` and, where the QueryClient has the
+  MutationCache notice (`createQueryClient` does), the toast; without one, render `mutation.error`.
 
 ```ts,verify,test
 import { expect, test } from "vitest";
@@ -198,6 +202,85 @@ test("a loader's static read serves an invalidated list until it is removed", as
   await loaderRead();
   expect(listRequests).toBe(2);
 });
+```
+
+## A delete from the entity's own page
+
+A delete started on `/users/$userId` must not leave the detail query mounted while the lists are
+invalidated: the shared key refetches the deleted user, the 404 lands on a query that already has
+data, and the QueryCache handler toasts "Could not refresh the data". In `onSuccess`, first
+`await navigate({ to: "/users" })`, so the detail unmounts, then remove its entry with
+`client.removeQueries({ queryKey: getGetUserQueryKey(id), exact: true })`, then return the list
+invalidation. The test pins both orders; unsubscribing the observer stands in for the navigation.
+
+```ts,verify,test
+import { QueryObserver } from "@tanstack/react-query";
+import { HttpResponse, http } from "msw";
+import { expect, test, vi } from "vitest";
+import { configureApi } from "@/api/fetcher";
+import {
+  getGetUserQueryKey,
+  getGetUserQueryOptions,
+  getListUsersQueryKey,
+  getListUsersQueryOptions,
+} from "@/api/generated/api";
+import { getGetUserMockHandler, getListUsersMockHandler } from "@/api/generated/api.msw";
+import { createQueryClient } from "@/app/query-client";
+import { buildUser } from "@/test/factories/user";
+import { server } from "@/test/server";
+
+const origin = "https://api.test";
+const firstPage = { limit: 20, offset: 0 };
+
+async function detailPageAfterDelete() {
+  configureApi({ baseUrl: origin });
+  const notify = vi.fn();
+  const queryClient = createQueryClient(notify);
+  server.use(
+    getGetUserMockHandler(buildUser({ id: "u1" })),
+    getListUsersMockHandler({ items: [], total: 0, ...firstPage }),
+  );
+  await queryClient.query(getGetUserQueryOptions("u1"));
+  await queryClient.query(getListUsersQueryOptions(firstPage));
+  const detail = new QueryObserver(queryClient, getGetUserQueryOptions("u1"));
+  const leavePage = detail.subscribe(() => {});
+  server.use(
+    http.get(`${origin}/users/u1`, () =>
+      HttpResponse.json({ error: "user not found" }, { status: 404 }),
+    ),
+  );
+  return { notify, queryClient, leavePage };
+}
+
+test("invalidating while the detail is mounted toasts a failed refresh", async () => {
+  const { notify, queryClient, leavePage } = await detailPageAfterDelete();
+
+  await queryClient.invalidateQueries({ queryKey: getListUsersQueryKey() });
+
+  expect(notify).toHaveBeenCalledWith("refresh", expect.anything());
+  leavePage();
+});
+
+test("leaving, removing the detail, then invalidating stays quiet", async () => {
+  const { notify, queryClient, leavePage } = await detailPageAfterDelete();
+
+  leavePage();
+  queryClient.removeQueries({ queryKey: getGetUserQueryKey("u1"), exact: true });
+  await queryClient.invalidateQueries({ queryKey: getListUsersQueryKey() });
+
+  expect(notify).not.toHaveBeenCalled();
+  expect(queryClient.getQueryData(getGetUserQueryKey("u1"))).toBeUndefined();
+});
+```
+
+The `onSuccess` of the delete mutation, with `navigate` from `Route.useNavigate()`:
+
+```ts
+onSuccess: async (_data, _variables, _onMutateResult, { client }) => {
+  await navigate({ to: "/users" });
+  client.removeQueries({ queryKey: getGetUserQueryKey(userId), exact: true });
+  return client.invalidateQueries({ queryKey: getListUsersQueryKey() });
+},
 ```
 
 ## Optimistic UI from the mutation's variables
@@ -380,6 +463,17 @@ export const serverVersionQueryOptions = queryOptions({
 });
 ```
 
+A dynamic segment in such a path goes through `encodeURIComponent`, as the generated client's
+`urlEncodeParameters` does: `` apiFetch(`/files/${encodeURIComponent(name)}/meta`, { signal }) ``.
 The one hand-written key in an app belongs to an endpoint like this one, and it goes away with it.
 This is a stopgap for a read; a write goes through the generated `getXMutationOptions` once the
 backend documents it.
+
+## Older v5 and v4 names
+
+| Older examples write | Correct now |
+|---|---|
+| `onSuccess` / `onError` on `useQuery` | removed in v5; react in the cache handlers or render from `error` |
+| `cacheTime` | `gcTime` |
+| `keepPreviousData: true` | `placeholderData: keepPreviousData` |
+| `isInitialLoading`, `isCancelledError()` | `isLoading`, `instanceof CancelledError` |

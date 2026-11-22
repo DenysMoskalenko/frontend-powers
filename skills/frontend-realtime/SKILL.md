@@ -7,23 +7,22 @@ metadata:
 
 # Realtime: streams and push
 
-Assumes centrifuge 5.8, eventsource-parser 4.1, TanStack Query 5.107, zod 4.6, React 19.3, MSW 3.0.
+Assumes centrifuge 5.8, eventsource-parser 4.1, TanStack Query 5.108, zod 4.6, React 19.3, MSW 3.0.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, use its own modules, helpers and scripts, and say so when it has no equivalent instead of adding one unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If `pnpm-lock.yaml` pins another major version than the line above, follow the project and say which rules may not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 ## Important
 
-- Pick the transport by the table below. Never `new EventSource(...)` against the app's API (it cannot send `Authorization`, a method or a body) and never a token in a URL query string, where proxies and logs keep it.
+- Pick the transport by the table below; never `new EventSource(...)` against the app's API (it cannot send `Authorization`) and never a token in a URL, where proxies and logs keep it.
 - A stream goes through the fetcher's seam (`apiEvents` over `apiResponse`): base URL, bearer token, one retry after a 401, `ApiError` on any non-2xx. No second `fetch` wrapper and no second HTTP error class.
 - One Centrifugo client per router, made by `createRealtime` in `createAppRouter` and provided through `RealtimeContext`; components follow a channel with `useChannel`, whose effect depends on the client and the channel name only. Never construct `Centrifuge` or `WebSocket` in a component, and never at module level.
 - Pushed data lives in the Query cache. A whole entity with a version: `cancelQueries` and then a version-guarded `setQueryData` (`applyPush`). Anything else, and every subscribe that reports `recovered: false`: `invalidateQueries`. Never a store, Context or `useState` copy of server data.
-- Every frame and event is untrusted: zod `safeParse` per message, drop what fails or has an unknown `type`, never `JSON.parse(...) as T`.
 
 ## References
 
-- `references/sse.md` — the changed `src/api/fetcher.ts`, `apiEvents` and the resumable `followEvents`, a streamed query and its component, MSW stream tests with fake timers. Open before reading any `text/event-stream` response.
-- `references/centrifugo.md` — `createRealtime`, `useChannel`, `useRealtimeStatus`, `LiveStatus`, the router wiring, a live route, `applyPush`, auth modes, recovery and server keys, the fake client and the route test. Open before adding or changing a channel.
-- `references/websocket.md` — rules and close-code table for an own protocol, the first-frame handshake, `ws.link` tests. Open only when neither SSE nor Centrifugo fits.
+- `references/sse.md` — the changed `src/api/fetcher.ts`, `apiEvents` and the resumable `followEvents`, a streamed query, a feed on screen, MSW stream tests with fake timers, the stub route a feed needs end to end. Open before reading any `text/event-stream` response.
+- `references/centrifugo.md` — installing it, `createRealtime`, `useChannel`, `useRealtimeStatus`, `LiveStatus`, the router wiring, a live route, `applyPush`, auth modes, recovery, server keys and channel permissions, the fake client and the route test, the Playwright and CI setup with a Centrifugo container. Open before adding or changing a channel.
+- `references/websocket.md` — rules and close-code table for an own protocol, the first-frame handshake with its timeout, `ws.link` tests. Open only when neither SSE nor Centrifugo fits.
 
 ## Choosing the transport
 
@@ -37,24 +36,24 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 
 ## SSE over fetch
 
-- `eventsource-parser/stream`'s `EventSourceParserStream` after a `TextDecoderStream`, with `maxBufferSize` set: the default is unbounded.
-- `src/api/fetcher.ts` exports `apiResponse(path, init)` (a 2xx `Response`, body unread), `apiToken()` and `apiRetryToken(rejected)`; `apiFetch` reads the body of `apiResponse`.
+- `eventsource-parser/stream`'s `EventSourceParserStream` after a `TextDecoderStream`.
+- The add-on adds three exports to the scaffold's `src/api/fetcher.ts` (`references/sse.md`): `apiResponse(path, init)` (a 2xx `Response`, body unread), `apiToken()` and `apiRetryToken(rejected)`; `apiFetch` then reads the body of `apiResponse`.
+- A hand-written path encodes each dynamic segment: `` `/jobs/${encodeURIComponent(jobId)}/log` ``.
 - Pass the query's `signal` to `apiEvents`; Query aborts it when the last reader unmounts.
 - Branch on `event.event`, skip unknown names, end on `done`; a stream that closes without it failed.
 - The stream's failure is the query's `error`, rendered where the stream is. `reportError` takes only failures nobody awaits (a channel that could not open or was refused).
-- Resume only GET feeds the server keys by event id: `followEvents` retries drops and 5xx with full jitter up to 30 s, sends `Last-Event-ID`, stops on a 4xx.
+- Resume only GET feeds the server keys by event id: `followEvents` retries drops and 5xx with full jitter, sends `Last-Event-ID`, stops on a 4xx. It reads a server `retry:` as at least one second, restarts the backoff only after a connection held 60 s, and with `idleMs` (twice a promised heartbeat) drops a silent connection.
+- A feed on screen writes into the Query cache and is read through a query that never fetches; what ends it goes to `reportError`.
 
 ## Centrifugo
 
 - `PUBLIC_REALTIME_ORIGIN` is the origin as dialled, `wss://rt.example.com`; the client URL is `` `${env.realtimeOrigin}/connection/websocket` ``.
-- `pnpm add centrifuge` stops on `ERR_PNPM_IGNORED_BUILDS` for `protobufjs`: decline it with `protobufjs: false`, as the reference shows.
-- `centrifuge` is imported on the first subscribe: a chunk of about 23 KB gzip only screens that follow a channel fetch; the entry grows about 0.7 KB.
-- Auth: `getData: async () => ({ token: await apiToken() })` for the connect proxy; it runs before every connect attempt, so a reconnect carries the session's current token. `getToken` (JWT mode) runs only when the token is missing or expired, not per reconnect.
-- Codes 3500 to 3999 and 4500 to 4999 are terminal: centrifuge-js does not reconnect and `createRealtime` does not call `connect()` again.
+- `centrifuge` is imported on the first subscribe, never statically; the reference has the install (`ERR_PNPM_IGNORED_BUILDS` for `protobufjs`) and the entry cost.
+- Auth: `getData: async () => ({ token: await apiToken() })` for the connect proxy; it runs before every connect, so a reconnect carries the current token (`getToken`, JWT mode, runs only when the token is missing or expired).
 - Reconnect backoff, ping loss, `online` and the back/forward cache are built into centrifuge 5.8. Add no reconnect, heartbeat or `visibilitychange` code around it.
-- A channel `users:<id>` needs a `users` entry under the server's `namespaces`, or the subscribe fails with 102 `unknown channel`.
+- A channel that carries one user's data is user-limited (`notifications:#<userId>` with `allow_user_limited_channels`) or checked by a subscribe proxy: `allow_subscribe_for_client` opens the whole namespace to every signed-in user.
 - Show `LiveStatus` on every screen that follows a channel. It reads "Live" only while every followed channel is subscribed; a refused channel reads off and is reported once.
-- Recovery is a server setting (`force_recovery`, `history_size`, `history_ttl`); recovered publications arrive as ordinary `publication` events after `subscribed`.
+- Recovery and namespaces are server settings; recovered publications arrive as ordinary `publication` events after `subscribed`.
 
 ## Push to cache
 
@@ -66,16 +65,14 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 | deleted | `removeQueries({ queryKey, exact: true })` for the detail, invalidate the lists |
 | `subscribed` with `recovered: false`, the first subscribe included (it covers the gap after the loader's fetch) | invalidate everything the channel feeds |
 
-- A list invalidation here behaves as after a mutation: what it also refetches and what an off-screen list shows on return are `tanstack-query-api`'s invalidation rules.
+- A list invalidation here follows `tanstack-query-api`'s invalidation rules, as after a mutation.
 - Without `cancelQueries` a fetch in flight lands its older snapshot after the push. `invalidateQueries` does not fix that: it refetches active queries only.
-- A push replaces an optimistic value; keep the optimistic recipe's `onSettled` invalidation, which repairs an `onError` rollback over a newer push.
 
 ## Configuration and CSP
 
 The steps for a new `PUBLIC_*` origin are `frontend-deploy`'s.
 
 - `connect-src` must hold each origin with the scheme the browser dials: Chromium blocks `wss://rt.example.com` under `connect-src https://rt.example.com`. An SSE endpoint on the API origin needs nothing new.
-- The bare-origin check accepts `wss://` and `ws://` values; `.env.development` holds `ws://localhost:<port>`.
 
 ## Testing
 
@@ -84,12 +81,11 @@ The steps for a new `PUBLIC_*` origin are `frontend-deploy`'s.
 | A screen fed by a channel | route test; `vi.mock("centrifuge", ...)` once in `src/test/setup.ts`, `lastCentrifuge()` and `emit("publication", { data })` |
 | A stream | MSW `http.get` or `http.post` returning a `ReadableStream` with `Content-Type: text/event-stream` |
 | A raw socket | MSW `ws.link(url)` with a `connection` listener |
-| Backoff and reconnect | `vi.useFakeTimers()` and `vi.advanceTimersByTimeAsync` |
-| The version guard | unit test beside `apply-push.ts` |
+| A Playwright spec | `e2e/fixtures.ts` gains a `mockRealtime` fixture option, on by default, that mocks the socket for every spec, in the same change as the first channel; a spec that needs a push switches it off with `test.use({ mockRealtime: false })` and runs against a Centrifugo container |
 
-- `onUnhandledFrame: "error"` covers sockets too: an unhandled one gets an `error` event, but only HTTP requests fail the setup's `afterEach`.
 - `await vi.dynamicImportSettled()` before reading `lastCentrifuge()`.
 - A channel failure test stubs `reportError` as `frontend-testing` shows.
+- A feed in the root layout runs in every route test: answer it once in the setup, under `frontend-testing`'s rule for a request every page makes.
 
 ## Prior-version corrections
 
@@ -108,10 +104,9 @@ The steps for a new `PUBLIC_*` origin are `frontend-deploy`'s.
 
 | About to… | Do this instead |
 | --- | --- |
-| `fetch(env.apiOrigin + ...)` with a hand-built `Authorization` header for a stream | `apiResponse` through `apiEvents` |
-| `new Centrifuge(...)` in a component, a provider effect or at module level | `createRealtime` in `createAppRouter` |
+| `new EventSourceParserStream()` with no options | set `maxBufferSize`: the default buffers without bound |
+| accumulate a stream in `useState` from an effect | `experimental_streamedQuery`, which also aborts on unmount |
+| `JSON.parse(data) as T` for a frame or event | zod `safeParse`; drop what fails or has an unknown `type` |
 | `[channel, onMessage]` as effect dependencies, or `useCallback` around a handler | `useChannel`: `useEffectEvent`, depends on `[realtime, channel]` |
-| `setQueryData` from a push with no `cancelQueries` first | `applyPush` |
 | Refetch on every reconnect | invalidate only on `subscribed` with `recovered: false` |
 | Wrap centrifuge in backoff, ping or `visibilitychange` code | nothing: 5.8 handles it |
-| `connect-src` with only the `https://` form of the realtime host | the `wss://` origin |

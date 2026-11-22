@@ -63,7 +63,9 @@ repos:
 prek runs this file. `pnpm hooks` (`prek install`) writes the git hook once per clone; nothing
 installs it automatically, because a `prepare` script would fail `pnpm install` wherever git is
 absent. `pnpm exec prek run --all-files` runs every hook over the repository;
-`pnpm exec prek run` checks only staged files; `pnpm exec prek validate-config` checks the file.
+`pnpm exec prek run` checks only staged files; `pnpm exec prek validate-config
+.pre-commit-config.yaml` checks the file (without the path it prints `No configs to check` and
+exits 0).
 
 - `repo: builtin` hooks are prek's own Rust implementations of the standard hygiene hooks: no
   Python, no remote repository to pin.
@@ -108,6 +110,8 @@ jobs:
         with:
           cache: true
           require-lockfile: true
+      # Every installed tarball carries a valid registry signature, also through a mirror or proxy.
+      - run: pnpm audit signatures
       - run: pnpm dedupe --check
       - run: pnpm exec biome ci --reporter=default --reporter=github
       - run: pnpm typecheck
@@ -140,9 +144,9 @@ jobs:
   e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # The tag matches @playwright/test in package.json exactly; the image carries the browsers.
+    # Pinned by digest; the tag in the comment equals @playwright/test in package.json. It carries the browsers.
     container:
-      image: mcr.microsoft.com/playwright:v1.65.1-noble
+      image: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.65.1-noble
       options: --user 1001
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -163,12 +167,13 @@ jobs:
 
 | Job | What it proves |
 |---|---|
-| `check` | `pnpm/setup` installs the pnpm and Node that `devEngines` pins, restores the store cache and runs `pnpm install --frozen-lockfile` (`require-lockfile: true`). Then: the lockfile is minimal (`pnpm dedupe --check`), Biome as CI runs it (`biome ci`, annotations through `--reporter=github`), `tsc`, knip, the committed client equals what `openapi.json` generates, Vitest with the coverage gate and a JUnit file, and a production build within the entry budget. |
+| `check` | `pnpm/setup` installs the pnpm and Node that `devEngines` pins, restores the store cache and runs `pnpm install --frozen-lockfile` (`require-lockfile: true`). Then: every installed tarball has a valid registry signature (`pnpm audit signatures`), the lockfile is minimal (`pnpm dedupe --check`), Biome as CI runs it (`biome ci`, annotations through `--reporter=github`), `tsc`, knip, the committed client equals what `openapi.json` generates, Vitest with the coverage gate and a JUnit file, and a production build within the entry budget. |
 | `audit` | `pnpm audit --audit-level=high` against the registry, without installing (`install: false`). |
-| `e2e` | `pnpm test:e2e` inside the Playwright image, whose tag equals `@playwright/test`'s version and carries the browsers; no browser cache. |
+| `e2e` | `pnpm test:e2e` inside the Playwright image, pinned by digest, whose tag comment equals `@playwright/test`'s version; it carries the browsers, so there is no browser cache. |
 
 Every action is pinned by full commit SHA with the version in a comment; an annotated tag must be
-dereferenced to its commit. `permissions: contents: read` and `persist-credentials: false` keep
+dereferenced to its commit. Container images are pinned the same way, by digest with the tag in a
+comment. `permissions: contents: read` and `persist-credentials: false` keep
 the token read-only and out of the workspace. `PUBLIC_API_ORIGIN` is a placeholder: this build
 proves the bundle compiles and fits; deploys build per environment.
 
@@ -186,13 +191,14 @@ workflow:
     on_new_commit: interruptible
 
 variables:
-  PNPM_VERSION: 12.21.0
+  PNPM_VERSION: 12.22.0
   PNPM_CONFIG_STORE_DIR: $CI_PROJECT_DIR/.pnpm-store
   # A placeholder: this build proves the bundle compiles and fits its budget; deploys build per environment.
   PUBLIC_API_ORIGIN: https://api.example.com
 
 default:
-  image: node:26.13.1-trixie-slim
+  # Pinned by digest, like the Dockerfile; the tag is in the comment.
+  image: node@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc # 26.13.1-trixie-slim
   interruptible: true
   # Node 26 ships no corepack. pnpm then switches to devEngines.packageManager and installs devEngines.runtime.
   before_script:
@@ -208,6 +214,8 @@ stages: [check, e2e]
 check:
   stage: check
   script:
+    # Every installed tarball carries a valid registry signature, also through a mirror or proxy.
+    - pnpm audit signatures
     - pnpm dedupe --check
     - pnpm exec biome ci --reporter=default --reporter=gitlab --reporter-file=gl-code-quality.json
     - pnpm typecheck
@@ -238,8 +246,8 @@ audit:
 
 e2e:
   stage: e2e
-  # The tag matches @playwright/test in package.json exactly; the image carries the browsers.
-  image: mcr.microsoft.com/playwright:v1.65.1-noble
+  # Pinned by digest; the tag in the comment equals @playwright/test in package.json. It carries the browsers.
+  image: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.65.1-noble
   script:
     - pnpm test:e2e
   artifacts:
@@ -254,7 +262,7 @@ Keep `PNPM_VERSION` equal to `devEngines.packageManager.version`.
 
 | Job | What it proves |
 |---|---|
-| `default` | Node 26 image without corepack: bootstrap pnpm with npm once, then pnpm switches to the `devEngines` versions and installs with `--frozen-lockfile`. The store lives in the project directory (`PNPM_CONFIG_STORE_DIR`) so the cache keyed on `pnpm-lock.yaml` can keep it. |
+| `default` | Node 26 image, pinned by digest, without corepack: bootstrap pnpm with npm once, then pnpm switches to the `devEngines` versions and installs with `--frozen-lockfile`. The store lives in the project directory (`PNPM_CONFIG_STORE_DIR`) so the cache keyed on `pnpm-lock.yaml` can keep it. |
 | `check` | The same steps as GitHub's `check`, except the generator freshness check: the Node image has no git, so it copies the committed client aside and compares with `diff -r` instead of `git diff`. `biome ci --reporter=gitlab --reporter-file=gl-code-quality.json` feeds the code-quality widget while `--reporter=default` keeps the console readable. The `coverage:` regex reads the `Lines` figure from Vitest's `text-summary`; cobertura and JUnit feed the merge request widgets. |
 | `audit` | Overrides `before_script` to skip the install, and `cache: []` to skip the store. |
 | `e2e` | The Playwright image; artifacts only on failure. |
@@ -266,11 +274,11 @@ request is open, and run on the default branch and tags; `interruptible` with
 ## Keeping the gates in step
 
 Biome, `tsc` and knip run in all four places: `pnpm check`, the prek hooks and both CI files.
-The hooks add `pnpm audit` and skip Vitest; CI adds `pnpm dedupe --check`, the generator freshness
-check, coverage and the build. A new gate step (a script, a generator drift check, a new tool)
+The hooks add `pnpm audit` and skip Vitest; CI adds `pnpm audit signatures`, `pnpm dedupe --check`,
+the generator freshness check, coverage and the build. A new gate step (a script, a generator drift check, a new tool)
 goes into `pnpm check` or a hook and into both CI files in the same commit. Both CI files always carry the same jobs. A version that
-appears in CI (the Playwright image tag, `PNPM_VERSION`, the Node image tag) changes in the same
-commit as `package.json`.
+appears in CI (`PNPM_VERSION`, the Playwright and Node images with their digests and tag
+comments) changes in the same commit as `package.json`.
 
 ## Deploy jobs
 

@@ -7,28 +7,23 @@ metadata:
 
 # Shared packages
 
-Assumes pnpm 12.21, Node 26.13, TypeScript 7.0, Vite 8.3, Tailwind CSS 4.3, Biome 2.6, knip 6.45, orval 8.48.
+Assumes pnpm 12.22, Node 26.13, TypeScript 7.0, Vite 8.3, Tailwind CSS 4.3, Biome 2.6, knip 6.46, orval 8.48.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, use its own modules, helpers and scripts, and say so when it has no equivalent instead of adding one unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If `pnpm-lock.yaml` pins another major version than the line above, follow the project and say which rules may not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 Component API design for kit components belongs to `vercel-composition-patterns`. If that skill is available, load it before designing a kit component's props. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules.
 
 ## Important
 
-- A workspace exists only for a second deployable that shares the UI kit or the API client now;
-  one app keeps shared code in `src/shared/` and `src/api/`.
 - Packages are source-only: `exports` maps one subpath per public file to its `.ts`, `.tsx` or
   `.css`; no build step, no `index.ts`. Every `tsconfig.json` extends the root
   `tsconfig.base.json` and adds only `types`, `paths` (apps) and `include`: each app's `tsc`
-  checks package source under the app's options.
+  checks package source under the app's options. Each app keeps its own `configureApi` call.
 - Inside `packages/` import `./file` or another package by name, never `@/`: in an app's `tsc`
   the alias silently resolves to that app's `src/`.
 - Every version lives in `catalog:`; a package takes React, Base UI, Query, zod and the like as
   `peerDependencies` plus `devDependencies`, both `"catalog:"`; own packages are `"workspace:*"`,
-  written by hand.
-- Nothing Node loads (`vite.config.ts`, scripts) imports a package: Node 26 refuses `.ts` under
-  `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`). The workspace link hides this;
-  the first registry consumer hits it.
+  written by hand (`pnpm add` would move the reference into the catalog).
 
 ## References
 
@@ -39,7 +34,8 @@ Component API design for kit components belongs to `vercel-composition-patterns`
 - `references/ci-and-release.md` — commands and filters, both CI files, publishing, releases,
   `pnpm change` output, a consumer in another repository, the container build. Open for CI or a
   release.
-- `references/migration.md` — a single app into a workspace in ten checked steps.
+- `references/migration.md` — a single app into a workspace in ten checked steps; step 10 adds
+  every later app as a copy of `apps/web`, never of the template.
 
 ## When a workspace, and which kind
 
@@ -48,7 +44,8 @@ Component API design for kit components belongs to `vercel-composition-patterns`
 | One app; code reused across its features | `src/shared/` (`frontend-project-structure`) |
 | A second app in the same repository needs the kit or the client | the default: a workspace, packages as `"workspace:*"` |
 | Apps in other repositories, or on their own release schedule | the workspace also publishes the packages, in lockstep |
-| Node-side code to share (a Vite plugin, scripts) | a copy per app; a source-only package cannot carry it |
+| A domain-free helper both apps need (a display formatter) | the UI kit; a new package only when a consumer that must not depend on the kit appears |
+| Node-side code to share (a Vite plugin, scripts) | a copy per app: Node refuses `.ts` under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), which the workspace link hides until the first registry consumer |
 
 In-repository packages are `"private": true` with no `version`. Publishing adds `version`,
 `files`, `versioning.fixed`, `registries`, change intents and a tag job.
@@ -79,8 +76,11 @@ a consumer may import (`@org/ui/button` is `src/button.tsx`). A file without an 
 is private: importing it fails in `tsc` (TS2307) and in Vite (`"./src/cx.ts" is not exported
 under the conditions ...`). Set `"type": "module"` and `sideEffects` (`["*.css"]` for the kit).
 
-Vite and Vitest compile package source with no `optimizeDeps`, `ssr` or alias entries. A kit's CSS
-carries `@source "./";`, or the app emits none of the kit-only classes (`tailwind-base-ui`).
+Vite and Vitest compile package source with no `optimizeDeps`, `ssr` or alias entries; Node does
+not, so `vite.config.ts`, `orval.config.ts`, scripts and Playwright specs import only types from a
+package. A kit's CSS carries `@source "./";`, relative to that file, so it holds for a workspace
+link and a registry install alike; without it the app emits none of the kit-only classes. Token and
+`@theme` mechanics are `tailwind-base-ui`'s.
 
 ## One version
 
@@ -115,15 +115,9 @@ Apps never import each other; a package imports only packages its `package.json`
 
 ## Release, when packages are published
 
-One `versioning.fixed` group holds every published package. A merge request that touches
-`packages/` adds an intent (`pnpm change`); `pnpm change check` validates intents but never
-requires one, so CI also checks for a new `.changeset/*.md`. Release: `pnpm version -r` (no
-commit, no tag) merged as a normal change, then a `v<version>` tag whose job runs
-`pnpm -r publish --no-git-checks` with the token in the user-level `~/.npmrc` (pnpm ignores a
-`${VAR}` token in the repository's). A consumer elsewhere maps the scope in `registries`, adds
-`"@org/*"` to `minimumReleaseAgeExclude`, the one standing cooldown exception because the team
-releases it from reviewed tags (else `ERR_PNPM_NO_MATURE_MATCHING_VERSION` for three days), pins
-exact versions and upgrades every `@org/*` package together.
+One `versioning.fixed` group, `pnpm change` in every change to `packages/`, `pnpm version -r`
+merged as a normal change, then a `v<version>` tag whose CI job publishes; consumers map the scope
+in `registries` and exclude `"@org/*"` from the cooldown (`references/ci-and-release.md`).
 
 ## Prior-version corrections
 
@@ -133,7 +127,7 @@ exact versions and upgrades every `@org/*` package together.
 | `src/index.ts` re-exporting the package | one `exports` subpath per public file |
 | TypeScript project references, `composite`, `tsc -b` | one `tsc` per project over package source; nothing to build first |
 | `@changesets/cli`: `changeset`, `changeset version`, `changeset publish` | `pnpm change`, `pnpm version -r`, `pnpm -r publish`; same `.changeset/*.md` format |
-| `turborepo` or `lerna` task pipelines, `nx affected` | `pnpm -r <script>`, `--filter "...[origin/main]"` for local loops |
+| `turbo` (Turborepo) or `lerna` task pipelines, `nx affected` | `pnpm -r <script>`, `--filter "...[origin/main]"` for local loops |
 | `"@org/ui": "link:../../packages/ui"` or `file:` | `"workspace:*"`; `link:` is published verbatim and breaks consumers |
 | `shamefullyHoist`, `publicHoistPattern`, `nodeLinker: hoisted` to reach an undeclared package | declare it (peer plus dev, `catalog:`) |
 | a `pnpm-lock.yaml` per package, `sharedWorkspaceLockfile: false` | one root lockfile |
@@ -142,19 +136,15 @@ exact versions and upgrades every `@org/*` package together.
 | `//host/:_authToken=${NPM_TOKEN}` in the repository `.npmrc` | the user-level `~/.npmrc`, written in CI |
 | peers `"react": "^18 \|\| ^19"` | `"catalog:"`, published as the exact catalog version |
 | `@source "../node_modules/@org/ui"` or a `content` glob in each app | `@source "./";` in the kit's CSS |
-| `storybook` for the kit | `apps/ui-harness`, a Vite app under the production CSP |
+| `storybook` for the kit | `apps/ui-harness`: it runs the kit's production build under the production CSP, which a Storybook preview does not |
 
 ## Red Flags — STOP
 
 | About to… | Do this instead |
 |---|---|
 | create `packages/` for code one app uses | `src/shared/` in that app |
-| add a build step, `dist/` or `types` to a package | export the source |
-| set any other compiler option in one project's `tsconfig.json` | change `tsconfig.base.json` for all |
-| write `"react": "19.3.1"` in a package's `dependencies` | `peerDependencies` plus `devDependencies`, both `"catalog:"` |
-| `pnpm add '@org/ui@workspace:*'` | write `"@org/ui": "workspace:*"` by hand, then `pnpm install` |
-| import `@org/ui/src/button.tsx` | `@org/ui/button`; add the `exports` entry if it is missing |
+| import `@org/ui/src/button.tsx` | `@org/ui/button`, adding the `exports` entry if missing: a path outside `exports` fails in `tsc` and Vite |
 | edit a package `version` by hand or bump one package alone | `pnpm change`; the fixed group bumps all |
-| publish from a laptop or a branch | tag `v<version>` on `main`; CI publishes |
-| put the registry token in the repository `.npmrc` | `~/.npmrc` written in the publish job |
+| publish from a laptop or a branch | tag `v<version>` on `main`; CI publishes what every check passed |
+| put the registry token in the repository `.npmrc` | `~/.npmrc` written in the publish job: pnpm ignores a `${VAR}` token in the repository's |
 | gate CI on `--filter "...[origin/main]"` only | run the whole `pnpm check`; a root-file change selects no app |

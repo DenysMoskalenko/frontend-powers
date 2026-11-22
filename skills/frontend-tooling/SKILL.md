@@ -7,30 +7,30 @@ metadata:
 
 # Frontend Tooling
 
-Assumes pnpm 12.21, Node 26.13, TypeScript 7.0, Vite 8.3, @vitejs/plugin-react 6.3, Biome 2.6, Vitest 5.1, knip 6.45, prek 0.5, Playwright 1.65.
+Assumes pnpm 12.22, Node 26.13, TypeScript 7.0, Vite 8.3, @vitejs/plugin-react 6.3, Biome 2.6, Vitest 5.1, knip 6.46, prek 0.5, Playwright 1.65.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, use its own modules, helpers and scripts, and say so when it has no equivalent instead of adding one unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If `pnpm-lock.yaml` pins another major version than the line above, follow the project and say which rules may not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 ## Important
 
 - Run `pnpm check` (`biome check && tsc && knip && vitest run`) after every change, before
   reporting done, and whatever `## What to run` adds for that change.
-- Add a dependency with a bare `pnpm add <pkg>` (`-D` for tools): the three-day cooldown and
-  `saveExact` pin the newest mature release exactly, while `pnpm add pkg@^3` or `pkg@3` writes a
+- Add a dependency with a bare `pnpm add <pkg>` (`-D` for tools): with `minimumReleaseAge` and
+  `saveExact: true` in `pnpm-workspace.yaml` (check both), it pins the newest mature release
+  exactly; without `saveExact`, use `pnpm add -E <pkg>`. `pnpm add pkg@^3` or `pkg@3` writes a
   caret despite `saveExact`.
 - Never weaken the supply-chain settings to get past an install error: no deleting
   `minimumReleaseAge`, no `--ignore-scripts`, no `dangerouslyAllowAllBuilds`. Decide per
-  package, in `pnpm-workspace.yaml`, with a reason comment.
-- Write no configuration key from memory: pnpm 12 silently ignores `onlyBuiltDependencies`,
-  TypeScript 7 rejects `baseUrl`, plugin-react 6 has no `babel` option, Biome 2 aborts on
-  `files.ignore`. Check the prior-version table first.
+  package, in `pnpm-workspace.yaml`, with a reason comment. A request that names a version is
+  not confirmation: ask before any cooldown exclusion, and exclude every package the error names.
+- Write no configuration key from memory: check `## Prior-version names` first.
 - A new gate step goes into `pnpm check` or a prek hook and into both CI files in the same
   commit; `.github/workflows/ci.yml` and `.gitlab-ci.yml` always carry the same jobs.
 
 ## References
 
 - `references/package-and-pnpm.md` — `package.json` and `pnpm-workspace.yaml` verbatim, the
-  pnpm 12.21 error output and fix for each install failure, upgrades, lockfile, audit, bumping
+  pnpm 12.22 error output and fix for each install failure, upgrades, lockfile, audit, bumping
   pnpm or Node. Open it before touching a dependency or when an install fails.
 - `references/typescript-biome-knip.md` — `tsconfig.json`, `biome.json`, `boundaries.grit` and
   `knip.json` verbatim, key by key, with the TypeScript 7 error codes. Open it before editing one
@@ -61,31 +61,31 @@ writes files Biome would lint.
 
 | What the agent sees | Do |
 |---|---|
-| `ERR_PNPM_NO_MATURE_MATCHING_VERSION` ... `within the minimumReleaseAge cutoff` | `pnpm add <pkg>` with no version takes the newest mature one. A request naming the version is not confirmation: say it is inside the cooldown and what excluding it means, and exclude only after the user confirms (or for a needed security fix). The exclusion lists every package the error names (vitest's own `@vitest/*` ship with it), each as an exact `"pkg@version"` in `minimumReleaseAgeExclude`, with a comment naming the date to remove them. |
+| `ERR_PNPM_NO_MATURE_MATCHING_VERSION` ... `within the minimumReleaseAge cutoff` | `pnpm add <pkg>` with no version takes the newest mature one. Say the version is inside the cooldown and what excluding it means. After the user confirms (or for a needed security fix), list each package the error names (vitest's own `@vitest/*` ship with it) as an exact `"pkg@version"` in `minimumReleaseAgeExclude`, with a comment naming the date to remove them. |
 | `ERR_PNPM_IGNORED_BUILDS` ... `Ignored build scripts: esbuild@0.28.2` | Read the script; add `pkg: false` (`true` only if the package needs it) under `allowBuilds` by hand, with a reason comment. Not `pnpm approve-builds`: with a `permissions` block it writes `permissions.<pkg>.build`, splitting build decisions across two lists. |
-| `Agent skills awaiting approval: <pkg>. Run "pnpm approve" to review them.` | Not an error. Decline unless the user wants them: `pnpm approve '!<pkg>'` writes `permissions.<pkg>.skills: false`. |
-| `High-risk trust downgrade for "<pkg>@<version>" (possible package takeover)` | Pin the previous version and tell the user; exclude that exact version only on their confirmation. |
-| `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS` | A misspelled or removed key: use the pnpm 12 name. |
-| `pnpm dedupe --check` fails | `pnpm dedupe`; commit the lockfile. |
-| `pnpm audit --audit-level=high` fails | `pnpm audit --fix`, or upgrade the parent; `pnpm audit --ignore <GHSA>`, with a reason comment, only for an advisory that does not apply. |
+
+Every other install error (agent-skill approval, trust downgrade, unrecognized setting, dedupe,
+audit signatures, audit): its output and fix are in `references/package-and-pnpm.md`.
 
 Upgrade with `pnpm update <pkg> --latest`; then `pnpm exec biome migrate --write` for Biome, the
-image tag in both CI files for Playwright. Add a dependency in the same change as its first
-import, or knip fails. Never delete the lockfile.
+image digest and its tag comment in both CI files for Playwright. Add a dependency in the same
+change as its first import, or knip fails; asked to add one with no caller named, install it
+and say that knip reports it until the first import lands. Never delete the lockfile.
 
 ## Runtime and package manager
 
-`devEngines` pins pnpm 12.21.0 and Node 26.13.1 with `onFail: "download"`: any pnpm 12 switches
-to the pin and installs that Node into `node_modules`. Images bootstrap with `npm install --global pnpm@$PNPM_VERSION`.
-A bump edits `devEngines`, `.gitlab-ci.yml` and the Dockerfile in one commit.
+`devEngines` pins pnpm 12.22.0 and Node 26.13.1 with `onFail: "download"`: any pnpm 12 switches
+to the pin and installs that Node into `node_modules`. Images bootstrap with
+`npm install --global pnpm@$PNPM_VERSION`. A bump edits `devEngines`, `.gitlab-ci.yml` and the
+Dockerfile in one commit. `pnpm outdated` never reports these pins: an audit checks them by hand
+(package reference).
 
 ## tsconfig.json
 
 One file, no project references. `paths` maps `@/*` without `baseUrl`; `types` lists `node` and
 `vite/client` because TypeScript 7 defaults it to `[]` (TS2882 on the CSS import otherwise). A
-removed option is TS5102 or TS5108: delete it. TypeScript 7 drops the classic compiler API
-(`typescript` exports only `version`; the new one is unstable, under `typescript/unstable/*`), so
-tools built on the old one cannot run.
+removed option is TS5102 or TS5108: delete it. TypeScript 7 has no classic compiler API, so a
+tool built on it fails.
 
 ## biome.json
 
@@ -111,22 +111,23 @@ route splitting are off under `process.env.VITEST`, where they skew coverage.
 - `envPrefix` is the exact list `PUBLIC_ENV`, validated in a `configResolved` hook because knip
   and Vitest load the file without an environment. A new variable is one more `PUBLIC_ENV`
   entry here; the other steps are `frontend-deploy`'s.
-- `build.rolldownOptions.output.codeSplitting.groups` bundles `src/app/zod-config.ts` with zod, so
-  `jitless` is set before any chunk builds a schema, whatever the chunking: static schema imports
-  in entry code are safe. The entry budget counts that chunk.
+- In dev the app calls `PUBLIC_API_ORIGIN` directly, and the backend's CORS allows the dev
+  origin. A team that wants `server.proxy` keeps the variable a bare origin, the dev server's
+  own (`http://localhost:5173`; `/api` fails as `not a bare origin`), and proxies only paths no
+  page route uses.
 - Over budget the build fails with `RolldownError: entry + static imports: <n> B gzip (budget
-  160000 B)`. Move the new weight out of the entry graph first; raise `ENTRY_BUDGET_BYTES` only
-  for a measured, named cause, in the same change, and name it in the report.
+  160000 B)`. First check what can leave the entry (behind a route or a dynamic `import()`);
+  then raise `ENTRY_BUDGET_BYTES` by the measured growth, in the same change, naming the cause.
 
 ## knip, hooks and CI
 
 `knip.json` ignores the generated client and `wrangler`; add `entry` only for a file no knip
-plugin sees. `pnpm hooks` installs the prek hooks (no `prepare` script). Biome, `tsc` and knip
-run in `pnpm check`, the hooks and CI; the hooks add `pnpm audit` and skip Vitest; CI adds
-dedupe, the generator freshness check, coverage and the build. Of the CI jobs `check`, `audit`
-and `e2e`, only `e2e` runs in the Playwright image, tagged with the `@playwright/test` version.
-GitHub actions are pinned by SHA. A new script gets a `group:action` name. The scaffold has no
-deploy job on purpose (it needs credentials and a target); the reference gives one per target.
+plugin sees. `pnpm hooks` installs the prek hooks (no `prepare` script). The hooks add
+`pnpm audit` to `pnpm check` and skip Vitest; CI adds `pnpm audit signatures`, dedupe, the
+generator freshness check, coverage and the build. GitHub actions are pinned by SHA, CI images
+by digest with the tag in a comment; the Playwright image's tag equals `@playwright/test`'s
+version. A new script gets a `group:action` name. The scaffold has no deploy job on purpose; the
+reference gives one per target.
 
 Dockerfile, wrangler and headers are `frontend-deploy`'s; workspace configuration is
 `frontend-shared-packages`'s.
@@ -146,10 +147,9 @@ Dockerfile, wrangler and headers are `frontend-deploy`'s; workspace configuratio
 | `vite-tsconfig-paths` plugin | `resolve.tsconfigPaths: true` |
 | `@vitejs/plugin-react-swc` | `@vitejs/plugin-react` 6 (Oxc) |
 | `react({ babel: { plugins: ["babel-plugin-react-compiler"] } })` | `babel({ presets: [reactCompilerPreset()] })` from `@rolldown/plugin-babel` (TS2353 otherwise) |
-| `VITE_` prefix | `envPrefix` listing exact `PUBLIC_*` names |
 | Biome 1 `files.ignore`, `files.include`, top-level `organizeImports` | `files.includes` with `!` globs; `assist.actions.source.organizeImports`, on by default |
 | Biome `useSortedClasses`, `css.parser.tailwindDirectives` | `useTailwindSortedClasses` (not enabled here); implied by `tailwind.stylesheet` |
-| ESLint with typescript-eslint, Prettier | Biome; typescript-eslint needs the classic compiler API TypeScript 7 dropped |
+| ESLint with typescript-eslint, Prettier | Biome; typescript-eslint needs TypeScript 6 installed beside 7 until 7.1 ships a new API, and Biome's `types` domain covers what this config enables |
 | `eslint-plugin-react-hooks`, `eslint-plugin-react-compiler` | Biome `react` domain and `nursery/useReactCompiler` |
 | husky with lint-staged, lefthook, a `prepare` script | prek with `.pre-commit-config.yaml`, `pnpm hooks` once per clone |
 | size-limit, dependency-cruiser | `entryBudget` in `vite.config.ts`; `biome-plugins/boundaries.grit` |

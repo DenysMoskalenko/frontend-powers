@@ -31,7 +31,10 @@ No barrels, no default exports (config files excepted), kebab-case file names.
 
 - Server data lives in the Query cache: loaders call `queryClient.query({ ...getXQueryOptions(),
   staleTime: "static" })`, components call `useSuspenseQuery(getXSuspenseQueryOptions())`.
-- URL state (page, filters) goes in `validateSearch`, never in `useState`.
+- URL state (page, filters) goes in `validateSearch`, never in `useState`; a link or redirect that
+  changes one key writes `search={(prev) => ({ ...prev, page })}` to keep the others.
+- Every page renders exactly one `h1` inside `main`: `createAppRouter` moves focus to it after a
+  navigation that changes the path.
 - The React Compiler is on: write no new `useMemo`, `useCallback` or `memo`.
 - The CSP is strict (`deploy/headers.ts`): no inline scripts or styles, no `innerHTML`, no eval.
   Every new origin the browser calls goes into `PUBLIC_ENV` in `vite.config.ts`.

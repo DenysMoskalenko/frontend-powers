@@ -75,7 +75,7 @@ MSW 3 does not touch timers; a handler that calls `delay(ms)` needs the same `ad
 
 ## jsdom gaps
 
-Measured in jsdom 30.1 under the scaffold's setup.
+Measured in jsdom 31.0 under the scaffold's setup.
 
 | Missing or different | What happens | Do |
 |---|---|---|
@@ -84,7 +84,8 @@ Measured in jsdom 30.1 under the scaffold's setup.
 | `Element.prototype.scrollIntoView` is `undefined` | `TypeError: … is not a function` in the component | add `Element.prototype.scrollIntoView = () => {};` beside the `scrollTo` line in `src/test/setup.ts` |
 | `matchMedia` is `undefined` | `TypeError` on first render of anything reading a media query | `stubMatchMedia` below, per test |
 | `ResizeObserver`, `IntersectionObserver` are `undefined` | `ReferenceError` on mount | `stubObservers` below, per test; what they would observe is Playwright's |
-| The platform `reportError` is `undefined` | the setup file defines one that records each call and fails the test after its body | a test that expects a report: `vi.stubGlobal("reportError", vi.fn())` and assert the call, as `src/app/error-reporting.test.ts` does |
+| The platform `reportError` only dispatches an `error` event and logs `Uncaught [Error: …]` to the virtual console | a reported error would pass the test, so the setup file replaces it with one that records each call and fails the test after its body | a test that expects a report: `vi.stubGlobal("reportError", vi.fn())` and assert the call, as `src/app/error-reporting.test.ts` does |
+| A focused element that becomes disabled or hidden keeps focus until the next animation frame, then blurs to `body` | `expect(document.body).toHaveFocus()` right after the change fails | `await waitFor(() => expect(document.body).toHaveFocus())`, or assert where the app moves focus next |
 | `window.confirm`, `alert`: "Not implemented", return `undefined` | a `useBlocker` confirm always cancels | `vi.spyOn(window, "confirm").mockReturnValue(false)` and assert `toHaveBeenCalledWith("Discard the new user?")` |
 | `navigator.clipboard` is `undefined` until `userEvent.setup()` installs a stub | the stub is never reset under `globals: false`: text copied in one test is read by the next | read what was copied in the same test; never assert an empty clipboard |
 | File inputs | `await user.upload(screen.getByLabelText("File"), new File(["a,b"], "users.csv", { type: "text/csv" }))` works and honours `accept` | no stub |

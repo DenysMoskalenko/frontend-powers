@@ -61,10 +61,10 @@ test("a page past the end opens the last page", async () => {
     }),
   );
 
-  const { router } = renderRoute("/users?page=9");
+  const { router } = renderRoute("/users?page=9&view=compact");
 
   expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument();
-  expect(router.state.location.search).toEqual({ page: 3 });
+  expect(router.state.location.search).toEqual({ page: 3, view: "compact" });
   expect(router.history.length).toBe(1);
 });
 
@@ -75,12 +75,27 @@ test("Next moves to the following page", async () => {
       return { items: [buildUser({ name: `User at ${offset}` })], total: 21, limit: 20, offset };
     }),
   );
-  const { user, router } = renderRoute("/users");
+  const { user, router } = renderRoute("/users?view=compact");
 
   await user.click(await screen.findByRole("link", { name: "Next" }));
 
   expect(await screen.findByRole("link", { name: "User at 20" })).toBeInTheDocument();
-  expect(router.state.location.search).toEqual({ page: 2 });
+  expect(router.state.location.search).toEqual({ page: 2, view: "compact" });
+});
+
+test("Previous keeps the other search keys", async () => {
+  server.use(
+    getListUsersMockHandler(({ request }) => {
+      const offset = Number(new URL(request.url).searchParams.get("offset"));
+      return { items: [buildUser({ name: `User at ${offset}` })], total: 45, limit: 20, offset };
+    }),
+  );
+  const { user, router } = renderRoute("/users?page=3&view=compact");
+
+  await user.click(await screen.findByRole("link", { name: "Previous" }));
+
+  expect(await screen.findByText("Page 2 of 3")).toBeInTheDocument();
+  expect(router.state.location.search).toEqual({ page: 2, view: "compact" });
 });
 
 test("a failed first load shows the error screen inside the layout", async () => {

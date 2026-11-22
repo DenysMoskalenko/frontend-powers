@@ -70,3 +70,11 @@ export function caddyHeaders(connectOrigins: readonly string[]) {
     .join("\n")
     .concat("\n");
 }
+
+// DNS labels or an IPv6 literal only: WHATWG hosts also allow `* ; , { } ' $`, which would widen the
+// CSP or become a Caddy placeholder.
+const ORIGIN = /^(https?|wss?):\/\/([a-z0-9-]+(\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])(:\d+)?$/;
+
+/** A value that may go into `connect-src` as is: scheme, host and port, nothing else. */
+export const isBareOrigin = (value: string) =>
+  ORIGIN.test(value) && URL.parse(value)?.origin === value;

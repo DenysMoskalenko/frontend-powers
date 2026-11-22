@@ -15,7 +15,8 @@ server.events.on("request:unhandled", ({ request }) => {
   unhandled.push(`${request.method} ${request.url}`);
 });
 
-// jsdom has no reportError. An error the app reports fails the test unless the test stubs it.
+// jsdom's reportError only logs to the virtual console. This one records the error, and the test
+// fails unless it stubs reportError.
 const reported: unknown[] = [];
 globalThis.reportError = (error: unknown) => {
   reported.push(error);
@@ -29,6 +30,8 @@ beforeEach(() => {
 afterEach(() => {
   // `globals: false` turns off Testing Library's automatic cleanup.
   cleanup();
+  localStorage.clear();
+  sessionStorage.clear();
   // Also undoes a bare vi.setSystemTime(), which no config option resets.
   vi.useRealTimers();
   server.resetHandlers();

@@ -9,7 +9,7 @@ metadata:
 
 Assumes Tailwind CSS 4.3, `@base-ui/react` 1.9, Biome 2.6, React 19.3.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, use its own modules, helpers and scripts, and say so when it has no equivalent instead of adding one unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If `pnpm-lock.yaml` pins another major version than the line above, follow the project and say which rules may not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 Visual direction, token values and type choices belong to `frontend-design`; polish and motion belong to `emil-design-eng` and `animate`; component API design belongs to `vercel-composition-patterns`; accessibility and UI review belong to `web-design-guidelines`; native-element alternatives (`<dialog>`, `popover`) belong to `modern-web-guidance`, and the wrapper wins as `frontend-code-style`'s precedence table says. If one of those skills is available, load it before making that kind of decision. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules.
 
@@ -18,15 +18,14 @@ Visual direction, token values and type choices belong to `frontend-design`; pol
 - Colours are role tokens only: a `light-dark()` pair on `:root`, exposed in `@theme inline`; `--color-*: initial` makes `bg-red-500` generate nothing. A missing role is a new token, never a palette class, hex value or `dark:` colour pair.
 - Nothing may create a `<style>` element or inline script at runtime (CSP `style-src 'self'`, `script-src 'self'`): CSS-in-JS and CSS-injecting libraries are out; `style={{}}` and other CSSOM writes pass.
 - A wrapper's looks come from a `variant` prop backed by a record of complete class strings; its `className` is layout only (margin, width, placement), joined with `cx()`. No class-merging or variant library.
-- Write every class name whole: Tailwind reads source text, so `` `text-${tone}` `` generates nothing. A CSS variable is `bg-(--x)`; `bg-[--x]` compiles to invalid CSS, unreported inside `src/shared/ui`.
 - Style Base UI state with its data attributes as variants (`data-open:`, `data-disabled:`, `data-highlighted:`), and enter and exit with CSS transitions on `data-starting-style:` / `data-ending-style:`; never a `className` function.
 
 ## References
 
-- `references/wrappers.md` — Base UI's data attributes and CSS variables; complete `Button` with a `danger` variant, `ButtonLink`, `Dialog` and when to use `AlertDialog`, `Menu`, `SelectField`, the tokens each needs, a feature composing them, toasts, fields. Open before changing anything in `src/shared/ui`.
-- `references/tokens-and-dark-mode.md` — the scaffold's `styles.css`, adding a token or a scale, what the build does to `light-dark()`, v4 variant output, the user-selectable theme add-on. Open when touching `styles.css` or theming.
-- `references/csp-and-library-picks.md` — what the CSP blocks, measured library results, proving a new dependency, virtua, lucide-react, fonts, TanStack Table 9. Open before adding any UI package.
-- `references/prior-versions.md` — the full Tailwind 3 to 4, Radix to Base UI and library correction tables. Open when an example or an old file disagrees with this skill.
+- `references/wrappers.md` — Base UI's data attributes and CSS variables; complete `Button` with a `danger` variant, `ButtonLink`, `Dialog` with a `size` variant and when to use `AlertDialog`, `Menu`, `SelectField`, the tokens each needs, a feature composing them, toasts, fields. Open before changing anything in `src/shared/ui`.
+- `references/tokens-and-dark-mode.md` — the scaffold's `styles.css`, adding a token or a scale, what the build does to `light-dark()`, v4 variant output, the user-selectable theme add-on and its entry cost. Open when touching `styles.css` or theming.
+- `references/csp-and-library-picks.md` — what the CSP blocks, measured library results (`motion` included), proving a new dependency, virtua, lucide-react, fonts, TanStack Table 9 and the React Compiler. Open before adding any UI package.
+- `references/prior-versions.md` — the full Tailwind 3 to 4, Radix to Base UI and library correction tables, what Biome's fixes and rules miss. Open when an example or an old file disagrees with this skill.
 
 ## The entry file
 
@@ -65,8 +64,9 @@ The contract the scaffold's `button.tsx`, `text-field.tsx` and `toast.tsx` follo
 - `ref` travels in `...props`; no `forwardRef`, no `memo`.
 - `const variants = { primary: "…", secondary: "…" } as const` at module scope, keyed by `variant`; `Button` defaults to `secondary`.
 - `className={cx(base, variants[variant], className)}`, `className` documented as layout only.
+- A property the base string sets is never accepted through `className`; expose it as a variant (`DialogPopup`'s `size`): Tailwind orders the rules itself, so the caller's class can silently lose. A wrapper that already accepts `className` keeps it in its props when it gains the variant.
 
-`<DialogTrigger render={<Button />}>` puts a trigger on a kit button. A link that looks like a button is `ButtonLink` from the wrappers reference (the scaffold does not ship it), built on `useRender` + `mergeProps` and used as `<ButtonLink render={<Link to="/users/new" />}>`; Base UI forbids rendering a link through `Button`. In a menu, `Menu.LinkItem render={<Link />}`.
+A button that opens a dialog, menu or popover is that component's trigger part on a kit button, `<AlertDialogTrigger render={<Button variant="danger" />}>`, never a plain `Button` that sets `open` state: Safari does not focus a clicked button, so focus returns to the trigger part on close but to the page from a state-opened dialog. Drive `open` from state only when no button opens it (a navigation blocker, a menu item). A link that looks like a button is `ButtonLink` from the wrappers reference (the scaffold does not ship it), built on `useRender` + `mergeProps` and used as `<ButtonLink render={<Link to="/users/new" />}>`; Base UI forbids rendering a link through `Button`. In a menu, `Menu.LinkItem render={<Link />}`.
 
 Popups portal to the end of `<body>`, after `#root`, which has `isolation: isolate`: app code needs no `z-index` above `z-10`, and the toast viewport (`z-50`) is the only fixed layer. `<CSPProvider disableStyleElements>` in the router's `Wrap` (`src/app/router.tsx`) stops Base UI's `<style>` tags (Select, ScrollArea); a second React root needs its own.
 
@@ -85,10 +85,6 @@ Placement of feature components is `frontend-project-structure`'s; wiring a fiel
 | `useTailwindStaticClassStrings` | This class string is constructed dynamically. | complete strings; `cx(a, b)` |
 | `noTailwindArbitraryValue` | Found an arbitrary value in a Tailwind CSS class. | a token or scale (off in `src/shared/ui`) |
 
-`pnpm format` applies safe fixes: `noTailwindLegacyUtilities`, `useTailwindVariablesShorthand`. The `useTailwindShorthandClasses` fix is unsafe: write `size-4` by hand or run `pnpm exec biome check --write --unsafe <file>`.
-
-Nothing reports `bg-opacity-50`, `outline-none`, or a resized `rounded`/`shadow`.
-
 ## Runtime styles and UI dependencies
 
 | Need | Pick |
@@ -99,18 +95,16 @@ Nothing reports `bg-opacity-50`, `outline-none`, or a resized `rounded`/`shadow`
 | custom font | `@fontsource-variable/<family>` in `styles.css`, `--font-sans`, the `preloadFont` Vite plugin from the CSP reference |
 | data table | TanStack Table 9 (`useTable`, `tableFeatures`) |
 
-Before adding any package that renders UI or touches styles, an animation library included, unless the CSP reference already measured it (the picks above), run the dependency proof in the CSP reference: a source grep, because constructed stylesheets apply without any CSP report, then an E2E page, because jsdom and `pnpm dev` enforce no CSP. A package that fails is dropped, never given `'unsafe-inline'` or a nonce. Headers are `frontend-deploy`'s; that test is `frontend-testing`'s.
+Before adding any other package that renders UI or touches styles, an animation library included, run the dependency proof in the CSP reference: a source grep, because constructed stylesheets apply without any CSP report, then an E2E page, because jsdom and `pnpm dev` enforce no CSP. A package that fails is dropped, never given `'unsafe-inline'` or a nonce. Headers are `frontend-deploy`'s; that test is `frontend-testing`'s.
 
-## Workspace UI package
-
-A kit package's CSS carries the tokens, `@theme` blocks, scrollbar rules and `@source "./";`; without `@source` the app emits none of the kit's classes. Packaging is `frontend-shared-packages`'s.
+A UI kit shared by several apps, its CSS and `@source` included, is `frontend-shared-packages`'s.
 
 ## Prior-version corrections
 
 | Older examples write | Correct now |
 | --- | --- |
 | `tailwind.config.js`, `@tailwind base;` | `@import "tailwindcss";`, `@theme` |
-| `bg-[--brand]` | `bg-(--brand)` |
+| `bg-[--brand]` | `bg-(--brand)`: the bracket form compiles to invalid CSS, unreported inside `src/shared/ui` |
 | `outline-none`, `shadow`, `rounded` | `outline-hidden`, `shadow-sm`, `rounded-sm` |
 | `@base-ui-components/react`, Radix `asChild` | `@base-ui/react/<part>`, `render={<El />}` |
 | `data-[state=open]:` | `data-open:` |
@@ -120,11 +114,9 @@ A kit package's CSS carries the tokens, `@theme` blocks, scrollbar rules and `@s
 
 | About to… | Do this instead |
 | --- | --- |
-| `` className={`bg-${tone}`} `` or `` `${base} ${className}` `` | a record of complete strings; `cx(base, className)` |
-| `<Button className="rounded-none bg-danger">` in a feature | add a `variant` to the wrapper |
-| `<Button render={<Link to="/x" />}>` | `<ButtonLink render={<Link to="/x" />}>` |
-| `styled-components`, `@emotion/react`, `<svg><style>` | Tailwind classes or a static stylesheet |
-| `AnimatePresence mode="popLayout"` from `framer-motion` | CSS transitions on `data-starting-style:` |
+| `` className={`bg-${tone}`} `` or `` `${base} ${className}` `` | a record of complete strings; `cx(base, className)`: a built name generates no CSS |
+| `<Button className="rounded-none bg-danger">` in a feature | add a `variant` to the wrapper: `noTailwindRestyledComponents` fails it |
+| `<Button render={<Link to="/x" />}>` | `<ButtonLink render={<Link to="/x" />}>`: Base UI forbids it |
 | `useVirtualizer` from `@tanstack/react-virtual` | virtua `VList`: the React Compiler silently skips a component calling that hook |
-| an inline `<script>` or `next-themes` against a theme flash | `public/theme.js` from the add-on |
-| `dataset.theme = localStorage.getItem("theme")` | accept only `"light"` and `"dark"` |
+| an inline `<script>` or `next-themes` against a theme flash | `public/theme.js` from the add-on: the CSP blocks inline script |
+| `dataset.theme = localStorage.getItem("theme")` | accept only `"light"` and `"dark"`: storage is untrusted input |

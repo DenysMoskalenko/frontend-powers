@@ -30,11 +30,11 @@ Everything pinned, and where it lives:
 | pnpm settings | scaffold `pnpm-workspace.yaml` (`minimumReleaseAge`, `trustPolicy`, catalogs); mirrored in `frontend-tooling` references and, for catalogs, `frontend-shared-packages` |
 | config files | scaffold `tsconfig.json`, `biome.json`, `vite.config.ts`, `knip.json`, `.pre-commit-config.yaml`; repeated verbatim in `frontend-tooling` references |
 | container and server images | scaffold `Dockerfile` (tags pinned by digest) and `deploy/Caddyfile`; the container-images line under STACK.md `## package.json`; `frontend-deploy` references |
-| Playwright image tag | scaffold `.github/workflows/ci.yml` and `.gitlab-ci.yml`, equal to `@playwright/test`; the same STACK.md line; `frontend-tooling` references |
+| CI images | scaffold `.github/workflows/ci.yml` and `.gitlab-ci.yml`: the Playwright image (tag equal to `@playwright/test`) and the GitLab `node` image, each pinned by digest with the tag in a comment; the same STACK.md line; `frontend-tooling` and `frontend-shared-packages` references |
 | GitHub Actions | `.github/workflows/check.yml`, scaffold CI files, `frontend-tooling` references (full SHA plus `# vX.Y.Z` comment) |
 | prek and its hooks | `@j178/prek` in the scaffold `package.json`, the `pnpm dlx @j178/prek@...` line in `.github/workflows/check.yml` |
 | Claude Code for CI | the `pnpm dlx @anthropic-ai/claude-code@...` line in `.github/workflows/check.yml` |
-| versions quoted in skill bodies | the version-pin line at the top of every SKILL.md, plus `grep -rnE '[0-9]+\.[0-9]+\.[0-9]+' skills/ --include='*.md'` |
+| versions quoted in skill bodies | the version-pin line at the top of every SKILL.md; every other exact copy (the `package.json` copy in `frontend-tooling`, the catalog in `frontend-shared-packages`, prose) is listed by `make validate` as a `stale version` error; `grep -rnE '[0-9]+\.[0-9]+\.[0-9]+' skills/ --include='*.md'` for the rest |
 
 Current versions:
 
@@ -42,6 +42,10 @@ Current versions:
   research; a release younger than the scaffold's `minimumReleaseAge` waits for the next audit unless
   it fixes an advisory.
 - `pnpm view <package> version dist-tags` for anything not in the lockfile.
+- By hand, because `pnpm outdated` reports neither: `npm view pnpm time` and the Node release index
+  for the `devEngines` pins; Caddy's releases and the Playwright image tag; then each image digest
+  resolved again from its tag (`docker buildx imagetools inspect <image>:<tag>`). A security release
+  of pnpm is taken at the next audit once past the cooldown.
 - `gh api repos/<o>/<r>/releases/latest --jq .tag_name` for actions and tools, then dereference the tag
   to its commit SHA (annotated tags point at a tag object, not a commit).
 
@@ -89,7 +93,8 @@ The bump itself is AGENTS.md `## Versions`; the order across a release:
 3. `frontend-tooling` references re-mirrored byte for byte; `diff` each block against the scaffold file.
 4. Skill pin lines, correction-table rows, snippets.
 5. `evals/<skill>.md` in the same commit whenever what a good answer looks like changed.
-6. `metadata.version` in every skill whose teaching changed: patch for wording, minor for an API change.
+6. `metadata.version` in every skill whose files changed (`frontend-scaffolding` whenever the template
+   changed): patch for wording or a pin, minor for an API change. `validate_skills.py --base` enforces it.
 7. The release `version` in `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
    `.cursor-plugin/plugin.json` and both version fields of `.claude-plugin/marketplace.json`
    (top-level `version` and `metadata.version`). An installed plugin sees a change only when it
@@ -102,8 +107,8 @@ Never edit the verify copy; it is regenerated on every `make snippets`.
 ## 5. Verify
 
 - `make check`, without `--skip-tests`.
-- The scaffold gate from a copy outside the repository:
-  `pnpm install --frozen-lockfile && pnpm check && pnpm build && pnpm test:e2e`.
+- The scaffold gate from a copy outside the repository, as AGENTS.md `## Verification` lists it (the
+  CI `scaffold` job runs the same commands).
 - `claude plugin validate --strict .` and `npx skills add . --list` (exactly the fourteen skills).
 - The exercise: build a throwaway app from the `frontend-scaffolding` text alone in a scratch
   directory, run its gate, delete it.
@@ -121,9 +126,50 @@ suite (`make evals`) only with the approval AGENTS.md requires, and keep its sum
 validates the plugin, checks that `plugin.json` and the marketplace entry agree, and pushes the tag
 `frontend-powers--vX.Y.Z` that Claude Code's dependency resolution looks for.
 
+Then publish the release note as a GitHub Release on that tag:
+`gh release create frontend-powers--vX.Y.Z --title "frontend-powers X.Y.Z" --notes-file <file>`. Its
+body is the inventory table (what moved, what was held back and why) followed by the update commands.
+The Releases page is the changelog; there is no CHANGELOG file.
+
 Users of a third-party marketplace do not get updates automatically unless they turn auto-update on
 for it; the release note tells them to run `claude plugin marketplace update frontend-powers` and
 `claude plugin update frontend-powers@frontend-powers`.
+
+## Audit of 22 November 2026
+
+Cut-off: the three-day cooldown at install time on 22 November 2026, which fell at about 12:30Z on
+19 November: a release published before it was taken (i18next-cli 1.91.2, 12:20Z), one after it was not.
+
+| Moved | From | To | Why it matters |
+|---|---|---|---|
+| pnpm (`devEngines`, CI, Dockerfile) | 12.21.0 | 12.22.0 | security release: `pnpm audit` dropped advisories with a string id; a registry change skipped `minimumReleaseAge` and `trustPolicy` |
+| jsdom | 30.1.3 | 31.0.1 | major; adds a native `reportError` that only logs, which the setup still replaces; suite unchanged |
+| `@testing-library/jest-dom` | 7.0.1 | 8.0.0 | major; drops Vitest below 5, no test changes |
+| vitest, `@vitest/coverage-v8` | 5.1.0 | 5.1.1 | the seeded shuffle now sorts files first, so a printed seed reproduces the order |
+| `@tanstack/react-query` | 5.107.1 | 5.108.0 | pin lines only |
+| msw, user-event, knip, wrangler | 3.0.6, 14.6.12, 6.45.1, 4.163.0 | 3.0.7, 14.6.13, 6.46.1, 4.165.0 | no teaching impact |
+| i18next, react-i18next, i18next-cli (add-ons) | 27.1.3, 18.0.2, 1.88.0 | 27.2.2, 18.0.3, 1.91.2 | 27.2.0 lets a load-callback or listener error reach the app |
+| lucide-react, virtua (add-ons) | 1.73.0, 0.54.2 | 1.76.0, 0.55.0 | no teaching impact |
+| CI images | by tag | by digest, tag in a comment | same stance as the Dockerfile and the SHA-pinned actions |
+| CI `check` job | — | `pnpm audit signatures` first | verifies registry signatures, also through a mirror |
+
+Held back: i18next 27.2.3 (21 November, inside the cooldown on the audit day). It fixes a nested
+`$t()` option injection under the `escapeValue: false` that `frontend-i18n` sets, so the next audit
+takes it first, with the react-i18next and i18next-cli releases of the same pass. Query 5.108.1 and
+5.108.2 (5.108.1 published 19 November 14:03Z) were also inside the cooldown and carry no
+security fix. i18next-cli 1.91.3 (19 November 12:34Z) fell just after the cut-off. Unchanged after
+checking: Node 26.13.1, every other scaffold pin, the Faro, react-table, centrifuge, eventsource-parser,
+keycloak-js, oidc-client-ts and zustand add-ons, and the `node`, `caddy` and Playwright images
+(same digests).
+
+For the next audit:
+
+- i18next 27.2.3 or later and i18next-cli 1.91.3 or later, as above.
+- Every `## Watch` row in STACK.md: check whether its event has happened.
+- Caddy 2.11.10: 2.11.9 is built with a Go release that scanners will flag.
+- The `@opentelemetry/api` override for Faro: drop it once `@grafana/faro-web-tracing` accepts the
+  current `@opentelemetry/api` (`pnpm peers check` without the override).
+- `@tanstack/react-table` now ships agent skills: the install asks for approval; decline it.
 
 ## Red Flags — STOP
 
@@ -138,3 +184,4 @@ for it; the release note tells them to run `claude plugin marketplace update fro
 | An edit outside the owning skill | Move it; the sibling gets a one-sentence cross-reference at most. |
 | `pnpm install` run inside `skills/` | Delete the `node_modules/`; install in a copy outside the repository. |
 | An action pinned by tag | Pin the full commit SHA with the tag in a comment. |
+| A container image pinned by tag | Pin the digest with the tag in a comment. |

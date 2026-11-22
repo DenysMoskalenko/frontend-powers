@@ -179,7 +179,7 @@ function rememberLanguage(language: string) {
 | `fallbackLng: FALLBACK_LANGUAGE` | i18next 27 defaults it to `false`: a key missing in `ru` would render as the key instead of English. |
 | `ns: NAMESPACES` from the glob | Every namespace of the active language (and of the fallback) loads before `ready` resolves and before `changeLanguage` emits, so nothing renders as keys. |
 | `callbackApi: false` | `read` returns a promise; leaving the flag out makes i18next guess from the parameter count, which is deprecated. A failed read is not retried (i18next retries only a callback backend that returns an error with data): `ready` still resolves and that namespace renders as keys. |
-| `escapeValue: false` | React escapes interpolated values; the default `true` shows `&amp;`. A value with markup (`& <b>Jerry</b>`) still renders as text. |
+| `escapeValue: false` | React escapes interpolated values; the default `true` shows `&amp;`. A value with markup (`& <b>Jerry</b>`) still renders as text. On i18next 27.2.2 it also lets a value rewrite the options of a `$t(key, {...})` nested in a message, so messages never nest one (tests reference guard). |
 | `react: { useSuspense: false }` | Nothing suspends, since all namespaces are loaded first; a namespace missing from the files renders its keys, which a route test shows at once, instead of an endless Suspense fallback. react-i18next 18 keeps `react` options per instance. |
 | `pickLanguage([stored, ...navigator.languages])` | The stored value is untrusted input: only an exact member of `LANGUAGES` passes. Browser tags match by their primary subtag (`ru-RU` -> `ru`). |
 | `isInitialized` guard | The first `languageChanged` fires during `init`, before `isInitialized` is set, so only a later switch is stored and the first visit keeps following the browser. |
@@ -240,15 +240,21 @@ one English message.
 
 ## `src/app/router.tsx`
 
-The instance is a required parameter; `I18nextProvider` goes in `Wrap` inside `CSPProvider`, so
-`RouteError`, the toasts and every route see it in the app and in tests.
+The scaffold's file with the instance as a required parameter and `I18nextProvider` in `Wrap`
+inside `CSPProvider`, so `RouteError`, the toasts and every route see it in the app and in tests;
+nothing else changes.
 
 ```tsx,verify
 // file: src/app/router.tsx
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { Toast } from "@base-ui/react/toast";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { createRouter, type RouterHistory } from "@tanstack/react-router";
+import {
+  createRouter,
+  parseSearchWith,
+  type RouterHistory,
+  stringifySearchWith,
+} from "@tanstack/react-router";
 import type { i18n as I18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { ApiError } from "@/api/api-error";
@@ -262,6 +268,14 @@ const NOTICES = {
   mutation: "The change was not saved",
 } as const;
 
+// The default parser rewrites `?q=1.50` to 1.5 and ids past 2^53 to another number: a top-level
+// value is a number only when it prints back as typed, so free text and long ids stay text.
+const exactJson = (value: string): unknown => {
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed === "number" && String(parsed) !== value) throw new Error("not exact");
+  return parsed;
+};
+
 /** The whole app: route tree, QueryClient, providers. `main.tsx` and every route test build it. */
 export function createAppRouter({ history, i18n }: { history?: RouterHistory; i18n: I18n }) {
   const toastManager = Toast.createToastManager();
@@ -271,10 +285,12 @@ export function createAppRouter({ history, i18n }: { history?: RouterHistory; i1
       description: error instanceof ApiError && error.requestId && `Request id: ${error.requestId}`,
     }),
   );
-  return createRouter({
+  const router = createRouter({
     routeTree,
     context: { queryClient },
     ...(history && { history }),
+    parseSearch: parseSearchWith(exactJson),
+    stringifySearch: stringifySearchWith(JSON.stringify, exactJson),
     defaultPreload: "intent",
     // Query owns freshness: the router always runs loaders, and they read the cache.
     defaultPreloadStaleTime: 0,
@@ -294,6 +310,15 @@ export function createAppRouter({ history, i18n }: { history?: RouterHistory; i1
       </CSPProvider>
     ),
   });
+  // A screen reader hears nothing after a client-side navigation unless focus moves to the new page.
+  // Not on the first render or a search-only change; `preventScroll` leaves scroll restoration alone.
+  router.subscribe("onRendered", ({ fromLocation, pathChanged }) => {
+    const heading = fromLocation && pathChanged && document.querySelector<HTMLElement>("main h1");
+    if (!heading) return;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  });
+  return router;
 }
 
 declare module "@tanstack/react-router" {

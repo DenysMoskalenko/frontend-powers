@@ -9,13 +9,14 @@ workflow:
     on_new_commit: interruptible
 
 variables:
-  PNPM_VERSION: 12.21.0
+  PNPM_VERSION: 12.22.0
   PNPM_CONFIG_STORE_DIR: $CI_PROJECT_DIR/.pnpm-store
   # A placeholder: this build proves the bundle compiles and fits its budget; deploys build per environment.
   PUBLIC_API_ORIGIN: https://api.example.com
 
 default:
-  image: node:26.13.1-trixie-slim
+  # Pinned by digest, like the Dockerfile; the tag is in the comment.
+  image: node@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc # 26.13.1-trixie-slim
   interruptible: true
   # Node 26 ships no corepack. pnpm then switches to devEngines.packageManager and installs devEngines.runtime.
   before_script:
@@ -31,6 +32,8 @@ stages: [check, e2e]
 check:
   stage: check
   script:
+    # Every installed tarball carries a valid registry signature, also through a mirror or proxy.
+    - pnpm audit signatures
     - pnpm dedupe --check
     - pnpm exec biome ci --reporter=default --reporter=gitlab --reporter-file=gl-code-quality.json
     - pnpm typecheck
@@ -61,8 +64,8 @@ audit:
 
 e2e:
   stage: e2e
-  # The tag matches @playwright/test in package.json exactly; the image carries the browsers.
-  image: mcr.microsoft.com/playwright:v1.65.1-noble
+  # Pinned by digest; the tag in the comment equals @playwright/test in package.json. It carries the browsers.
+  image: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.65.1-noble
   script:
     - pnpm test:e2e
   artifacts:

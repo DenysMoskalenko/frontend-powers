@@ -39,9 +39,9 @@ its own `CSPProvider`.
 | `sonner` 2 | appends a `<style>` on import in every engine, even with its CSS imported statically; no option to turn it off | Base UI Toast (the scaffold's `toast.tsx`) |
 | `@emotion/react`, `styled-components` | `<style>` at runtime; styles lost | Tailwind classes |
 | `next-themes` | needs an inline script | `light-dark()` tokens; the `public/theme.js` add-on |
-| `framer-motion` / `motion` with `AnimatePresence mode="popLayout"` | `PopChild` appends a `<style>` | CSS transitions; `motion` 14 `motion.*` and plain `AnimatePresence` pass |
+| `framer-motion` / `motion` 14 with `AnimatePresence mode="popLayout"` or `AnimateView` | `PopChild` and `AnimateView`'s view-transition reset each append a `<style>` | CSS transitions; `motion` 14 `motion.*` and plain `AnimatePresence` pass |
 | `@tanstack/react-virtual` | passes the CSP; `useVirtualizer` is a hook the React Compiler knows it cannot compile, so it silently skips the whole component | virtua |
-| `react-virtuoso` | passes; 22 KB gzip against virtua's 5 KB | virtua |
+| `react-virtuoso` | passes; 22 KB gzip against virtua's 4 KB | virtua |
 | `tailwind-merge`, `clsx`, `class-variance-authority`, `tailwind-variants` | pass; 0.3 to 20 KB gzip for nothing the wrapper contract needs | `cx()` and variant records |
 | `input-otp` 1.5 | appends a `<style>` to `<head>` on mount | Base UI `OTPField` (`@base-ui/react/otp-field`) |
 | `vaul` 1.1 | appends a `<style>` to `<head>` on import | Base UI `Drawer` (`@base-ui/react/drawer`) |
@@ -51,8 +51,9 @@ its own `CSPProvider`.
 
 `OTPField` and `Drawer` are stable parts of `@base-ui/react` 1.9, with no preview marking.
 
-Sizes measured on a minified lib build, React external, gzip: lucide-react 1.9 KB for one icon and
-3.4 KB for twenty; virtua 4.8 KB; Base UI Toast 7.6 KB on top of the other Base UI parts.
+Sizes measured on a minified lib build, React external, gzip: lucide-react 1.76 1.9 KB for one icon
+and 3.4 KB for twenty; virtua 0.55 `VList` 4.2 KB; Base UI Toast 7.6 KB on top of the other Base UI
+parts.
 
 ## Proving a new UI dependency
 
@@ -229,6 +230,36 @@ export function UsersGrid({ users }: { users: UserResponse[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+```
+
+The install prints `Agent skills awaiting approval: @tanstack/react-table.`: decline with
+`pnpm approve '!@tanstack/react-table'`, which writes `skills: false` under `permissions` in
+`pnpm-workspace.yaml`, as the scaffold does for the router.
+
+A cell or row component that receives a stable `row`, `cell` or `column` and reads table state
+through a method (`row.getIsSelected()`) renders stale under the React Compiler. The maintainers'
+fix: read it inside that component through `Subscribe`, or pass the value in as a prop.
+
+```tsx,verify
+import { type Row, rowSelectionFeature, Subscribe, tableFeatures } from "@tanstack/react-table";
+import type { UserResponse } from "@/api/generated/api";
+
+const features = tableFeatures({ rowSelectionFeature });
+
+export function SelectionCell({ row }: { row: Row<typeof features, UserResponse> }) {
+  return (
+    <Subscribe source={row.table.atoms.rowSelection} selector={(selection) => selection[row.id]}>
+      {(selected) => (
+        <input
+          type="checkbox"
+          aria-label={`Select ${row.original.name}`}
+          checked={!!selected}
+          onChange={row.getToggleSelectedHandler()}
+        />
+      )}
+    </Subscribe>
   );
 }
 ```

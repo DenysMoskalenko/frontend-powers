@@ -85,17 +85,28 @@ export function caddyHeaders(connectOrigins: readonly string[]) {
     .join("\n")
     .concat("\n");
 }
+
+// DNS labels or an IPv6 literal only: WHATWG hosts also allow `* ; , { } ' $`, which would widen the
+// CSP or become a Caddy placeholder.
+const ORIGIN = /^(https?|wss?):\/\/([a-z0-9-]+(\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])(:\d+)?$/;
+
+/** A value that may go into `connect-src` as is: scheme, host and port, nothing else. */
+export const isBareOrigin = (value: string) =>
+  ORIGIN.test(value) && URL.parse(value)?.origin === value;
 ```
 
 `deploy/headers.test.ts` pins the parts that break silently: the whole CSP string, `no-cache`
-against `immutable` by path, the `! Cache-Control` detach line, and the Caddy quoting. Any change
+against `immutable` by path, the `! Cache-Control` detach line, the Caddy quoting, and which values
+`isBareOrigin` accepts (`https://api.example.com`, `wss://rt.example.com`, `http://[::1]:8080`,
+punycode) and refuses (`https://*`, `https://*.example.com`, `https://a;b`, `https://a,b`, a `{…}`
+Caddy placeholder, `$`, `'`, a trailing slash, an appended source, `data:`). Any change
 to `csp()` changes the first test's expected string in the same commit.
 
 ## How the build feeds it
 
 The `securityHeaders` plugin in `vite.config.ts` reads every name in `PUBLIC_ENV` in its
 `configResolved` hook (skipped in `mode === "test"`), refuses a missing value
-(`Error: PUBLIC_API_ORIGIN is not set`) or anything but a bare origin
+(`Error: PUBLIC_API_ORIGIN is not set`) or anything `isBareOrigin` refuses, a wildcard included
 (`Error: PUBLIC_API_ORIGIN is not a bare origin: https://api.example.com/v1`), and passes the list
 as `connectOrigins`. In `generateBundle` it emits `_headers`, `headers.caddy` and `.assetsignore`;
 in `configurePreviewServer` it sets `headersFor(request.url)` on every `vite preview` response. The
@@ -114,7 +125,7 @@ Messages are Chromium's console text; the end-to-end guard also prints
 | `connect-src 'self' <origins>` | `fetch`, XHR, `EventSource` and WebSocket to any origin not built in from `PUBLIC_ENV` | `Connecting to 'https://…' violates the following Content Security Policy directive: "connect-src 'self' https://api.example.com"` |
 | `object-src 'none'` | `<object>` and `<embed>` | setting `data` hits Trusted Types first: `This document requires 'TrustedScriptURL' assignment.` |
 | `base-uri 'none'` | a `<base>` element | `Setting the document's base URI to '…' violates the following Content Security Policy directive: "base-uri 'none'"` |
-| `form-action 'self'` | a native form posting to another origin; forms here submit through a mutation, not a navigation | guard: `CSP violation: form-action <URL>` |
+| `form-action 'self'` | a native form posting to another origin; forms here submit through a mutation, not a navigation. The sign-in add-on adds the identity provider's origin for its sign-out form (`keycloak-spa-auth`) | guard: `CSP violation: form-action <URL>` |
 | `frame-ancestors 'none'` | other sites framing the app (clickjacking) | enforced by the framing page's browser |
 | `require-trusted-types-for 'script'` | string assignments to HTML, script and script-URL sinks: `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `dangerouslySetInnerHTML`, `script.src`, `setAttribute("on…")` | `This document requires 'TrustedHTML' assignment. The action has been blocked.` (also `'TrustedScript'`, `'TrustedScriptURL'`); guard: `CSP violation: require-trusted-types-for trusted-types-sink` |
 | `trusted-types 'none'` | creating any Trusted Types policy, `default` included | `Creating a TrustedTypePolicy named 'app-html' violates the following Content Security policy directive: "trusted-types 'none'"` |
@@ -150,6 +161,9 @@ adds an assertion in `deploy/headers.test.ts` in the same commit, and is followe
 - **A new origin the browser calls** (identity provider, realtime, telemetry): add the
   `PUBLIC_*` name to `PUBLIC_ENV` (a realtime origin in its `wss://` form); it reaches
   `connect-src` with no change here. The procedure is in SKILL.md.
+- **An add-on that needs another directive**: it changes exactly the directives its own reference
+  names (an identity provider's origin in `form-action`, for example), each with a test in
+  `deploy/headers.test.ts` and the end-to-end assertion on the served CSP header.
 - **Images from another host** (avatars, a CDN): add a directive to `csp()`, such as
   `"img-src 'self' https://images.example.com"`. A host that differs per environment comes in as a
   `PUBLIC_*_ORIGIN` and is passed to `csp()` as a second list, so it does not widen `connect-src`
@@ -165,11 +179,15 @@ adds an assertion in `deploy/headers.test.ts` in the same commit, and is followe
   `Cross-Origin-Opener-Policy` to `same-origin-allow-popups`, with a test and a comment naming the
   flow. Under `same-origin` the app's handle reads `closed` and no message arrives in either
   direction. Never drop the header.
-- **HTML from an API or a user** (a rich-text field): render it as text, parse it into
-  allowlisted React elements, or ask the backend for structured content. A sanitizer policy is
-  offered only when the user asks for HTML rendering after hearing its cost (a dependency that
-  becomes the one place markup enters the DOM, and a named exception in the policy); the agent
-  never adds it on its own initiative or to silence a violation. `trusted-types` must list the
+- **HTML from an API or a user** (a rich-text field): render it as text by default, or ask the
+  backend for structured content. The policy leaves no dependency-free way to read markup:
+  `DOMParser.parseFromString`, a `<template>`'s `innerHTML` and `createContextualFragment` are
+  Trusted Types sinks too, and throw in Chromium, Firefox and WebKit. When the markup must show,
+  stop and put the choice to the user; never install either on your own initiative or to silence a
+  violation. One option is a parser package that builds React elements from an allow-list of tags
+  and attributes (a new dependency; every `href` still goes through `safeHref`). The other is a
+  sanitizer policy, whose cost is a dependency that becomes the one place markup enters the DOM and
+  a named exception in the policy. `trusted-types` must list the
   name the sanitizer itself creates: DOMPurify 3 creates `dompurify` on first use, so
   `trusted-types app-html` alone blocks it (`Creating a TrustedTypePolicy named 'dompurify'
   violates…`) and its output is empty, while `trusted-types dompurify` with

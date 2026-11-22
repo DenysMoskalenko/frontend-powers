@@ -12,6 +12,8 @@
 6. Since upgrading to i18next 27, a missing Russian translation shows the key instead of the English text.
 7. The created dates in the users table stay English when the UI is switched to Russian.
 8. `i18next-cli status` says `ru: 94% (16/17 keys) — 1 absent` in the pre-commit hook. What now?
+9. Add German as a third language.
+10. Screen readers announce the toast region as "Notifications" in English although the UI is in Russian.
 
 **Should not load**
 
@@ -107,6 +109,25 @@
 - `status.ignoreKeys`, removing `status` from the check script, or `lint --update-baseline` to pass.
 - A default value in the `t()` call instead of the JSON text.
 
+### Eval 5 - adding a language
+
+**Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app, messages in src/app/locales/<language>/<namespace>.json, English and Russian today. Add German.
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- `"de"` added to `LANGUAGES` in `src/app/i18n.ts`.
+- zod's German messages (`de` from `zod/locales`) added to `ZOD_MESSAGES`.
+- `"de"` added to `locales` in `i18next.config.ts`.
+- `pnpm i18n:extract` run, and German text written for every key in `src/app/locales/de/`.
+
+**Must not produce**:
+
+- German files written by hand while `i18next.config.ts` still lists only `en` and `ru`.
+- English text copied into the German files.
+- `i18next-browser-languagedetector` or a second instance.
+
 ### Probe 1 - concatenated translation
 
 **Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app, messages in src/app/locales/<language>/<namespace>.json. Show "Welcome back, Ada" in the header with the user's name, in English and Russian.
@@ -123,7 +144,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:[{=(:,]|return|=>)\s*[\w.]*(?:count|total|length)\s*===\s*1\s*\?`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:[{=(:,]|return|=>)\s*[\w.]*(?:count|total|length)\s*===\s*1\s*\?)`
 
 **Right answer**: `_one`
 
@@ -133,7 +154,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:\{|=|return|=>)\s*t\(\s*\x60[^\x60]*\$\{`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:\{|=|return|=>)\s*t\(\s*\x60[^\x60]*\$\{)`
 
 ### Probe 4 - void element name in Trans
 
@@ -141,7 +162,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `<Trans[^>]*\bcomponents=\{\{\s*(?:link|br|img|input|hr|meta|area|source)\s*:`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<Trans[^>]*\bcomponents=\{\{\s*(?:link|br|img|input|hr|meta|area|source)\s*:)`
 
 ### Probe 5 - fallbackLng left out
 
@@ -149,7 +170,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `^(?![\s\S]*fallbackLng)[\s\S]*\.init\(`
+**Wrong answer**: `^(?![\s\S]*(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)fallbackLng)[\s\S]*?(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\.init\(`
 
 **Right answer**: `fallbackLng:\s*(?:["']en["']|[A-Z_]+\b)`
 
@@ -159,7 +180,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:^|\n)\s*vi\.mock\(\s*["\x27]react-i18next["\x27]|lng:\s*["\x27]cimode`
+**Wrong answer**: `(?:^|\n)\s*vi\.mock\(\s*["\x27]react-i18next["\x27]|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:lng:\s*["\x27]cimode)`
 
 ### Probe 7 - rendering the server message
 
@@ -167,7 +188,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:>|=)\s*\{\s*error\.message\s*\}|(?:[{=(,]|return|=>)\s*t\(\s*(?:error\.message|\x60[^\x60]*\$\{\s*error\.)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:>|=)\s*\{\s*error\.message\s*\})|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:[{=(,]|return|=>)\s*t\(\s*(?:error\.message|\x60[^\x60]*\$\{\s*error\.))`
 
 ### Probe 8 - HTTP backend from public/
 
@@ -193,4 +214,14 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:[{=(,]|return|=>)\s*t\(\s*["\x27][\w.:-]+["\x27]\s*,\s*["\x27]|\bt\([^)]*defaultValue\s*:`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:[{=(,]|return|=>)\s*t\(\s*["\x27][\w.:-]+["\x27]\s*,\s*["\x27])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bt\([^)]*defaultValue\s*:)`
+
+### Probe 11 - nested $t() with options
+
+**Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app, messages in src/app/locales/<language>/<namespace>.json. The welcome line "Welcome back, Ada" should reuse the greeting kept under `common:greeting` ("Welcome back, {{name}}") instead of repeating it in the users namespace. Write the messages and the call.
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\$t\([^)\n]*,\s*\{`
+
+**Right answer**: `t\(\s*["\x27](?:common:)?greeting["\x27]\s*,\s*\{`

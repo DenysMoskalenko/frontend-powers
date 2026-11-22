@@ -15,6 +15,7 @@ backend). Fan-out to many clients with history is Centrifugo's; one-way streams 
 | --- | --- |
 | Ownership | One module in `src/api/` owns the socket, created per router like `createRealtime` and provided through a Context; components subscribe and never construct a `WebSocket` |
 | Auth | The token from `apiToken()` goes in the first frame after `open`; the server answers `ready` or closes. Never in the URL, where proxies and logs keep it |
+| Handshake | `open` plus `ready` within a timeout (10 s in `openSocket`); past it, close and treat it as a drop, or a server or proxy that accepts and never answers leaves the caller waiting forever |
 | Inbound frames | `JSON.parse` in a `try`, then a zod discriminated union on `type` with `safeParse`; drop what fails, so an older client survives a newer server |
 | Reconnect | Full jitter: `Math.random() * Math.min(30_000, 500 * 2 ** attempt)`; reset `attempt` after the connection has stayed open 60 s, not on `open`, or a server that accepts and drops at once is hammered at the minimum delay |
 | Heartbeat | The server pings on an interval; the client treats a gap of two intervals as a dead connection and closes it with 4000, then reconnects. Browser sockets cannot send protocol-level pings |
@@ -50,16 +51,27 @@ const parse = (data: unknown) => {
 
 /**
  * Opens a socket of the app's own protocol. The token travels in the first frame, never in the URL,
- * where proxies log it; resolves once the server answers `ready`, rejects if it closes first.
+ * where proxies log it; resolves once the server answers `ready`, rejects if it closes first or
+ * does not answer within `timeoutMs`.
  */
-export function openSocket(url: string, token: string) {
+export function openSocket(url: string, token: string, timeoutMs = 10_000) {
   return new Promise<WebSocket>((resolve, reject) => {
     const socket = new WebSocket(url);
+    // A server or proxy that accepts and never answers would leave the caller waiting forever.
+    const timer = setTimeout(() => {
+      reject(new Error("socket handshake timed out"));
+      socket.close(4000, "handshake timeout");
+    }, timeoutMs);
     socket.addEventListener("open", () => socket.send(JSON.stringify({ type: "auth", token })));
     socket.addEventListener("message", (event) => {
-      if (Ready.safeParse(parse(event.data)).success) resolve(socket);
+      if (!Ready.safeParse(parse(event.data)).success) return;
+      clearTimeout(timer);
+      resolve(socket);
     });
-    socket.addEventListener("close", (event) => reject(new Error(`socket closed: ${event.code}`)));
+    socket.addEventListener("close", (event) => {
+      clearTimeout(timer);
+      reject(new Error(`socket closed: ${event.code}`));
+    });
   });
 }
 ```
@@ -107,5 +119,13 @@ test("a server that closes instead of ready rejects with the close code", async 
   );
 
   await expect(openSocket("wss://rt.test/game", "stale")).rejects.toThrow("socket closed: 4401");
+});
+
+test("a server that accepts and never answers rejects after the handshake timeout", async () => {
+  server.use(game.addEventListener("connection", () => {}));
+
+  await expect(openSocket("wss://rt.test/game", "token-1", 50)).rejects.toThrow(
+    "socket handshake timed out",
+  );
 });
 ```

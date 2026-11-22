@@ -10,7 +10,7 @@
 
 The third-party skills are written for a wider audience, and several rules assume a server
 renderer, a different data library, inline scripts or runtime style injection. This stack is a
-client-rendered single-page app with TanStack Router and Query, the React Compiler, Biome, and a CSP
+client-rendered single-page app with TanStack Router and Query, the React Compiler (where `vite.config.ts` runs it), Biome, and a CSP
 of `script-src 'self'; style-src 'self'` with Trusted Types enforced. Where a row below matches, its
 last column wins over the third-party rule. A rule not listed applies as written unless it conflicts
 with one of those constraints (no inline style or script, no Trusted Types policy, no server
@@ -31,7 +31,7 @@ did not follow and why. A new conflict is added here, not in the skill that met 
 | `server-no-shared-module-state` | the risk is cross-request leakage on a server | In the browser the risk is state leaking between tests; build state in `createX` factories |
 | `client-swr-dedup`, `client-event-listeners` | use SWR and `useSWRSubscription` | Do not add SWR: TanStack Query through the orval client owns deduplication and caching; a shared listener is a module registry read through `useSyncExternalStore` |
 | `rerender-defer-reads` | `useSearchParams` is a Next.js hook | `Route.useSearch({ select })` for a narrow subscription |
-| `rerender-memo`, `rerender-memo-with-default-value`, `rerender-simple-expression-in-memo`, `rendering-hoist-jsx`, the `useMemo` half of `rerender-split-combined-hooks`, the memo parts of `rerender-use-deferred-value`, `js-hoist-regexp`, `js-tosorted-immutable` and `rerender-functional-setstate` | assume hand memoization; their correct examples add `useMemo` or `useCallback` | The React Compiler memoizes: write no new `useMemo`, `useCallback` or `memo` |
+| `rerender-memo`, `rerender-memo-with-default-value`, `rerender-simple-expression-in-memo`, `rendering-hoist-jsx`, the `useMemo` half of `rerender-split-combined-hooks`, the memo parts of `rerender-use-deferred-value`, `js-hoist-regexp`, `js-tosorted-immutable` and `rerender-functional-setstate` | assume hand memoization; their correct examples add `useMemo` or `useCallback` | Where `vite.config.ts` runs the React Compiler, it memoizes: write no new `useMemo`, `useCallback` or `memo`. Without it, these rules apply as written |
 | `advanced-event-handler-refs` | its first example writes a ref inside an effect | `useEffectEvent`, as its own alternative shows |
 | `advanced-init-once` | a module flag checked inside `useEffect` | Once-per-load setup runs in `main.tsx` before `createRoot`, or in the router's `Wrap` |
 | `rendering-hydration-no-flicker` | inline `<script dangerouslySetInnerHTML>` before hydration | There is no hydration and the CSP blocks inline scripts: theme through `color-scheme` and `light-dark()`; a stored choice is an external script (`tailwind-base-ui`) |

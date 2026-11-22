@@ -2,6 +2,7 @@ import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
 import { useRef } from "react";
+import type * as z from "zod";
 import { ApiError } from "@/api/api-error";
 import {
   getCreateUserMutationOptions,
@@ -12,7 +13,7 @@ import { CreateUserBody } from "@/api/generated/api.zod";
 import { Button } from "@/shared/ui/button";
 import { TextField } from "@/shared/ui/text-field";
 
-const emptyUser = { email: "", name: "" };
+const emptyUser: z.input<typeof CreateUserBody> = { email: "", name: "" };
 
 /** `fieldInfo`: the form's rendered fields, keyed by name (`email`, `items[0].name`). */
 function submitErrors(error: unknown, fieldInfo: object) {

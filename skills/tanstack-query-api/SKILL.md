@@ -7,9 +7,9 @@ metadata:
 
 # Server state and the API client
 
-Assumes TanStack Query 5.107, orval 8.48, zod 4.6.
+Assumes TanStack Query 5.108, orval 8.48, zod 4.6.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, use its own modules, helpers and scripts, and say so when it has no equivalent instead of adding one unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If `pnpm-lock.yaml` pins another major version than the line above, follow the project and say which rules may not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 ## Important
 
@@ -19,9 +19,11 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 - Keys and fetch functions come from the generated getters, never hand-written arrays. Loaders call
   `queryClient.query({ ...getXQueryOptions(p), staleTime: "static" })`, awaited or not; components call
   `useSuspenseQuery(getXSuspenseQueryOptions(p))`. Swapping the two is TS2379.
-- `ensureQueryData`, `prefetchQuery` and `fetchQuery` are deprecated in 5.107; use `queryClient.query`.
-- Mutations invalidate in `onSuccess` and return the promise:
-  `(_data, _variables, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: getListUsersQueryKey() })`.
+- `ensureQueryData`, `prefetchQuery` and `fetchQuery` are deprecated; use `queryClient.query`.
+- `onSuccess` returns `client.invalidateQueries({ queryKey: getListUsersQueryKey() })`, `client`
+  from its fourth argument. A delete started on the entity's own page first `await`s `navigate`, then
+  `client.removeQueries({ queryKey: getGetUserQueryKey(id), exact: true })`: invalidated while
+  mounted, the detail refetches, gets a 404 and toasts "Could not refresh the data".
 - Errors are `ApiError`, branched on `status`, `code` and `fieldErrors`. Show users `requestId`,
   never `message`. No second HTTP error class, no generated error types, no zod on own-backend
   responses.
@@ -31,9 +33,11 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 - `references/orval.md` — changing `orval.config.ts` or `openapi.json`: every key, the generated
   names, `operationId`s, parameters and headers, keys that stay off.
 - `references/client-and-errors.md` — touching `apiFetch`, `ApiError` or `createQueryClient`, or
-  deciding who shows an error: the files quoted, the error mapping, retry and toast policy.
+  deciding who shows an error: the files quoted, the error mapping, retry and toast policy; wire
+  formats: decimal, date-time, int64, nullable.
 - `references/queries-and-mutations.md` — writing a query or mutation: `select`, polling, dependent
-  and parallel reads, invalidation, optimistic UI, pagination, infinite lists.
+  and parallel reads, invalidation, a delete and its test, optimistic UI, pagination, infinite lists,
+  older v5 and v4 names.
 
 ## Ownership
 
@@ -63,6 +67,9 @@ is in `references/orval.md`.
 any non-2xx whatever its body, `""` for an empty 2xx body. `configureApi({ baseUrl, getToken, retryToken })` replaces the whole configuration;
 `main.tsx` sets `baseUrl`, the auth add-on the rest. Call `apiFetch` directly only for an endpoint
 the document lacks; writes go through the generated `getXMutationOptions` once it is documented.
+`urlEncodeParameters: true` in `orval.config.ts` encodes every path parameter of the generated
+client; a hand-written path encodes each dynamic segment with `encodeURIComponent` itself. A bare
+`..` survives encoding, so a path id is still checked against its schema (`tanstack-router-spa`).
 
 `ApiError` carries `status`, `code` (RFC 9457 `type`), `requestId` (body `request_id`, else the
 `x-request-id` header, which a cross-origin backend must expose), `fieldErrors` (field path as
@@ -89,9 +96,9 @@ TanStack Form names it, `items[0].name`, to message; `{}` when none) and `body`.
 | part of an entity | the getter's `query: { select: (user) => user.name }` |
 | keep fresh while visible | `query: { refetchInterval: 30_000 }`; a function may return `false` |
 | a widget no loader owns, or dependent on a pick | `useQuery(getXQueryOptions(id ?? "", { query: { enabled: id !== undefined } }))` |
-| several reads | in parallel in the loader; one child component per id with `useSuspenseQuery` |
+| several reads the page shows on arrival (a section under the details included) | in parallel in the loader, one `Promise.all`; one child component per id with `useSuspenseQuery` |
 | data from another read | `await` the first in the loader, then `query` the second |
-| data the first paint does not need | `useQuery(getXQueryOptions(p))` with its own pending and error state; the loader starts it with `void context.queryClient.query({ ...options, staleTime: "static" }).catch(() => undefined)` |
+| data the page can render without (behind a tab or toggle) | `useQuery(getXQueryOptions(p))` with its own pending and error state; the loader starts it before its first `await`, as `tanstack-router-spa` states |
 
 Pass options through the getter's `query` argument so `select` infers its types.
 `useSuspenseQueries` over the suspense getters fails with TS2769 for a fixed list and types `data`
@@ -113,9 +120,8 @@ const createUser = useMutation(
 createUser.mutate({ data: { name, email } });
 ```
 
-- Callbacks are `(data, variables, onMutateResult, context)` with `context` =
-  `{ client, meta, mutationKey }`; no `useQueryClient()` needed.
-- The returned promise keeps `isPending` true until the refetch lands.
+- Callbacks are `(data, variables, onMutateResult, { client, meta, mutationKey })`; the returned
+  invalidation keeps `isPending` true until the refetch lands.
 - `setQueryData(getGetUserQueryKey(user.id), user)` before the list invalidation shows the server's
   answer at once; the list key also covers that detail, so it is refetched once while on screen. A
   list off screen is served from the cache when the user returns (`"static"` ignores invalidation),
@@ -123,42 +129,28 @@ createUser.mutate({ data: { name, email } });
   `client.removeQueries({ queryKey: getListUsersQueryKey(), type: "inactive" })` before invalidating,
   so the list loader waits for fresh data.
 - `mutateAsync` rejects with the `ApiError`, for a caller that continues and catches; `mutate` never
-  rejects, the error reaches `mutation.error` and the toast.
+  rejects: the error lands in `mutation.error` and, where `createQueryClient` has the `MutationCache`
+  notice, the toast; without one, render `mutation.error`.
 
-## Optimistic UI, pagination, infinite lists
+## Infinite lists
 
-- Optimistic default: render the pending item from `mutation.variables`, or elsewhere from
-  `useMutationState` filtered by `getCreateUserMutationKey()` and `status: "pending"`.
-- Write to the cache in `onMutate` only when the target query is certainly cached: cancel, snapshot,
-  `setQueryData`, restore in `onError`, invalidate in `onSettled`.
-- Pagination: `toListParams` maps the URL's 1-based `page` to `limit` and `offset`, and `pageCount`
-  reads the envelope's `total` and `limit`; each page is its own cache entry and needs no
-  `placeholderData`. A backend paging by `page` and `page_size` takes the URL's page as is.
-- Infinite lists: `infiniteQueryOptions` around `listUsers`, keyed
-  `[...getListUsersQueryKey({ limit }), "infinite"]`. orval's `useInfinite` keys it
-  `['infinite', 'users', ...]`, which the list invalidation misses.
+`infiniteQueryOptions` around `listUsers`, keyed `[...getListUsersQueryKey({ limit }), "infinite"]`.
+orval's `useInfinite` keys it `['infinite', 'users', ...]`, which the list invalidation misses.
+Optimistic UI and pagination are in `references/queries-and-mutations.md`.
 
 ## Wire formats
 
-| Schema | Generated type | Rule |
-|---|---|---|
-| `string`, `format: date-time` | `string` | ISO string in the cache; format at render |
-| `string`, `format: decimal` | `string` | never `parseFloat`; send what the user typed |
-| `integer`, `format: int64` | `number` | exact only to 2^53; larger ids need a string schema |
-| `string`, `format: int64` | `string` | keep it a string |
-| `enum` | const object and union type | compare with the literal `"paid"` |
-| required, `type: [T, "null"]` | `x: T \| null` | key always present |
-| not required | `x?: T` | omit the key; `undefined` is TS2375 (TS2379 as an argument) |
-| not required, nullable | `x?: T \| null` | in query params omit it: `null` is sent as `"null"` |
-
-Property names stay snake_case as the backend spells them. Display formatting is
+Property names stay snake_case as the backend spells them. Decimal, date-time, int64 and nullable
+fields follow the table in `references/client-and-errors.md`; display formatting is
 `frontend-code-style`'s.
 
 ## Where zod validates
 
 Validate what the app does not control: search params, form input (schemas from `api.zod.ts`),
 `localStorage` and `sessionStorage` reads, socket and SSE messages, `postMessage`. Never parse an
-own-backend response: the generated types are the contract and the CI drift check guards them.
+own-backend response: the backend owns its contract and publishes it as `openapi.json`, the CI drift
+check keeps the client equal to that committed copy, and a response that breaks it is a backend bug
+to fix there.
 
 `src/app/zod-config.ts` sets `z.config({ jitless: true })` before any schema is built; without it
 each object schema's `new Function` probe is a Trusted Types violation.
@@ -172,11 +164,7 @@ each object schema's `new Function` probe is a Trusted Types violation.
 | `fetchInfiniteQuery` / `ensureInfiniteQueryData` | `queryClient.infiniteQuery(opts)` / `queryClient.infiniteQuery({ ...opts, staleTime: "static" })` |
 | `onSuccess(data, variables, context)` with `onMutate`'s return as `context` | `(data, variables, onMutateResult, { client, meta, mutationKey })` |
 | `useQueryClient()` only to invalidate in a callback | `context.client` |
-| `onSuccess` / `onError` on `useQuery` | removed in v5; react in the cache handlers or render from `error` |
 | `isLoading` meaning "no data yet" | `isPending`; `isLoading` is `isPending && isFetching` |
-| `cacheTime` | `gcTime` |
-| `keepPreviousData: true` | `placeholderData: keepPreviousData` |
-| `isInitialLoading`, `isCancelledError()` | `isLoading`, `instanceof CancelledError` |
 | hand-written `queryKey: ["users", id]` | `getGetUserQueryKey(id)` |
 | an `axios` instance with interceptors | `apiFetch` with `configureApi` |
 | orval `shouldExportQueryKey` | `shouldExportKeys` |
@@ -185,11 +173,9 @@ each object schema's `new Function` probe is a Trusted Types violation.
 
 | About to… | Do this instead |
 |---|---|
-| Write `fetch("/users")` or an `axios` call in a component | The generated getter; `apiFetch` owns origin, token and errors |
-| Call `invalidateQueries` without returning it | Return it so the mutation stays pending |
 | Check `error.response?.status` or a generated `ErrorBody` | `error instanceof ApiError && error.status` |
 | Add `retry` to a mutation | `retry: false` stays; the user retries |
-| Pass `{ q: null }` or `{ q: undefined }` as a query param | Omit the key |
-| `parseFloat` a decimal field, or `new Date()` it into the cache | Keep the string; convert at render |
-| `ListUsersResponse.parse(data)` on an API response | Trust the generated type |
-| Set `useQuery: true` or `mutationInvalidates` in orval | Defaults plus explicit invalidation in `onSuccess` |
+| Pass `{ q: null }` or `{ q: undefined }` as a query param | Omit the key: `null` is sent as the string `"null"` |
+| `parseFloat` a decimal field, or `new Date()` it into the cache | Keep the string, convert at render: a float loses digits, a `Date` is not what the cache holds |
+| Set `useQuery: true` or `mutationInvalidates` in orval | Defaults plus explicit invalidation in `onSuccess`: `mutationInvalidates` does not return the promise |
+| `` `/users/${id}` `` in a hand-written path | `` `/users/${encodeURIComponent(id)}` ``: a raw `../admin` or `?x=y` reaches another endpoint with the token |

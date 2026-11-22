@@ -59,7 +59,7 @@
 - `openapi.json` replaced with the backend's document, then `pnpm format` and `pnpm api:generate`.
 - An orders list, detail and create page written in the shapes of the `users` example.
 - Every `users` example file deleted: `src/routes/users/`, `src/features/users/`, `src/test/factories/user.ts`.
-- The `/users` links in `src/routes/__root.tsx` and the redirect in `src/routes/index.tsx` pointed at the orders routes.
+- The `/users` links in `src/routes/__root.tsx`, the redirect in `src/routes/index.tsx` and `src/app/router.test.tsx` pointed at the orders routes.
 - `e2e/stub-api.ts` and `e2e/smoke.spec.ts` rewritten for orders.
 - `pnpm test` or `pnpm dev` run so `src/routeTree.gen.ts` is regenerated, then `pnpm check` and `pnpm test:e2e`.
 - A `<title>` in each new page component.
@@ -99,7 +99,7 @@
 
 - The template copied into `web/` with `cp -R .../assets/app/. web/`.
 - A check for a root `.pre-commit-config.yaml` or `prek.toml`, an existing pre-commit hook and `core.hooksPath` before `pnpm hooks`.
-- The commit staged from `web/` with `git add -A .` (or `git add web`), so `backend/` stays out of it.
+- The commit staged from `web/` with `git add -A .` (or `git add web`), plus any root workflow file it merged, by path, so `backend/` stays out of it.
 - The user told that `web/.github/` does not run from the subdirectory, and either the workflow moved to the root `.github/workflows/` with `working-directory: web`, or the user told that CI does not cover the app until it is.
 
 **Must not produce**:
@@ -143,7 +143,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `(?:^|\n)\s*(?:\$\s*)?pnpm\s+(?:-r\s+|--recursive\s+)?(?:up|update|upgrade)\s+(?:-r\s+|--recursive\s+)?(?:--latest|-L)\b(?=[ \t]*(?:$|\n|&&|;|#))|:\s*"\^\d`
+**Wrong answer**: `^(?:(?!git\s+commit)[\s\S])*?(?:^|\n)\s*(?:\$\s*)?pnpm\s+(?:-r\s+|--recursive\s+)?(?:up|update|upgrade)\b[^\n]*?\s(?:--latest|-L)\b|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?::\s*"\^\d)`
 
 ### Probe 5 - hooks without a repository
 
@@ -151,7 +151,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `"(?:prepare|postinstall)"\s*:\s*"[^"]*(?:prek|pnpm\s+(?:run\s+)?hooks)|scripts\.(?:prepare|postinstall)=["\x27]?[^\n]*(?:prek|pnpm\s+(?:run\s+)?hooks)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:"(?:prepare|postinstall)"\s*:\s*"[^"]*(?:prek|pnpm\s+(?:run\s+)?hooks))|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:scripts\.(?:prepare|postinstall)=["\x27]?[^\n]*(?:prek|pnpm\s+(?:run\s+)?hooks))`
 
 **Right answer**: `git\s+init`
 
@@ -171,7 +171,7 @@
 
 **Fixture**: backend-repo
 
-**Wrong answer**: `git\s+add\s+(?:-A|--all)(?=\s*(?:&&|;|\n|$))|git\s+commit\s+-a\w*(?=[\s&;])`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:git\s+add\s+(?:-A|--all)(?=\s*(?:&&|;|\n|$)))|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:git\s+commit\s+-a\w*(?=[\s&;]))`
 
 **Right answer**: `git\s+add\s+(?:-A\s+|--all\s+)?(?:\.|web\/?)(?=[\s"\x27&;]|$)`
 
@@ -184,3 +184,13 @@
 **Wrong answer**: `(?:^|\n)\s*(?:\$\s*)?git\s+init(?:\s+\.)?\s*(?:&&|;|\n|$)`
 
 **Right answer**: `git\s+init\s+(?:-b\s*|--initial-branch[=\s])main\b`
+
+### Probe 9 - an app already exists
+
+**Prompt**: Scaffold our new frontend here.
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:cp\s+-R[^\n]*assets\/app\/\.\s+\.\/?\s*(?:$|\n|&&|;))`
+
+**Right answer**: `frontend-project-structure`

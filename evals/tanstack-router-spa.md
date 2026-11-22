@@ -37,6 +37,7 @@
 - `loaderDeps` adding `q` and `sort` to the API params only when set (`...(search.q !== undefined && { q: search.q })`)
 - the loader still calling `context.queryClient.query({ ...getListUsersQueryOptions(deps), staleTime: "static" })`
 - the filter write going through `navigate({ search: (prev) => ({ ...prev, ... }) })` or `<Link search>` with `page: undefined`
+- the pagination links and the loader's past-the-end redirect keeping `q` and `sort` with a search updater (`search: (prev) => ({ ...prev, page })`)
 - the search box as an uncontrolled input with `defaultValue` from the URL's `q` and a `key` on it or its form
 - the search text trimmed on submit, and that navigation using `replace: true`
 - the current values read with `Route.useSearch`
@@ -142,7 +143,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:const|let)\s+\[\s*(?:page|pageIndex|currentPage|offset|cursor)\w*\s*,\s*set\w+\s*\]\s*=\s*useState`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:const|let)\s+\[\s*(?:page|pageIndex|currentPage|offset|cursor)\w*\s*,\s*set\w+\s*\]\s*=\s*useState)`
 
 ### Probe 4 - free-text search value
 
@@ -150,7 +151,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:[{,]|^|\n)\s*q\s*:\s*z\s*\.\s*string\(\)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?<=(?:^|\n|[{,])\s*)\bq\s*:\s*z\s*\.\s*string\(\)`
 
 **Right answer**: `z\.coerce\.string\(\)`
 
@@ -160,7 +161,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `=\s*Route\.useLoaderData\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:=\s*Route\.useLoaderData\()`
 
 ### Probe 6 - validator adapter
 
@@ -176,7 +177,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `useEffect\(\s*\(\)\s*=>\s*\{[^}]*navigate\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:useEffect\(\s*\(\)\s*=>\s*\{[^}]*navigate\()`
 
 **Right answer**: `throw\s+redirect\(`
 
@@ -186,7 +187,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `useBlocker\(\s*\{\s*(?:blockerFn|condition)\s*:|useBlocker\(\s*\(\)\s*=>`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:useBlocker\(\s*\{\s*(?:blockerFn|condition)\s*:)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:useBlocker\(\s*\(\)\s*=>)`
 
 **Right answer**: `withResolver:\s*true`
 
@@ -196,7 +197,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `createLazyFileRoute\(\s*["\x27]|\b(?:React\.)?lazy\(\s*\(\)\s*=>\s*import\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:createLazyFileRoute\(\s*["\x27])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\b(?:React\.)?lazy\(\s*\(\)\s*=>\s*import\()`
 
 ### Probe 10 - redundant error component
 
@@ -204,7 +205,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `errorComponent\s*:\s*RouteError\s*[,\n}]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:errorComponent\s*:\s*RouteError\s*[,\n}])`
 
 ### Probe 11 - a child URL with its own page
 
@@ -212,6 +213,6 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `createFileRoute\(\s*["\x27]\/users\/\$userId\/settings["\x27]|\$userId_\.settings\.tsx|routes\/users\/\$userId\/index\.tsx`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:createFileRoute\(\s*["\x27]\/users\/\$userId\/settings["\x27])|routes\/users\/\$userId_\.settings\.tsx|routes\/users\/\$userId\/index\.tsx`
 
 **Right answer**: `\$userId_\/settings`

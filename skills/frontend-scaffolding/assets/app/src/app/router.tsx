@@ -1,7 +1,12 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { Toast } from "@base-ui/react/toast";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { createRouter, type RouterHistory } from "@tanstack/react-router";
+import {
+  createRouter,
+  parseSearchWith,
+  type RouterHistory,
+  stringifySearchWith,
+} from "@tanstack/react-router";
 import { ApiError } from "@/api/api-error";
 import { routeTree } from "@/routeTree.gen";
 import { RouteError } from "@/shared/ui/route-error";
@@ -13,6 +18,14 @@ const NOTICES = {
   mutation: "The change was not saved",
 } as const;
 
+// The default parser rewrites `?q=1.50` to 1.5 and ids past 2^53 to another number: a top-level
+// value is a number only when it prints back as typed, so free text and long ids stay text.
+const exactJson = (value: string): unknown => {
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed === "number" && String(parsed) !== value) throw new Error("not exact");
+  return parsed;
+};
+
 /** The whole app: route tree, QueryClient, providers. `main.tsx` and every route test build it. */
 export function createAppRouter({ history }: { history?: RouterHistory } = {}) {
   const toastManager = Toast.createToastManager();
@@ -22,10 +35,12 @@ export function createAppRouter({ history }: { history?: RouterHistory } = {}) {
       description: error instanceof ApiError && error.requestId && `Request id: ${error.requestId}`,
     }),
   );
-  return createRouter({
+  const router = createRouter({
     routeTree,
     context: { queryClient },
     ...(history && { history }),
+    parseSearch: parseSearchWith(exactJson),
+    stringifySearch: stringifySearchWith(JSON.stringify, exactJson),
     defaultPreload: "intent",
     // Query owns freshness: the router always runs loaders, and they read the cache.
     defaultPreloadStaleTime: 0,
@@ -43,6 +58,15 @@ export function createAppRouter({ history }: { history?: RouterHistory } = {}) {
       </CSPProvider>
     ),
   });
+  // A screen reader hears nothing after a client-side navigation unless focus moves to the new page.
+  // Not on the first render or a search-only change; `preventScroll` leaves scroll restoration alone.
+  router.subscribe("onRendered", ({ fromLocation, pathChanged }) => {
+    const heading = fromLocation && pathChanged && document.querySelector<HTMLElement>("main h1");
+    if (!heading) return;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  });
+  return router;
 }
 
 declare module "@tanstack/react-router" {

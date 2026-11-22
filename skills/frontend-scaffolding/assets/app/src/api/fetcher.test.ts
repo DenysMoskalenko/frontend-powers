@@ -3,6 +3,7 @@ import { expect, test, vi } from "vitest";
 import { server } from "@/test/server";
 import { ApiError } from "./api-error";
 import { apiFetch, configureApi } from "./fetcher";
+import { getUser } from "./generated/api";
 
 const origin = "https://api.test";
 
@@ -103,4 +104,23 @@ test("a successful response with an unparsable JSON body rejects with the parse 
   );
 
   await expect(apiFetch("/users")).rejects.toBeInstanceOf(SyntaxError);
+});
+
+test("the generated client encodes path parameters, so a crafted id cannot reach another endpoint", async () => {
+  configureApi({ baseUrl: origin, getToken: async () => "token-1" });
+  const requested: string[] = [];
+  server.use(
+    http.get(`${origin}/*`, ({ request }) => {
+      requested.push(request.url);
+      return HttpResponse.json({});
+    }),
+  );
+
+  await getUser("../admin/export");
+  await getUser("1?role=admin#");
+
+  expect(requested).toEqual([
+    `${origin}/users/..%2Fadmin%2Fexport`,
+    `${origin}/users/1%3Frole%3Dadmin%23`,
+  ]);
 });

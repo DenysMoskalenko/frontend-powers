@@ -24,7 +24,8 @@ import {
 import { sameOriginPath } from "@/shared/lib/safe-url";
 import type { IdentityProvider } from "./session";
 
-const SIGNED_OUT_KEY = "auth.signed-out";
+// Prefixed with Vite's `base`: two apps under one origin share a tab's sessionStorage.
+const SIGNED_OUT_KEY = `${import.meta.env.BASE_URL}auth.signed-out`;
 
 /** The same contract as `startKeycloak`, for an identity provider other than Keycloak. */
 export async function startOidc(settings: {
@@ -41,16 +42,22 @@ export async function startOidc(settings: {
     // The defaults keep the tokens in sessionStorage and renew them on a timer forever.
     userStore: new WebStorageStateStore({ store: new InMemoryWebStorage() }),
     automaticSilentRenew: false,
+    // The default, the query string, puts the code and state in the app server's access log.
+    response_mode: "fragment",
   });
   let user: User | null = null;
-  // The answer arrives only at the app's root; `state` alone may be any page's own search param.
-  const answer = new URLSearchParams(location.search);
-  if (
-    location.pathname === appUrl.pathname &&
-    answer.has("state") &&
-    (answer.has("code") || answer.has("error"))
-  ) {
-    user = await manager.signinRedirectCallback();
+  // The answer arrives only at the app's root, in the fragment.
+  const answer = new URLSearchParams(
+    location.pathname === appUrl.pathname ? location.hash.slice(1) : "",
+  );
+  const state =
+    answer.has("code") || answer.has("error") ? answer.get("state")?.split(";")[0] : undefined;
+  // An answer to a sign-in this browser never started (a crafted or stale link) is dropped, as
+  // keycloak-js does; signinRedirectCallback would reject it on every reload of that URL.
+  if (state && !localStorage.getItem(`oidc.${state}`)) {
+    history.replaceState(history.state, "", appUrl);
+  } else if (state) {
+    user = await manager.signinRedirectCallback(location.href);
     // `.` resolves the router path below the app's root.
     const reopenAt = new URL(`.${sameOriginPath(user.url_state)}`, appUrl);
     history.replaceState(history.state, "", reopenAt);
@@ -127,14 +134,18 @@ Read in `oidc-client-ts` 3.5.0 `dist/esm/oidc-client-ts.js`; the rows marked (ru
 |---|---|
 | `userStore`: `sessionStorage` | tokens stay in memory: `WebStorageStateStore` over `InMemoryWebStorage` |
 | `automaticSilentRenew: true` | a timer one minute before expiry renews forever and keeps idle tabs signed in; renew on demand instead |
-| `stateStore`: `localStorage` | kept: only the request state and PKCE verifier, removed on the callback |
-| `response_mode`: unset | the provider's default for the code flow, the query string. The callback is detected only at the app's root path, by `state` plus `code` or `error`; a page's own `?state=` is left alone (run) |
+| `stateStore`: `localStorage` | kept: only the request state and PKCE verifier, under `oidc.<state>`, removed on the callback |
+| `response_mode`: unset | the provider's default for the code flow, the query string, which puts `code` and `state` in the app server's access log: set to `"fragment"`. The answer is read only at the app's root, from the fragment, by `state` plus `code` or `error`; a page's own `?state=` is left alone (run) |
+| `signinRedirectCallback()` with an unknown `state` | rejects with `No matching state found in storage`, so a crafted or stale link would stop the app from starting on every load. `startOidc` drops an answer whose `state` has no `oidc.<state>` entry in `localStorage` (the `stateStore` prefix) and starts signed out (run) |
 | `monitorSession: false` | kept: the check-session iframe needs third-party cookies |
 | `signinSilent()` | uses the refresh token when the user has one. Without one it falls back to a hidden `prompt=none` iframe at `silent_redirect_uri`, which defaults to `redirect_uri`; the CSP blocks it and the call waits `silentRequestTimeoutInSeconds` (10). So `renew` ends the session itself and never calls it without a refresh token (run) |
 | concurrent `signinSilent()` | not serialized by the library: two parallel refreshes spend a rotated refresh token twice, so `renew` is single-flight |
 | `ErrorResponse` | thrown for an error answer from the provider (`invalid_grant`): the session ended (run) |
 | `signoutRedirect()` | adds `id_token_hint` from the stored user itself; sends no `state` unless given one |
 | `url_state` | travels through the provider in `state` and returns on `User.url_state`: the return path, still checked with `sameOriginPath` (run) |
+
+Older examples keep the defaults: tokens in `sessionStorage` and `automaticSilentRenew: true`. Here
+the user store is `InMemoryWebStorage` and a token renews on demand.
 
 The provider must issue refresh tokens to a public client with rotation, and list the app's root URL
 exactly as a redirect and post-logout URI, like the Keycloak client.
@@ -182,13 +193,11 @@ async function signIn(returnTo: string, tokens: object, refresh = () => HttpResp
   await vi.waitFor(() => expect(replace).toHaveBeenCalled());
   const state = new URL(replace.mock.lastCall?.[0] ?? "").searchParams.get("state") ?? "";
   tokenEndpoint(tokens, refresh);
-  history.replaceState(null, "", `/?${new URLSearchParams({ state, code: "code-1" })}`);
+  history.replaceState(null, "", `/#${new URLSearchParams({ state, code: "code-1" })}`);
   return startOidc(settings);
 }
 
 beforeEach(() => {
-  localStorage.clear();
-  sessionStorage.clear();
   history.replaceState(null, "", "/");
   replace.mockReset();
   const page = location;
@@ -235,7 +244,19 @@ test("the answer at the app's root signs in and reopens the saved path", async (
   const provider = await signIn("/orders/7?tab=items", { refresh_token: "r1" });
 
   expect(provider.userId()).toBe("user-1");
-  expect(location.pathname + location.search).toBe("/orders/7?tab=items");
+  expect(location.pathname + location.search + location.hash).toBe("/orders/7?tab=items");
+  const request = new URL(replace.mock.calls[0]?.[0] ?? "");
+  expect(request.searchParams.get("response_mode")).toBe("fragment");
+});
+
+test("an answer to a sign-in this browser never started is dropped, and the app starts", async () => {
+  // What a crafted or stale link carries: no sign-in was started in this browser.
+  history.replaceState(null, "", "/#state=attacker&code=whatever");
+
+  const provider = await startOidc(settings);
+
+  expect(provider.userId()).toBeUndefined();
+  expect(location.pathname + location.search + location.hash).toBe("/");
 });
 
 test("without a refresh token, a renewal ends the session instead of opening an iframe", async () => {

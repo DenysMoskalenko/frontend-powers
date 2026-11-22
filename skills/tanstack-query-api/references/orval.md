@@ -57,6 +57,8 @@ export default defineConfig({
       client: "react-query",
       httpClient: "fetch",
       mode: "single",
+      // A path parameter goes through encodeURIComponent: `../admin` or `1?x=y` cannot reach another endpoint.
+      urlEncodeParameters: true,
       mock: { generators: [{ type: "msw" }] },
       override: {
         mutator: { path: "src/api/fetcher.ts", name: "apiFetch" },
@@ -67,7 +69,13 @@ export default defineConfig({
   },
   zod: {
     input,
-    output: { target: "src/api/generated/api.zod.ts", client: "zod", mode: "single" },
+    output: {
+      target: "src/api/generated/api.zod.ts",
+      client: "zod",
+      mode: "single",
+      // Optional keys infer `x?: T`, which `exactOptionalPropertyTypes` accepts as the client's body type.
+      override: { zod: { exactOptional: true } },
+    },
   },
 });
 ```
@@ -76,6 +84,7 @@ export default defineConfig({
 |---|---|---|
 | `client` | `"react-query"` | emits fetch functions, `getXQueryOptions`, `getXQueryKey`, `getXMutationOptions` and hooks |
 | `httpClient` | `"fetch"` | no HTTP library; the mutator below wraps `fetch` |
+| `urlEncodeParameters` | `true` | every path parameter goes through `encodeURIComponent` (`` `/users/${encodeURIComponent(String(id))}` ``), so an id such as `../admin/export` or `1?role=admin#` cannot reach another endpoint with the bearer token |
 | `mode` | `"single"` | one file per output; per-tag splitting pays off only for specs with hundreds of operations, and Vite drops what is not imported either way |
 | `mock.generators` | `[{ type: "msw" }]` | `api.msw.ts` with `getListUsersMockHandler(data)` and friends; their default bodies are faker-random, so tests always pass data (`frontend-testing`) |
 | `override.mutator` | `apiFetch` in `src/api/fetcher.ts` | every request goes through the one function that knows the base URL, the token and the error shape; orval also imports `ErrorType` from that file to type errors, as `'../fetcher.ts'` because the tsconfig allows `.ts` extensions |
@@ -83,6 +92,7 @@ export default defineConfig({
 | `override.query.useSuspenseQuery` | `true` | adds `getXSuspenseQueryOptions` and `useXSuspense` for GET operations |
 | `override.query.shouldSplitQueryKey` | `true` | keys become `['users', params]` and `['users', id]`; the default URL-string keys (`['/users', params]`, `['/users/42']`) share no prefix, so one invalidation cannot reach both |
 | second output `client` | `"zod"` | `api.zod.ts`: request-body, query-param and response schemas; the body schemas are the base of form schemas (`frontend-forms`) |
+| second output `override.zod.exactOptional` | `true` | an optional key is emitted as `.exactOptional()` and infers `x?: T`, so under `exactOptionalPropertyTypes` a zod-inferred value is assignable to orval's `CreateX` type |
 
 A backend served under a path prefix that its document's paths leave out (`/api/v1` in front of
 `/users`) gets `baseUrl: "/api/v1"` beside `httpClient` in the `api` output: at orval 8.48 every
@@ -161,6 +171,6 @@ reviewed diff instead of silently.
 | `override.query.useQuery: true` | also generates query getters for POST and DELETE (`getCreateOrderQueryKey`); GET operations already get queries and the rest mutations by default |
 | `override.query.mutationInvalidates` | its generated `onSuccess` calls `invalidateQueries` without returning it, so the mutation settles before the refetch, and the mutation getter's signature becomes `(queryClient, options)` |
 | `override.operations.<id>.query.useInfinite` | keys the query `['infinite', 'users', params]`, which `getListUsersQueryKey()` invalidation misses, and casts its options so a missing `getNextPageParam` compiles |
-| `runtimeValidation` (under `override.fetch` or `override.query`) | parses every own-backend response at runtime; the generated types and the CI drift check already hold the contract |
+| `runtimeValidation` (under `override.fetch` or `override.query`) | parses every own-backend response at runtime, shipping a schema per endpoint; the backend owns its contract and publishes it as `openapi.json`, and a response that breaks it is a backend bug to fix there |
 | `override.namingConvention.properties` | renames the TypeScript properties only; the JSON on the wire stays snake_case and no longer matches |
 | `output.formatter` | formats files Biome is configured to skip; the drift check needs no formatting |

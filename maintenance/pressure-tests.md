@@ -343,3 +343,126 @@ Both arms pass in the same way (rules a current model already follows): P7, P8
 | P11 | pass | pass | same: both refuse a workspace for one app and keep `src/shared/ui` |
 
 Both arms pass in the same way (rules a current model already follows): P6, P9, P11
+
+## Review of 22 November 2026
+
+No billed run. Thirteen reviewers each read the plugin through one lens; about sixty findings were
+accepted and none was a blocker.
+
+| Lens | Result |
+|---|---|
+| Toolchain, build and test picks | every pick held; pnpm 12.22 (security) and jsdom 31 adopted; the compiler-coverage and typescript-eslint reasons corrected |
+| Routing, data, API client, forms | every pick held; orval `exactOptional` adopted; the valibot, response-validation and form-action reasons corrected |
+| React, UI library, styling, structure | every pick held; the boundary plugin now sees `import()` and `./../`; the `Temporal` and `motion` records corrected |
+| Deploy, security headers, auth | every pick held; the stale-chunk handler no longer cancels the event; RFC 10017 quoted as it reads |
+| i18n, realtime, workspace | every pick held; socket kept across navigation, SSE idle timeout; the Storybook reason corrected |
+| Attacker's review | path parameters encoded, Faro URLs reduced to origin and path, the origin check tightened, sign-out kept out of URLs |
+| All add-ons in one app | gate green with every add-on; end-to-end sign-in and realtime recipes completed; one setup-level MSW handler allowed |
+| Existing project | the scope paragraph rewritten for absent packages; an adoption order for existing apps |
+| Skill architecture | fourteen skills stay (co-loading below) |
+| Rule evidence, three reviewers | counts below; probes proposed for the next billed run |
+| Release engineer | every gate and install path works; stale version copies now fail validation |
+
+### Co-loading
+
+From the 198 with-plugin answers of the 2026-11-20 run.
+
+| Measure | Value |
+|---|---|
+| skills read per task | median 3, mean 3.26, maximum 9; 59 % of tasks read three or fewer |
+| `frontend-code-style` | read in 145 of 198 tasks (73 %) |
+| strongest pair: code-style given project-structure | 83 of 88 (0.94); merged it is 3,332 words and adds 9.8 % tokens to tasks that read code-style alone (62 of them) |
+| router and query | read together in 37 of 90 tasks that touch either |
+| tooling and scaffolding | together in 5 of 64 |
+| forms and query | together in 15 of 76 |
+| any two add-ons | together in 3 of 198 |
+| every merge candidate | over the 2,000-word cap, and +4 % to +26 % tokens per task |
+
+Verdict: no pair is read together in more than 55 % of the tasks that touch it, so fourteen stays.
+
+### Evidence for the top-priority rules
+
+Every `## Important` bullet and Red Flags row as they stood before this round's moves, classified by
+the reviewers from the 2026-11-20 run. "No evidence" means untested, or no lift on a run whose
+baseline could read the template.
+
+| Skill | Rules | Recorded failure | House convention | No evidence | General practice or duplicate |
+|---|---|---|---|---|---|
+| `frontend-code-style` | 14 | 4 | 1 | 4 | 5 |
+| `frontend-project-structure` | 10 | 2 | 1 | 5 | 2 |
+| `frontend-tooling` | 5 | 3 | 1 | 1 | 0 |
+| `frontend-scaffolding` | 5 | 3 | 0 | 2 | 0 |
+| `frontend-shared-packages` | 15 | 7 | 0 | 5 | 3 |
+| `tanstack-router-spa` | 11 | 2 | 4 | 3 | 2 |
+| `tanstack-query-api` | 13 | 6 | 2 | 3 | 2 |
+| `frontend-forms` | 12 | 1 | 1 | 7 | 3 |
+| `tailwind-base-ui` | 13 | 2 | 3 | 5 | 3 |
+| `frontend-testing` | 13 | 1 | 2 | 8 | 2 |
+| `frontend-deploy` | 14 | 3 | 3 | 2 | 6 |
+| `keycloak-spa-auth` | 12 | 5 | 1 | 1 | 5 |
+| `frontend-i18n` | 12 | 4 | 0 | 3 | 5 |
+| `frontend-realtime` | 12 | 2 | 1 | 2 | 7 |
+| **All** | **161** | **45** | **20** | **51** | **45** |
+
+No rule is cut for lack of evidence until the next billed run has measured it. That run uses
+`Fixture: empty` (the recorded baseline could read the template) and runs on Opus and on the
+smallest supported model, each with and without the plugin. Probes to run:
+
+| Skill | Probe (prompt, wrong answer) |
+|---|---|
+| `frontend-code-style` | "save the profile, report any failure and let the route error screen show it"; `reportError\([^)]*\);?\s*\n\s*throw` |
+| `frontend-code-style` | "add a rename form that PATCHes the user and shows the new name at once"; `useActionState\|useOptimistic\|<form[^>]*\baction=\{` |
+| `frontend-code-style` | P12 rerun with the code block delivered (the prompt was cut in both arms) |
+| `frontend-project-structure` | P4 rerun (placement) |
+| `frontend-scaffolding` | "Scaffold our new frontend here" with a `package.json` present; `cp\s+-R[^\n]*assets/app/\.\s+\.` |
+| `frontend-scaffolding` | "after scaffolding, coverage is 79 %; make `pnpm check` pass"; a lowered threshold |
+| `frontend-shared-packages` | "admin needs `noUnusedParameters`; turn it on there"; the option in one app's `tsconfig.json` |
+| `frontend-shared-packages` | "make CI run only for changed packages"; a gate only on `--filter "...[origin/main]"` |
+| `tanstack-router-spa` | P2 rerun (`import { Route }` in a feature) |
+| `tanstack-router-spa` | "render 'User not found' for a 404 on /users/$userId" |
+| `tanstack-query-api` | P5 rerun (four-argument mutation callbacks) |
+| `tanstack-query-api` | Should-load trigger 8 as a probe; `parseFloat\(\|Number\(\w+\.price` |
+| `tanstack-query-api` | "add a Delete button on /users/$userId that returns to /users"; list invalidation without removing the detail query |
+| `tanstack-query-api` | a hand-written `` `/x/${id}` `` path without `encodeURIComponent` |
+| `frontend-forms` | E1's schema line rerun (hand-written `z.object` for a create form) |
+| `tailwind-base-ui` | P7 rerun (whole class names, `bg-(--x)`) |
+| `frontend-testing` | P1 rerun (`renderRoute`, never `vi.mock` of own modules) |
+| `frontend-i18n` | `import i18n` in a component (no probe yet) |
+| `keycloak-spa-auth` | direct access grants for Playwright (no probe yet) |
+
+## Smaller-model run of 22 November 2026
+
+Every earlier run used the largest model. This one used Sonnet, with the plugin only: nine
+in-session agents answered all 216 requests (58 evals, 158 probes) from shuffled batches with
+anonymous ids, so no agent knew which skill a request was written for. Each loaded skills from
+the list of names and descriptions alone. Three graders on the largest model read the answers.
+No baseline arm was run, so this measures robustness, not lift.
+
+| Measure | Result |
+|---|---|
+| requests answered with their own skill loaded | 215 of 216 |
+| skills loaded per request | median 2 |
+| probes passing by regex | 148 of 158 |
+| probes really failed after a grader read the 10 others | 0 |
+| evals passed | 51 of 58 |
+
+The one request answered without its own skill was a coverage-threshold question filed under
+`frontend-scaffolding`; the model loaded `frontend-testing` and `frontend-tooling`, which own
+it, and the probe moved to `frontend-testing`. All ten probe misses were regexes matching a
+correct answer that quoted the wrong pattern as a warning; those regexes, and every other probe
+that lacked the inline-code guard, were corrected.
+
+| Failed eval | Cause | What changed |
+|---|---|---|
+| `tanstack-query-api` E2 | wording: nothing said what counts as first-paint data, or when a deferred request starts | `tanstack-router-spa` states the rule; query Probe 10 tests the order |
+| `tailwind-base-ui` E1 | wording: the dialog's trigger part read as one option among several | the wrapper contract states the rule and its reason |
+| `frontend-realtime` E1 | two places disagreed: a test example answered with a text response, the rule requires a stream in split chunks | the example follows the rule |
+| `frontend-realtime` E2 | wording: the end-to-end socket mock did not read as a fixture option | the sentence says so |
+| `frontend-tooling` E6 | model slip: `pnpm check` not run after the change | none |
+| `frontend-scaffolding` E4 | model slip: two of three hook checks left out | none |
+| `frontend-testing` E3 | model slip | none |
+
+Answers that followed a skill into something no eval line caught also led to changes: an HTML
+string is rendered as text and a parser package is the user's decision (`frontend-deploy`); the
+forms example with a repeated email field is named for what it is; ids in tests come from the
+factory; an existing wrapper that accepts `className` keeps it.

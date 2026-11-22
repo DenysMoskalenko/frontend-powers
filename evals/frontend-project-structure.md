@@ -12,6 +12,7 @@
 6. "we need a store for the diagram editor's selection and zoom, shared by the canvas, the toolbar and the side panel. where does it live?"
 7. "I need an app-wide provider for user preferences. where do I mount it so the tests get it too?"
 8. "`features/, shared/ and api/ never import routes/ or app/.` when I import env from a feature component"
+9. "we have an older React app (react-router, providers in main.tsx, ../ imports everywhere) and want to bring it onto the frontend-powers standard. where do we start?"
 
 **Should not load**
 
@@ -73,6 +74,7 @@
 
 - the Context object and its hook in `src/shared/hooks/` or `src/features/users/`, not in `src/app/`
 - the provider mounted inside `Wrap` in `createAppRouter` in `src/app/router.tsx`
+- the toggle rendered in the root layout of `src/routes/__root.tsx`, from `shared/ui` or the users feature
 - the Context rendered as `<XContext value={...}>` and read with `use(...)`
 
 **Must not produce**:
@@ -123,6 +125,28 @@
 - a failure path that leaves the page blank, such as `.catch(reportError)` alone
 - a provider wrapping `<RouterProvider>` in `src/main.tsx`
 
+### Eval 6 - adopting the standard in an existing app
+
+**Prompt**: "This app was not built from your template. Bring it onto the standard. Here is what it has: `package.json` with react 19, @tanstack/react-router, @tanstack/react-query, vitest and @testing-library/react, no zod, no msw, no @tanstack/react-form, no babel-plugin-react-compiler; `tsconfig.json` without `paths`; `src/main.tsx` wraps `<RouterProvider>` in `QueryClientProvider` with a module-level `queryClient`; `src/components/`, `src/hooks/` and `src/pages/` folders; route tests stub `fetch` per URL. Give me the plan."
+
+**Fixture**: empty
+
+**Must produce**:
+
+- a numbered or ordered list of steps, each changing one concern and leaving lint, tests and build green
+- a first step that works from what the project has (the listed packages and folders), not from the template
+- providers and the QueryClient moved into the router factory's `Wrap` before any folder move
+- zod, MSW or TanStack Form introduced as their own steps, or kept out, not as part of another step
+- folder moves into `features/` and `shared/` late, one feature per step
+- the existing per-URL `fetch` stub kept or replaced in its own step, not dropped silently
+
+**Must not produce**:
+
+- one change or merge request that adds the alias, moves folders and swaps libraries together
+- a rewrite from the template, or copying `assets/app/` over the project
+- renamed environment variables, scripts or exported names as a side effect of a step
+- memoization removed before the React Compiler is added
+
 ### Probe 1 - cross-feature import
 
 **Prompt**: "In src/features/orders/order-summary.tsx, show the customer with the existing UserDetails component from the users feature. Show the whole file."
@@ -169,7 +193,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `<\w+Provider[^>]*>\s*<RouterProvider`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<\w+Provider[^>]*>\s*<RouterProvider)`
 
 ### Probe 7 - server data in a Context
 
@@ -177,7 +201,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:createContext|useState)<\s*(?:UserResponse|User)\b[^>]*>\s*\(|\bcreate<[^>]*User[^>]*>\s*\(\s*\)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:createContext|useState)<\s*(?:UserResponse|User)\b[^>]*>\s*\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bcreate<[^>]*User[^>]*>\s*\(\s*\))`
 
 **Right answer**: `useSuspenseQuery\(\s*getGetUserSuspenseQueryOptions\(`
 
@@ -195,7 +219,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:=|return)\s*useBoardStore\(\s*\(?\s*\w+\s*\)?\s*=>\s*\(\s*\{|=\s*useBoardStore\(\s*\)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:=|return)\s*useBoardStore\(\s*\(?\s*\w+\s*\)?\s*=>\s*\(\s*\{)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:=\s*useBoardStore\(\s*\))`
 
 ### Probe 10 - a second waiting add-on
 

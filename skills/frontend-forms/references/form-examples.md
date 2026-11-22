@@ -5,8 +5,10 @@
 - Edit form: default values from query data, error mapping, leave guard
 - Edit route and its route test
 - A form schema that is not the request body: extra field, cross-field rule, transform
+- An optional body key
+- Custom schema messages
 - One-field form: `FormData` and a mutation
-- Validation timing, pinned by a test
+- Validation timing: what the user sees, pinned by a test
 
 The scaffold's `src/features/users/create-user-form.tsx` and `src/routes/users/new.test.tsx` are the
 create-form pair; the examples here use the same names and shapes. The scaffold's `openapi.json` has
@@ -37,7 +39,7 @@ import { TextField } from "@/shared/ui/text-field";
 
 // Stand-in until the spec has `PATCH /users/{id}`; then use `getUpdateUserMutationOptions`.
 const updateUser = (id: string, data: CreateUser) =>
-  apiFetch<UserResponse>(`/users/${id}`, {
+  apiFetch<UserResponse>(`/users/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -233,6 +235,8 @@ function UserNotFound() {
 }
 ```
 
+With `keycloak-spa-auth` installed, this file is `src/routes/_signed-in/users/$userId_/edit.tsx` with the id `/_signed-in/users/$userId_/edit`, and its test sits beside it.
+
 The first test also proves the reset-before-navigate rule: jsdom's `window.confirm` returns
 `undefined`, so a guard that still saw a dirty form would block the navigation and the heading would
 never appear.
@@ -339,10 +343,11 @@ test("an unexpected failure names the request id", async () => {
 Write a form schema only when the form differs from the request: a field the API does not take, a
 rule across fields, or a transform. Build it from the generated one and reuse orval's exported limits
 (`createUserBodyNameMax`), so the server's rules stay in one place. The transform at the end turns the
-form's output into exactly the request body.
+form's output into exactly the request body. The repeat-email field is this example's requirement,
+not part of the pattern: a form gets only the extra fields its own request asks for.
 
 ```tsx,verify
-// file: src/features/users/invite-user-form.tsx
+// file: src/features/users/repeat-email-user-form.tsx
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
 import { useRef } from "react";
@@ -357,7 +362,7 @@ import { CreateUserBody, createUserBodyNameMax } from "@/api/generated/api.zod";
 import { Button } from "@/shared/ui/button";
 import { TextField } from "@/shared/ui/text-field";
 
-const InviteUserInput = CreateUserBody.extend({
+const RepeatEmailUserInput = CreateUserBody.extend({
   // trim() before min(): a trim after min(1) lets "   " pass and sends "".
   name: z.string().trim().min(1).max(createUserBodyNameMax),
   confirmEmail: z.string(),
@@ -378,20 +383,20 @@ function submitErrors(error: unknown, fieldInfo: object) {
     // setErrorMap drops errors for fields the form does not render.
     return Object.keys(fields).every((name) => name in fieldInfo)
       ? { fields }
-      : { form: "The invitation has an error this form cannot show.", fields };
+      : { form: "The user has an error this form cannot show.", fields };
   }
   const requestId =
     error instanceof ApiError && error.requestId ? ` Request id: ${error.requestId}` : "";
-  return { form: `The invitation was not sent. Try again.${requestId}`, fields: {} };
+  return { form: `The user was not created. Try again.${requestId}`, fields: {} };
 }
 
 const firstError = (errors: readonly (string | { message: string } | undefined)[]) =>
   errors.map((error) => (typeof error === "string" ? error : error?.message)).find(Boolean);
 
-export function InviteUserForm({
-  onInvited,
+export function RepeatEmailUserForm({
+  onCreated,
 }: {
-  onInvited: (user: UserResponse) => Promise<void>;
+  onCreated: (user: UserResponse) => Promise<void>;
 }) {
   const createUser = useMutation(
     getCreateUserMutationOptions({
@@ -410,19 +415,19 @@ export function InviteUserForm({
     );
   const form = useForm({
     defaultValues: { name: "", email: "", confirmEmail: "" },
-    validators: { onSubmit: InviteUserInput },
+    validators: { onSubmit: RepeatEmailUserInput },
     onSubmit: async ({ value, formApi }) => {
       let user: UserResponse;
       try {
         // `value` is the raw input; parse again for the transformed request body.
-        user = await createUser.mutateAsync({ data: InviteUserInput.parse(value) });
+        user = await createUser.mutateAsync({ data: RepeatEmailUserInput.parse(value) });
       } catch (error) {
         formApi.setErrorMap({ onSubmit: submitErrors(error, formApi.fieldInfo) });
         focusFirstError();
         return;
       }
       formApi.reset();
-      await onInvited(user);
+      await onCreated(user);
     },
     onSubmitInvalid: focusFirstError,
   });
@@ -478,7 +483,7 @@ export function InviteUserForm({
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(submitting) => (
           <Button type="submit" variant="primary" disabled={submitting}>
-            Invite
+            Create user
           </Button>
         )}
       </form.Subscribe>
@@ -490,11 +495,48 @@ export function InviteUserForm({
 The `refine` issue's `path` puts its message on that field; a refine without `path` lands nowhere
 the user sees.
 
+## An optional body key
+
+orval's `override.zod.exactOptional: true` emits `.exactOptional()`, so an optional key infers
+`note?: string` in both the schema's input and orval's `CreateX` type. Two lines differ from the
+standard form: the defaults are typed (untyped, `note: ""` makes the key required and `onSubmit`
+fails with TS2322), and an empty text field is left out of the body, or the API stores `""` for "no
+note". In the form: `defaultValues: emptyOrder` and `mutateAsync({ data: toOrderBody(value) })`.
+
+```ts,verify
+// file: src/features/orders/order-body.ts
+import * as z from "zod";
+
+// Stand-in until the spec has `POST /orders`: what orval emits for it into `api.zod.ts`.
+export const CreateOrderBody = z.object({
+  title: z.string().min(1).max(100),
+  note: z.string().max(500).exactOptional(),
+});
+
+export const emptyOrder: z.input<typeof CreateOrderBody> = { title: "", note: "" };
+
+export const toOrderBody = ({
+  note,
+  ...rest
+}: z.input<typeof CreateOrderBody>): z.output<typeof CreateOrderBody> => ({
+  ...rest,
+  ...(note && { note }),
+});
+```
+
+## Custom schema messages
+
+Schema messages are zod's defaults; the copy is the product's. Its one seam is a `customError` in
+`src/app/zod-config.ts`, `z.config({ jitless: true, customError })`: it wins over a zod locale, gets
+the issue (`code: "too_small"`, `minimum`; `code: "invalid_format"`, `format: "email"`) and returns a
+message, or `undefined` for the default.
+
 ## One-field form
 
 No form library: read `FormData` on submit, validate with the generated schema's field, focus the
 field when it is invalid, call the mutation. Without `meta: { silent: true }` a failed save reaches
-the global toast, which is enough for one field.
+the scaffold's global toast (the `MutationCache` notice in `createQueryClient`), which is enough for
+one field; a project without that notice renders a message when `rename.isError`.
 
 ```tsx,verify
 // file: src/features/users/rename-user-form.tsx
@@ -511,7 +553,7 @@ export function RenameUserForm({ user }: { user: UserResponse }) {
   const rename = useMutation({
     // Stand-in until the spec has `PATCH /users/{id}`; then use `getUpdateUserMutationOptions`.
     mutationFn: (name: string) =>
-      apiFetch<UserResponse>(`/users/${user.id}`, {
+      apiFetch<UserResponse>(`/users/${encodeURIComponent(user.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -548,7 +590,18 @@ export function RenameUserForm({ user }: { user: UserResponse }) {
 }
 ```
 
-## Validation timing, pinned by a test
+## Validation timing: what the user sees, pinned by a test
+
+The house default, `validators.onSubmit` only, measured at 1.33:
+
+| Moment | What the user sees |
+|---|---|
+| typing before the first submit | nothing |
+| submit | every invalid field marked; nothing is sent |
+| next change or blur of a marked field | that field's error clears, valid or not |
+| next submit while a field still shows an error | stops before the schema runs: fields cleared by editing stay unmarked, nothing is sent |
+| next submit with no error shown | schema runs again, every invalid field marked |
+| any field change after a form-level error | the form-level message clears |
 
 With only `validators.onSubmit`, nothing is checked until the first submit. After it, a field's
 error disappears on that field's next change or blur, whether or not the new value is valid; focus

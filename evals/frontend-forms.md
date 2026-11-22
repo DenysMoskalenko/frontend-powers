@@ -88,7 +88,7 @@
 - a form-level message when `fieldErrors` names a field the form does not render, checked with `name in formApi.fieldInfo`
 - focus moved to the first invalid field after the failed submit
 - `formApi.reset()` before the navigation
-- field errors read through a normaliser that accepts both strings and `{ message }` objects
+- if the answer shows field rendering, field errors read through a normaliser that accepts both strings and `{ message }` objects (`firstError`), never `errors.join` or `errors[0]` rendered directly
 
 **Must not produce**:
 
@@ -114,7 +114,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `\.setErrorMap\(\s*\{\s*onSubmit:\s*\{\s*form:\s*(?:"[^"]*"|\x27[^\x27]*\x27|\x60[^\x60]*\x60|[\w.]+(?:\([^)]*\))?)\s*,?\s*\}`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.setErrorMap\(\s*\{\s*onSubmit:\s*\{\s*form:\s*(?:"[^"]*"|\x27[^\x27]*\x27|\x60[^\x60]*\x60|[\w.]+(?:\([^)]*\))?)\s*,?\s*\})`
 
 **Right answer**: `fields:\s*\{\s*\}`
 
@@ -124,7 +124,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `mutateAsync\((?:(?!\.reset\()[^\x60])*?\b(?:navigate|on[A-Z]\w*)\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:mutateAsync\((?:(?!\.reset\()[^\x60])*?\b(?:navigate|on[A-Z]\w*)\()`
 
 **Right answer**: `\.reset\(`
 
@@ -152,7 +152,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `\w+\s*:\s*z\.string\(\)\.min\(1[^)]*\)(?:\.max\([^)]*\))?\.trim\(\)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\w+\s*:\s*z\.string\(\)\.min\(1[^)]*\)(?:\.max\([^)]*\))?\.trim\(\))`
 
 **Right answer**: `\.trim\(\)\.min\(1\)|\.refine\(\s*\(?\w+\)?\s*=>\s*\w+\.trim\(\)\s*(?:!==\s*""|\.length)`
 
@@ -162,7 +162,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `(?:\{|=>|=|\()\s*[\w.]*\berrors\.join\(|>\s*\{\s*field\.state\.meta\.errors(?:\[0\])?\s*\}`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:\{|=>|=|\()\s*[\w.]*\berrors\.join\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:>\s*\{\s*field\.state\.meta\.errors(?:\[0\])?\s*\})`
 
 ### Probe 8 - React 19 action for a server write
 
@@ -170,7 +170,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `=\s*useActionState\(|<form[^>]*\saction=\{\s*[A-Za-z_]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:=\s*useActionState\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<form[^>]*\saction=\{\s*[A-Za-z_])`
 
 ### Probe 9 - schema on change
 
@@ -188,16 +188,16 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `on(?:Change|Blur)Async\s*:`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:on(?:Change|Blur)Async\s*:)`
 
 **Right answer**: `409`
 
 ### Probe 11 - optional body field
 
-**Prompt**: "orval generated `CreateOrderBody` in src/api/generated/api.zod.ts with an optional `note` (`zod.string().max(500).optional()`) and the type `CreateOrder` with `note?: string`; tsconfig has exactOptionalPropertyTypes. Write the create order form's default values and its onSubmit with TanStack Form 1 and `createOrder.mutateAsync({ data })`."
+**Prompt**: "orval generated `CreateOrderBody` in src/api/generated/api.zod.ts with an optional `note` (`zod.string().max(500).exactOptional()`) and the type `CreateOrder` with `note?: string`; tsconfig has exactOptionalPropertyTypes. The note input starts empty and most users leave it empty. Write the create order form's default values and its onSubmit with TanStack Form 1 and `createOrder.mutateAsync({ data })`."
 
 **Fixture**: empty
 
-**Wrong answer**: `(?:const|let)\s+\w+\s*:\s*CreateOrder\s*=\s*\{|\bdata:\s*value\s*[,}]|mutateAsync\(\s*\{\s*data:\s*value\s*\}`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bdata:\s*value\s*[,})])`
 
-**Right answer**: `z\.input<\s*typeof\s+CreateOrderBody\s*>`
+**Right answer**: `\.\.\.\(\s*(?:\w+\.)?note\s*(?:&&|\?)`

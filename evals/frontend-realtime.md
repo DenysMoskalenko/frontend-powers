@@ -65,7 +65,7 @@
 - a channel the server refuses (the subscription ends `unsubscribed`) shown as not live and passed to `reportError` once
 - `protobufjs: false` under `allowBuilds` for the `ERR_PNPM_IGNORED_BUILDS` that `pnpm add centrifuge` stops on
 - `PUBLIC_REALTIME_ORIGIN` as a `wss://` origin, wired through the new-origin steps
-- the Playwright run kept green: the origin in the `webServer` env, and the socket mocked with `page.routeWebSocket` in the e2e fixture or a Centrifugo container beside the stub API
+- the Playwright run kept green: the origin in the `webServer` env, and the socket mocked through a fixture option (`routeWebSocket`) that a spec can switch off to run against a Centrifugo container
 - a route test through `renderRoute` with `centrifuge` replaced by a fake via `vi.mock` in the setup file, emitting a publication and asserting the new name on the page
 
 **Must not produce**:
@@ -77,6 +77,7 @@
 - `onMessage` or the handler in the effect's dependency list
 - a status that reads live from the connection state alone
 - `setQueryData` with a partial user built from the event
+- a Playwright config that picks the Centrifugo container or its connect-proxy host from the `CI` flag
 
 ### Eval 3 - a versioned entity pushed into the cache
 
@@ -106,7 +107,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `=\s*new\s+EventSource\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:=\s*new\s+EventSource\()`
 
 **Right answer**: `eventsource-parser`
 
@@ -116,7 +117,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(wss?|https?):\/\/[^"'\x60\s]*[?&](access_)?token=`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(wss?|https?):\/\/[^"'\x60\s]*[?&](access_)?token=)`
 
 **Right answer**: `\bget(?:Data|Token)\s*:\s*async\b`
 
@@ -126,9 +127,9 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `^(?![\s\S]*cancelQueries)[\s\S]*setQueryData\(`
+**Wrong answer**: `^(?![\s\S]*(?:cancelQueries|applyPush\())[\s\S]*?(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)setQueryData\(`
 
-**Right answer**: `cancelQueries`
+**Right answer**: `cancelQueries|applyPush\(`
 
 ### Probe 4 - client in a component
 
@@ -136,7 +137,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `useEffect\(\s*\(\)\s*=>\s*\{[^}]*new Centrifuge\(|(?:^|\n)(?:export\s+)?(?:const|let)\s+\w+\s*=\s*new Centrifuge\(|use(?:Memo|State|Ref)\(\s*\(\)\s*=>\s*new Centrifuge\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:useEffect\(\s*\(\)\s*=>\s*\{[^}]*new Centrifuge\()|(?:^|\n)(?:export\s+)?(?:const|let)\s+\w+\s*=\s*new Centrifuge\(|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:use(?:Memo|State|Ref)\(\s*\(\)\s*=>\s*new Centrifuge\()`
 
 ### Probe 5 - handler in effect deps
 
@@ -164,7 +165,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `on\(\s*["']connected["'][\s\S]{0,200}invalidateQueries`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:on\(\s*["']connected["'][\s\S]{0,200}invalidateQueries)`
 
 **Right answer**: `recovered`
 
@@ -174,7 +175,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `\bsse\(\s*["'\x60]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bsse\(\s*["'\x60])`
 
 **Right answer**: `ReadableStream`
 
@@ -184,6 +185,16 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `^(?![\s\S]*"namespaces")[\s\S]*"without_namespace"\s*:\s*\{`
+**Wrong answer**: `^(?![\s\S]*(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)"namespaces")[\s\S]*?(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)"without_namespace"\s*:\s*\{`
 
 **Right answer**: `"namespaces"\s*:\s*\[`
+
+### Probe 10 - a personal channel in a public namespace
+
+**Prompt**: "Push each signed-in user's notifications to them over Centrifugo 6. Write the channel name the client subscribes to and the server's namespace configuration."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `^(?![\s\S]*(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:#\$\{|#\d|allow_user_limited_channels|subscribe_proxy_enabled))[\s\S]*?(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)"allow_subscribe_for_client"\s*:\s*true`
+
+**Right answer**: `allow_user_limited_channels|subscribe_proxy_enabled`

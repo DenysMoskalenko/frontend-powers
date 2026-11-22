@@ -13,6 +13,8 @@
 7. "the API answers 403 for viewers and the app sends them to the Keycloak login again"
 8. "how do I write a route test for a signed-out user without running Keycloak?"
 9. "we use Entra ID, not Keycloak: same session setup with oidc-client-ts"
+10. "since the users pages need sign-in, every Playwright smoke spec fails with chrome-error://chromewebdata/; how do I run them against Keycloak locally and in CI?"
+11. "Sign out does nothing and the console says the form submission violates the Content Security Policy directive form-action 'self'"
 
 **Should not load**
 
@@ -43,6 +45,7 @@
 - the account route placed under that layout
 - `PUBLIC_AUTH_ORIGIN` listed in `PUBLIC_ENV` in `vite.config.ts` and read as `env.authOrigin`
 - `PUBLIC_AUTH_ORIGIN` given a value in `playwright.config.ts`'s preview server env
+- `logoutMethod: "POST"` in the init options (or passed to `logout`), and the Keycloak origin added to the CSP's `form-action` in `deploy/headers.ts`
 - a rejected `keycloak.init` handled by reporting the error and rendering a static message, with no redirect
 - `ENTRY_BUDGET_BYTES` raised by the growth `pnpm build` reports (about 10 KB gzip for keycloak-js on the scaffold), with keycloak-js named as the cause
 
@@ -56,6 +59,8 @@
 - `@react-keycloak/web` or `react-oidc-context`
 - a session provider mounted in `main.tsx` around `RouterProvider`, or any React Context holding the session
 - `ENTRY_BUDGET_BYTES` raised with no cause stated, or by more than the keycloak-js growth
+- a logout URL carrying `id_token_hint` in its query (`location.replace(keycloak.createLogoutUrl())` or a GET `logout`)
+- a Playwright Keycloak container chosen by the `CI` flag, or published on every interface (`-p 8080:8080`)
 
 ### Eval 2 - the 401 and 403 policy
 
@@ -115,6 +120,7 @@
 - the message sent from the page the logout redirect returns to, after Keycloak has ended the session
 - a flag in `sessionStorage` (or an equivalent marker) set before leaving for the logout URL, read and removed on the next start
 - a tab that receives the message and is still signed in leaving for Keycloak's sign-in page
+- a page restored from the back-forward cache (`pageshow` with `persisted`) reloaded
 
 **Must not produce**:
 
@@ -129,7 +135,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?<![\x60\w.])(?:window\.)?(?:localStorage|sessionStorage)\.setItem\([^)]*(?:token|Token)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?<![\w.])(?:window\.)?(?:localStorage|sessionStorage)\.setItem\([^)]*(?:token|Token))`
 
 ### Probe 2 - init in an effect
 
@@ -145,7 +151,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `\.init\(\s*\{[^}]*onLoad:\s*["\x27]login-required["\x27]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.init\(\s*\{[^}]*onLoad:\s*["\x27]login-required["\x27])`
 
 **Right answer**: `checkLoginIframe:\s*false`
 
@@ -155,7 +161,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `silentCheckSsoRedirectUri\s*:`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:silentCheckSsoRedirectUri\s*:)`
 
 ### Probe 5 - timer refresh
 
@@ -163,7 +169,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?<![\x60\w.])(?:window\.)?setInterval\([\s\S]{0,200}?updateToken|(?<!\x60[^\x60\n]*)onTokenExpired\s*=`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?<![\w.])(?:window\.)?setInterval\([\s\S]{0,200}?updateToken)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:onTokenExpired\s*=)`
 
 ### Probe 6 - updateToken(0)
 
@@ -171,7 +177,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `\.updateToken\(\s*0\s*\)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\.updateToken\(\s*0\s*\)`
 
 ### Probe 7 - sign-in on 403
 
@@ -179,7 +185,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:===?\s*403|403\s*===?)[^\n]*(?:\.login|signIn)\(|403\][^\n]*includes[^\n]*(?:\.login|signIn)\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:===?\s*403|403\s*===?)[^\n]*(?:\.login|signIn)\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:403\][^\n]*includes[^\n]*(?:\.login|signIn)\()`
 
 ### Probe 8 - unvalidated return path
 
@@ -187,7 +193,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?<![\x60\w.])(?:window\.)?(?:location\.(?:assign|replace)\(|location\.href\s*=|history\.replaceState\([^,]*,[^,]*,|navigate\(\{\s*to:)\s*(?:returnTo|redirect|saved|returnPath)\b`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?<![\w.])(?:window\.)?(?:location\.(?:assign|replace)\(|location\.href\s*=|history\.replaceState\([^,]*,[^,]*,|navigate\(\{\s*to:)\s*(?:returnTo|redirect|saved|returnPath)\b)`
 
 ### Probe 9 - roles from the token
 
@@ -195,7 +201,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:\{|&&|\?|=|\()\s*\w+\.hasRealmRole\(|realm_access\??\.roles\??\.includes\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:\{|&&|\?|=|\()\s*\w+\.hasRealmRole\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:realm_access\??\.roles\??\.includes\()`
 
 ### Probe 10 - mocking keycloak-js in a route test
 
@@ -203,7 +209,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?<!\x60)vi\.mock\(\s*["\x27](?:keycloak-js|@\/app\/(?:session|keycloak))["\x27]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:vi\.mock\(\s*["\x27](?:keycloak-js|@\/app\/(?:session|keycloak))["\x27])`
 
 ### Probe 11 - sign-out broadcast before the logout
 
@@ -211,4 +217,14 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `postMessage\([^)]*\);?\s*(?:\/\/[^\n]*\s*)*(?:return\s+)?(?:await\s+)?(?:\w+\.logout\(|\w+\.signOut\(|location\.(?:replace|assign)\(\s*\w+\.createLogoutUrl)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:postMessage\([^)]*\);?\s*(?:\/\/[^\n]*\s*)*(?:return\s+)?(?:await\s+)?(?:\w+\.logout\(|\w+\.signOut\(|location\.(?:replace|assign)\(\s*\w+\.createLogoutUrl))`
+
+### Probe 12 - ID token in the logout URL
+
+**Prompt**: "Add a Sign out button to the header that ends the Keycloak session without showing Keycloak's logout confirmation page."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:location\.(?:replace|assign)\(\s*(?:\w+\.)?createLogoutUrl\(|location\.href\s*=\s*(?:\w+\.)?createLogoutUrl\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:logoutMethod:\s*["\x27]GET)`
+
+**Right answer**: `logoutMethod:\s*["\x27]POST`

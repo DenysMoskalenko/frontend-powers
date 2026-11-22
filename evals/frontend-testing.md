@@ -16,7 +16,7 @@
 
 **Should not load**
 
-1. "raise the Vitest coverage threshold to 85 and add a coverage job to the GitLab CI file" -> `frontend-tooling`
+1. "add a coverage job to the GitLab CI file that runs on every merge request" -> `frontend-tooling`
 2. "is this test actually useful or is it just testing the mock? review it" -> `writing-good-tests`
 3. "regenerate the orval client and MSW handlers after the backend added GET /orders" -> `tanstack-query-api`
 4. "the Playwright run reports a CSP violation for an inline style, which header should allow it?" -> `frontend-deploy`
@@ -108,7 +108,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `server\.use\([^;]*getListUsersMockHandler\(\s*\)|setupServer\(\s*\.\.\.get\w*Mock\(\s*\)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:server\.use\([^;]*getListUsersMockHandler\(\s*\))|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:setupServer\(\s*\.\.\.get\w*Mock\(\s*\))`
 
 ### Probe 3 - MSW 3 option name
 
@@ -134,7 +134,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:expect\(\s*|=\s*)[\w.]*\.getQueryData(?:<[^>]*>)?\(`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:expect\(\s*|=\s*)[\w.]*\.getQueryData(?:<[^>]*>)?\()`
 
 **Right answer**: `renderRoute\(|new\.test\.tsx`
 
@@ -144,7 +144,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `stubGlobal\(\s*["']reportError["'](?:(?!\btest\()[\s\S])*renderRoute\(|renderRoute\((?:(?!\btest\()[\s\S])*stubGlobal\(\s*["']reportError`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:stubGlobal\(\s*["']reportError["'](?:(?!\btest\()[\s\S])*(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)renderRoute\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:renderRoute\((?:(?!\btest\()[\s\S])*(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)stubGlobal\(\s*["']reportError)`
 
 **Right answer**: `findByRole\(\s*["']alert["']`
 
@@ -174,7 +174,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `exclude:\s*\[[^\]]*route-error|branches:\s*[0-7]\d\b|(?:v8|istanbul|c8)\s+ignore`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:exclude:\s*\[[^\]]*route-error)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:branches:\s*[0-7]\d\b)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:v8|istanbul|c8)\s+ignore)`
 
 ### Probe 10 - an expected reportError call
 
@@ -182,6 +182,28 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `(globalThis|window)\.reportError\s*=`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(globalThis|window)\.reportError\s*=)`
 
 **Right answer**: `vi\.stubGlobal\(\s*["']reportError["']`
+
+### Probe 11 - a request the root layout makes on every page
+
+**Prompt**: "Our root layout now calls GET /me on every page to show the user's name, and every route test fails with `Requests without an MSW handler: GET https://api.test/me`. Fix the test setup once, not in each test."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:setupServer\(\s*(?:http\.|get\w+MockHandler|\.\.\.\w|handlers\b))|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:onUnhandledFrame\s*:\s*["'](?:bypass|warn)["'])`
+
+**Right answer**: `beforeEach\([\s\S]*?server\.use\(`
+
+### Probe 12 - coverage is not what pnpm check measures
+
+**Prompt**: "In our app, `pnpm check` fails since I added a page because line coverage is 79 % against the 80 % threshold. Make `pnpm check` pass."
+
+**Fixture**: scaffold
+
+**Note**: `pnpm check` runs `vitest run` without coverage; only `pnpm test:coverage` measures it. A right answer says so, finds what really fails `pnpm check`, and covers the new page with tests instead of lowering the threshold.
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:thresholds\s*:\s*\{[^}]*\b(?:lines|branches|functions|statements)\s*:\s*[0-7]?\d\b)`
+
+**Right answer**: `pnpm test:coverage`

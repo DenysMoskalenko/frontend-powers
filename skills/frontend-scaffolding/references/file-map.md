@@ -2,7 +2,7 @@
 
 Every file in `assets/app/`, what it is, and the skill that owns changes to it once the app
 exists. Rows marked **example** belong to the `users` example and go when the real domain
-replaces it.
+replaces it; the full list is under [The users example](#the-users-example).
 
 ## Contents
 
@@ -11,12 +11,13 @@ replaces it.
 - [API client](#api-client)
 - [Application source](#application-source)
 - [Tests](#tests)
+- [The users example](#the-users-example)
 
 ## Root and tooling
 
 | File | What it is | Owner |
 | --- | --- | --- |
-| `package.json` | scripts, `devEngines` (pnpm 12.21.0, Node 26.13.1), exact pins | `frontend-tooling` |
+| `package.json` | scripts, `devEngines` (pnpm 12.22.0, Node 26.13.1), exact pins | `frontend-tooling` |
 | `pnpm-lock.yaml` | the tested dependency set; committed | `frontend-tooling` |
 | `pnpm-workspace.yaml` | release cooldown, `saveExact`, trust policy, `allowBuilds`, skill permissions | `frontend-tooling` |
 | `tsconfig.json` | the one TypeScript config, `@/*` paths | `frontend-tooling` |
@@ -24,7 +25,7 @@ replaces it.
 | `biome-plugins/boundaries.grit` | the layer and import rules as a Biome GritQL plugin | `frontend-tooling` |
 | `biome-plugins/boundaries.test.ts` | regression test that lints seeded violations | `frontend-tooling` |
 | `knip.json` | unused files, exports and dependencies | `frontend-tooling` |
-| `vite.config.ts` | build, dev server, Vitest config, the entry budget, the `zod` chunk group that runs `zod-config` first; `PUBLIC_ENV` and the header plugin are `frontend-deploy`'s | `frontend-tooling` |
+| `vite.config.ts` | build, dev server, Vitest config, the entry budget, the `zod` chunk group that runs `zod-config` first; `PUBLIC_ENV` and the header plugin, which calls `isBareOrigin`, are `frontend-deploy`'s | `frontend-tooling` |
 | `vite.config.test.ts` | tests the entry-budget plugin | `frontend-tooling` |
 | `playwright.config.ts` | E2E config: stub API and the production build as web servers; a test that passes only on a retry fails CI | `frontend-tooling` |
 | `.pre-commit-config.yaml` | prek hooks, installed by `pnpm hooks` | `frontend-tooling` |
@@ -44,8 +45,8 @@ replaces it.
 | `.env.development` | `PUBLIC_API_ORIGIN` for `pnpm dev` | `frontend-deploy` |
 | `index.html` | the document: the fallback title, `color-scheme` meta, entry script | `frontend-deploy` |
 | `public/favicon.svg` | the icon | `frontend-deploy` |
-| `deploy/headers.ts` | the CSP and every response header, rendered for Cloudflare, Caddy and `vite preview` | `frontend-deploy` |
-| `deploy/headers.test.ts` | pins the whole CSP and tests the rendered header files | `frontend-deploy` |
+| `deploy/headers.ts` | the CSP and every response header, rendered for Cloudflare, Caddy and `vite preview`; `isBareOrigin`, the check every `PUBLIC_*` value passes (no wildcard, no CSP or Caddy metacharacter) | `frontend-deploy` |
+| `deploy/headers.test.ts` | pins the whole CSP, tests the rendered header files and which values `isBareOrigin` refuses | `frontend-deploy` |
 | `deploy/Caddyfile` | the container's server config | `frontend-deploy` |
 | `Dockerfile` | build stage, then Caddy on `scratch`, user 65532 | `frontend-deploy` |
 | `.dockerignore` | keeps installs, output and `.env*` out of the build context | `frontend-deploy` |
@@ -70,11 +71,12 @@ replaces it.
 | File | What it is | Owner |
 | --- | --- | --- |
 | `src/main.tsx` | entry: `zod-config` first, `configureApi`, `createRoot` with the error handlers | `frontend-project-structure` |
-| `src/app/router.tsx` | `createAppRouter`: route tree, context, `defaultErrorComponent`, the `Wrap` provider slot, the toast titles in `NOTICES` | `tanstack-router-spa` |
+| `src/app/router.tsx` | `createAppRouter`: route tree, context, `defaultErrorComponent`, the `Wrap` provider slot, the toast titles in `NOTICES`, the search parser that keeps `?q=1.50` text, focus on the page's `h1` after a path change | `tanstack-router-spa` |
+| `src/app/router.test.tsx` | search values as typed, focus after a path change but not after a search-only change or the first render; **example**: its `/users` paths and handlers | `tanstack-router-spa` |
 | `src/app/query-client.ts` | `createQueryClient(notify)`, retry and error-toast policy; no user-facing text | `tanstack-query-api` |
 | `src/app/query-client.test.ts` | which failures the retry policy repeats | `tanstack-query-api` |
 | `src/app/error-reporting.ts` | `rootErrorHandlers` into `reportError`, `reloadOnStaleChunk` | `frontend-code-style` |
-| `src/app/error-reporting.test.ts` | the funnel, and no second stale-chunk reload within a minute | `frontend-code-style` |
+| `src/app/error-reporting.test.ts` | the funnel, and a stale-chunk event left uncancelled with no second reload within a minute | `frontend-code-style` |
 | `src/app/env.ts` | the build's public values (`env.apiOrigin`) | `frontend-deploy` |
 | `src/app/zod-config.ts` | `z.config({ jitless: true })`, required by the CSP; bundled with zod by `vite.config.ts` | `tanstack-query-api` |
 | `src/vite-env.d.ts` | types for `import.meta.env.PUBLIC_*` | `frontend-deploy` |
@@ -100,7 +102,8 @@ replaces it.
 
 | File | What it is | Owner |
 | --- | --- | --- |
-| `src/test/setup.ts` | jest-dom, faker seed, MSW listen; fails a test on an unhandled request or a `reportError` call it did not stub | `frontend-testing` |
+| `src/test/setup.ts` | jest-dom, faker seed, MSW listen, both web storages cleared after each test; fails a test on an unhandled request or a `reportError` call it did not stub | `frontend-testing` |
+| `src/test/setup.test.ts` | proves storage does not leak into the next test | `frontend-testing` |
 | `src/test/server.ts` | the MSW server, no default handlers | `frontend-testing` |
 | `src/test/render-route.tsx` | `renderRoute(path)` and `TEST_API_ORIGIN` | `frontend-testing` |
 | `src/test/factories/user.ts` | **example** `buildUser` | `frontend-testing` |
@@ -110,3 +113,21 @@ replaces it.
 | `e2e/fixtures.ts` | `test` with the console, page-error and CSP guard; `API_ORIGIN` | `frontend-testing` |
 | `e2e/smoke.spec.ts` | **example** flows: create and open, toast under the CSP, axe in both colour schemes | `frontend-testing` |
 | `e2e/stub-api.ts` | **example** in-memory backend on port 4010 with the backend's error bodies | `frontend-testing` |
+
+## The users example
+
+What changes once the first real list, detail and form compile; delete each file unless the line says otherwise:
+
+- `src/routes/users/` - `index.tsx` (list with paging in the URL and the past-the-end redirect),
+  `$userId.tsx` (detail; a malformed id or a 404 is not-found), `new.tsx` (form), each with its
+  `.test.tsx` and each page with its `<title>`.
+- `src/features/users/` - `user-table.tsx`, `user-details.tsx`, `create-user-form.tsx`,
+  `pagination.ts` and its test.
+- `src/test/factories/user.ts`.
+- `e2e/smoke.spec.ts` and `e2e/stub-api.ts` (rewritten for the new resource, not deleted).
+- `--grid-template-columns-label` in `src/styles.css` (only `user-details.tsx` uses `grid-cols-label`).
+- Lines in skeleton files: the two nav links and the not-found link in `src/routes/__root.tsx`,
+  the redirect target in `src/routes/index.tsx`, the redirect test in `src/routes/index.test.tsx`,
+  the line under the `README.md` heading.
+- `src/app/router.test.tsx` uses the `users` list and its "New user" link: point it at the new
+  list and create routes, keeping its four cases.

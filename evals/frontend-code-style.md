@@ -90,6 +90,7 @@ tsc reports TS1294, TS1484, TS18048 and TS2379."
 - `catch (error: any)` or `as ApiError` without an `instanceof` check.
 - An Error subclass that declares `name` without `override` or assigns fields through constructor parameter properties.
 - `reportError` called for a failure the screen already shows as a toast or message.
+- Its own failure message for a mutation the QueryClient also toasts, without `meta: { silent: true }` on that mutation.
 
 ### Eval 3 - a context value and a large list
 
@@ -146,7 +147,7 @@ tsc reports TS1294, TS1484, TS18048 and TS2379."
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:=|\breturn|export\s+default)\s*(?:React\.)?forwardRef\s*[<(]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:=|\breturn|export\s+default)\s*(?:React\.)?forwardRef\s*[<(])`
 
 ### Probe 3 - hand memoization
 
@@ -204,7 +205,7 @@ tsc reports TS1294, TS1484, TS18048 and TS2379."
 
 **Fixture**: scaffold
 
-**Wrong answer**: `constructor\s*\([^)]*\b(?:private|public|protected|readonly)\s+\w+\s*:[^)]*\)\s*\{`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:constructor\s*\([^)]*\b(?:private|public|protected|readonly)\s+\w+\s*:[^)]*\)\s*\{)`
 
 ### Probe 10 - flag off instead of the type fixed
 
@@ -220,7 +221,7 @@ tsc reports TS1294, TS1484, TS18048 and TS2379."
 
 **Fixture**: empty
 
-**Wrong answer**: `[(=]\s*(?:document\.)?getElementById\([^)]*\)!|(?:^|\n)\s*\/\/\s*biome-ignore\s+lint\/style\/noNonNullAssertion|getElementById\([^)]*\)\s+as\s+HTML`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:[(=]\s*(?:document\.)?getElementById\([^)]*\)!)|(?:^|\n)\s*\/\/\s*biome-ignore\s+lint\/style\/noNonNullAssertion|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:getElementById\([^)]*\)\s+as\s+HTML)`
 
 **Right answer**: `if\s*\(\s*!\s*\w+\s*\)`
 
@@ -255,6 +256,31 @@ export function SearchBox({ onSearch }: { onSearch: (q: string) => void }) {
 
 **Fixture**: empty
 
-**Wrong answer**: `[{,]\s*\.\.\.\(\s*(?:active|offset)\s*&&`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:[{,]\s*\.\.\.\(\s*(?:active|offset)\s*&&)`
 
 **Right answer**: `!==\s*undefined`
+
+### Probe 14 - memoization removed in a project without the compiler
+
+**Prompt**: "Our app's `vite.config.ts` has `plugins: [react()]`, with no React Compiler. Add an `onHeight` prop to this component that reports the panel's height whenever it changes. Show the whole file.
+
+```tsx
+import { useCallback, useState } from "react";
+
+export function Panel({ children }: { children: React.ReactNode }) {
+  const [width, setWidth] = useState(0);
+  const measure = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => setWidth(entry?.contentRect.width ?? 0));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={measure} data-width={width}>{children}</div>;
+}
+```"
+
+**Fixture**: empty
+
+**Wrong answer**: `^(?![\s\S]*(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\buse(?:Callback|Effect)\s*\()`
+
+**Right answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\buse(?:Callback|Effect)\s*\(`

@@ -23,7 +23,7 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import type { Plugin } from "vite";
 import { defineConfig } from "vitest/config";
-import { caddyHeaders, cloudflareHeaders, headersFor } from "./deploy/headers.ts";
+import { caddyHeaders, cloudflareHeaders, headersFor, isBareOrigin } from "./deploy/headers.ts";
 
 // The only variables that reach the bundle. Each is public, and each is an origin the CSP allows.
 const PUBLIC_ENV = ["PUBLIC_API_ORIGIN"];
@@ -41,7 +41,7 @@ function securityHeaders(names: readonly string[]): Plugin {
         const value: unknown = env[name];
         if (typeof value !== "string" || !value) throw new Error(`${name} is not set`);
         // The value goes into the CSP as is: anything past a bare origin could add a directive.
-        if (URL.parse(value)?.origin !== value) {
+        if (!isBareOrigin(value)) {
           throw new Error(`${name} is not a bare origin: ${value}`);
         }
         return value;
@@ -169,15 +169,17 @@ there is no separate `vitest.config.ts`.
 3. `babel({ presets: [reactCompilerPreset()] })` from `@rolldown/plugin-babel` runs the React
    Compiler; it needs `@babel/core` and `babel-plugin-react-compiler` as dev dependencies.
 4. `tailwindcss()`.
-5. `securityHeaders(PUBLIC_ENV)`: validates the public origins, emits `_headers`, `headers.caddy`
+5. `securityHeaders(PUBLIC_ENV)`: validates the public origins with `isBareOrigin` from
+   `deploy/headers.ts`, emits `_headers`, `headers.caddy`
    and `.assetsignore`, and serves the same headers in `vite preview`. The header content is
    `frontend-deploy`'s, generated from `deploy/headers.ts`.
 6. `entryBudget(ENTRY_BUDGET_BYTES)`, `apply: "build"` only.
 
 Off under Vitest (`process.env.VITEST` is set by Vitest; a `false` entry in `plugins` is
 skipped): the React Compiler and route code splitting. Compiled components carry memo-cache
-branches that only an unchanged re-render takes, which pushed branch coverage under the 80 %
-gate; split route chunks map back to source poorly. The end-to-end suite runs the
+branches that only an unchanged re-render takes: on the scaffold they raise the v8 branch count
+from 179 to 323, so the gate would measure the compiler instead of the app. Split route chunks
+map back to source poorly. The end-to-end suite runs the
 production build with both on. Do not turn either on in tests to "test what ships": that is
 what `pnpm test:e2e` is for.
 
@@ -199,7 +201,10 @@ Error: PUBLIC_API_ORIGIN is not a bare origin: https://api.example.com/x
 ```
 
 A new variable is one more `PUBLIC_ENV` entry in this file; every listed value must be a bare
-origin and lands in the CSP's `connect-src`. The other steps are
+origin and lands in the CSP's `connect-src`. `isBareOrigin` accepts `http`, `https`, `ws` and
+`wss` with a DNS host or an IPv6 literal and an optional port; it refuses wildcards (`https://*`),
+a path or trailing slash, and the characters that would widen the CSP or become a Caddy
+placeholder (`;`, `,`, `{`, `$`, `'`, a space). The other steps are
 `frontend-deploy`'s procedure for adding an origin.
 
 ## The bundle budget
@@ -219,12 +224,12 @@ Over the budget:
 RolldownError: entry + static imports: <n> B gzip (budget 160000 B)
 ```
 
-- Over budget: find what joined the entry graph (a static import in `main.tsx`, `src/app/`,
-  `__root.tsx` or a route's `validateSearch`) and move it behind a route or a dynamic `import()`
-  before touching the number.
-- Raise `ENTRY_BUDGET_BYTES` only for a measured, named cause: by the measured growth, in the
-  same change that adds the weight, naming the cause in the report. An add-on that must load
-  before first render states its own cost in its skill.
+- First check what can leave the entry: find what joined the entry graph (a static import in
+  `main.tsx`, `src/app/`, `__root.tsx` or a route's `validateSearch`) and move it behind a route
+  or a dynamic `import()` before touching the number.
+- Then raise `ENTRY_BUDGET_BYTES` by the measured growth, in the same change that adds the
+  weight, naming the cause in the report. Headroom is not a reserve for the next feature. An
+  add-on that must load before first render states its own cost in its skill.
 - Lower it after a reduction, keeping some headroom over the measured size.
 - `vite.config.test.ts` builds a synthetic entry against `entryBudget`, which is why the function
   stays exported.
@@ -245,7 +250,7 @@ RolldownError: entry + static imports: <n> B gzip (budget 160000 B)
 |---|---|
 | `environment: "jsdom"` | One DOM for every test. |
 | `include: ["**/*.test.{ts,tsx}"]` | Also collects the config tests next to their config (`vite.config.test.ts`, `deploy/headers.test.ts`, `biome-plugins/boundaries.test.ts`). |
-| `setupFiles` | The MSW server, jest-dom matchers, cleanup and the `reportError` guard. Its content is `frontend-testing`'s. |
+| `setupFiles` | The MSW server, jest-dom matchers, cleanup, storage clearing and the `reportError` guard. Its content is `frontend-testing`'s. |
 | `env: { TZ: "UTC" }` | Dates format the same on every machine. |
 | `restoreMocks`, `unstubGlobals`, `unstubEnvs` | Every test starts from the real implementations. |
 | `sequence.shuffle` | Order-dependent tests fail early. |

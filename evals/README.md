@@ -97,7 +97,9 @@ before a release, when a new model ships, and after any description change, and 
 approval AGENTS.md requires.
 
 `scripts/build_eval_cases.py` writes a clean copy of the plugin to the gitignored
-`evals/.run/`, with one case per prompt under `evals/.run/cases/<skill>/`:
+`evals/.run/` (or `--out DIR`), with one case per prompt under `evals/.run/cases/<skill>/`. It
+regenerates only a directory that is empty or carries its `.generated-by-build-eval-cases`
+marker, and refuses the repository and its ancestors:
 
 - every should-load prompt checks that the skill fired;
 - every should-not-load prompt checks that it did not fire and, when the winner is one of the

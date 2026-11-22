@@ -182,27 +182,32 @@ Delete the option; none of them has a TypeScript 7 replacement other than the on
 - Scope a rule to some paths with a new `overrides` entry (`includes` globs relative to the
   project root), never by editing the base rule.
 - Suppress one finding on the line before it, with the rule's full name and a reason, as
-  `src/app/router.tsx` does:
-
-  ```ts
-  // biome-ignore lint/correctness/noComponentHookFactories: built once per router, which keeps it.
-  ```
-
-  Without `: <reason>` Biome reports `suppressions/parse` and the suppression does not apply; a
-  suppression that matches nothing is reported as `suppressions/unused`. Never suppress a
-  boundary `plugin` diagnostic: move the code.
+  `src/app/router.tsx` does (example below). Without `: <reason>` Biome reports
+  `suppressions/parse` and the suppression does not apply; a suppression that matches nothing is
+  reported as `suppressions/unused`. Never suppress a boundary `plugin` diagnostic: move the code.
 - After a Biome upgrade run `pnpm exec biome migrate --write`, then `pnpm check`. An unknown key
   (``Found an unknown key `useSortedClasses`.``) aborts every Biome command, including the hook.
+
+```ts
+// biome-ignore lint/correctness/noComponentHookFactories: built once per router, which keeps it.
+```
 
 ## biome-plugins/boundaries.grit
 
 ```text
 language js
 
-JsModuleSource() as $source where {
+or {
+  JsModuleSource(),
+  `import($_)`
+} as $node where {
+  $node <: or {
+    JsModuleSource() as $source,
+    `import($source)`
+  },
   or {
     and {
-      $source <: r"[\"']\.\./.*[\"']",
+      $source <: r"[\"'](?:\./)*\.\./.*[\"']",
       register_diagnostic(span=$source, message="Import from another folder with the @/ alias, not ../")
     },
     and {
@@ -231,11 +236,13 @@ JsModuleSource() as $source where {
 ```
 
 The rules themselves are `frontend-project-structure`'s. Mechanics: the plugin matches import
-sources by regular expression against the file path, so it sees static `import` and `export ...
-from`, not `import()`. `biome-plugins/boundaries.test.ts` lints seeded violations in a temporary
-`tmp-boundaries-*` directory under the project root, because Biome refuses files outside its
-root; do not run `biome check` and `vitest run` in parallel in the same checkout. Change the
-plugin and its test together.
+sources by regular expression against the file path. It sees static `import`, `export ... from`
+and a dynamic `import("...")` with a string literal (the shape `lazy(() => import(...))` uses),
+and `./../` as well as `../`. `biome-plugins/boundaries.test.ts` lints seeded violations, static
+and dynamic, in a temporary `tmp-boundaries-*` directory under the project root, because Biome
+refuses files outside its root; it spawns Biome, so it carries a 30-second timeout for a loaded
+CI runner. Do not run `biome check` and `vitest run` in parallel in the same checkout. Change
+the plugin and its test together.
 
 ## knip.json
 

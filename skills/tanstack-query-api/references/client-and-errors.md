@@ -7,6 +7,7 @@ Contents:
 - [Turning an ApiError into words](#turning-an-apierror-into-words)
 - [createQueryClient](#createqueryclient)
 - [Who shows which error](#who-shows-which-error)
+- [Wire formats](#wire-formats)
 
 ## apiFetch and configureApi
 
@@ -95,9 +96,9 @@ for a different origin: it would send the API token there.
 
 | Body | `message` | `code` | `fieldErrors` |
 |---|---|---|---|
-| axum `ErrorBody` `{ error, request_id, details }` | `error` | `undefined` | `details` flattened: `{ email: [{ code, message }] }` gives `email`, a nested struct gives `address.city`, a list item `items[0].name`; the value is `message`, else `code` |
+| axum `ErrorBody` `{ error, request_id, details }` | `error` | `undefined` | `details` flattened: `{ email: [{ code, message }] }` gives `email`, a nested struct gives `address.city`, a list item `items[0].name`; the value is `message`, else `code`, else `"invalid"`; nesting past 32 levels is ignored, so a hostile body still yields an `ApiError` |
 | RFC 9457 `{ type, title, detail }` | `detail`, else `title` | `type`, unless it is `about:blank` | `{}` |
-| FastAPI 422 `{ detail: [{ loc, msg }] }` | `"validation failed"` | `undefined` | `loc` without its first entry (`body`), joined as a TanStack Form field name (`items[0].name`); the value is `msg` |
+| FastAPI 422 `{ detail: [{ loc, msg }] }` | `"validation failed"` | `undefined` | `loc` without its first entry (`body`), joined as a TanStack Form field name (`items[0].name`); the value is `msg` without pydantic's `Value error, ` or `Assertion failed, ` prefix, `"invalid"` when nothing is left |
 | FastAPI `{ detail: "..." }` | `detail` | `undefined` | `{}` |
 | anything else (a proxy's HTML page) | `` `HTTP ${status}` `` | `undefined` | `{}` |
 
@@ -213,3 +214,19 @@ export function createQueryClient(notify: Notify) {
 | a mutation without `meta.silent` | the MutationCache toast, `NOTICES.mutation` |
 | a mutation with `meta: { silent: true }` (a form) | the screen that started it: field errors inline, the rest at the top of the form (`frontend-forms`) |
 | 401 after the one retry, 403 | the session's policy (`keycloak-spa-auth`) |
+
+## Wire formats
+
+| Schema | Generated type | Rule |
+|---|---|---|
+| `string`, `format: date-time` | `string` | ISO string in the cache; format at render |
+| `string`, `format: decimal` | `string` | never `parseFloat`; send what the user typed |
+| `integer`, `format: int64` | `number` | exact only to 2^53; larger ids need a string schema |
+| `string`, `format: int64` | `string` | keep it a string |
+| `enum` | const object and union type | compare with the literal `"paid"` |
+| required, `type: [T, "null"]` | `x: T \| null` | key always present |
+| not required | `x?: T` | omit the key; `undefined` is TS2375 (TS2379 as an argument) |
+| not required, nullable | `x?: T \| null` | in query params omit it: `null` is sent as `"null"` |
+
+Property names stay snake_case as the backend spells them. Display formatting is
+`frontend-code-style`'s.

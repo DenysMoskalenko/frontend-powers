@@ -5,7 +5,9 @@ Contents
 - [The seam in `src/api/fetcher.ts`](#the-seam-in-srcapifetcherts)
 - [The stream module](#the-stream-module)
 - [A stream on screen: `experimental_streamedQuery`](#a-stream-on-screen-experimental_streamedquery)
+- [A feed on screen: `followEvents`](#a-feed-on-screen-followevents)
 - [Tests](#tests)
+- [End-to-end](#end-to-end)
 - [Facts checked at the pinned versions](#facts-checked-at-the-pinned-versions)
 
 ## The seam in `src/api/fetcher.ts`
@@ -105,7 +107,11 @@ live in `src/api/`, beside the fetcher whose seam they use.
 
 ```ts,verify
 // file: src/api/event-stream.ts
-import { type EventSourceMessage, EventSourceParserStream } from "eventsource-parser/stream";
+import {
+  type EventSourceMessage,
+  EventSourceParserStream,
+  type StreamOptions,
+} from "eventsource-parser/stream";
 import { ApiError } from "./api-error";
 import { apiResponse } from "./fetcher";
 
@@ -119,7 +125,7 @@ const MAX_EVENT_CHARS = 1024 * 1024;
 export async function* apiEvents(
   path: string,
   init: RequestInit = {},
-  onRetry?: (ms: number) => void,
+  parser: Pick<StreamOptions, "onRetry" | "onComment"> = {},
 ): AsyncGenerator<EventSourceMessage> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "text/event-stream");
@@ -129,9 +135,10 @@ export async function* apiEvents(
   }
   yield* response.body
     .pipeThrough(new TextDecoderStream())
-    .pipeThrough(new EventSourceParserStream({ maxBufferSize: MAX_EVENT_CHARS, onRetry }));
+    .pipeThrough(new EventSourceParserStream({ maxBufferSize: MAX_EVENT_CHARS, ...parser }));
 }
 
+const MIN_RETRY_DELAY = 1_000;
 const MAX_RETRY_DELAY = 30_000;
 
 /** A dropped connection or a server error may heal; a 4xx, a bad stream or a parse error will not. */
@@ -150,36 +157,76 @@ function sleep(ms: number, signal: AbortSignal) {
   });
 }
 
+/** Aborts its signal once `alive` has not been called for `ms`; without `ms`, never. */
+function watchdog(ms: number | undefined) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const alive = () => {
+    clearTimeout(timer);
+    if (ms) timer = setTimeout(() => controller.abort(), ms);
+  };
+  alive();
+  return { signal: controller.signal, alive, stop: () => clearTimeout(timer) };
+}
+
 /**
  * A resumable GET feed: after a dropped connection or a 5xx it reconnects with `Last-Event-ID` and
- * full-jitter backoff. Returns on an `end` event or when `signal` aborts; any other error throws.
+ * full-jitter backoff. `idleMs` (twice the heartbeat interval the server promises) also treats a
+ * silent connection as dropped. Returns on an `end` event or when `signal` aborts; any other error
+ * throws.
  */
 export async function followEvents(
   path: string,
   onEvent: (event: EventSourceMessage) => void,
   signal: AbortSignal,
+  { idleMs }: { idleMs?: number } = {},
 ) {
   let lastEventId: string | undefined;
-  let retry = 1_000;
-  for (let attempt = 0; !signal.aborted; attempt++) {
-    try {
-      const headers = lastEventId === undefined ? {} : { "Last-Event-ID": lastEventId };
-      for await (const event of apiEvents(path, { headers, signal }, (ms) => (retry = ms))) {
-        if (event.event === "end") return;
-        attempt = 0;
-        lastEventId = event.id ?? lastEventId;
-        onEvent(event);
-      }
-    } catch (error) {
-      if (!(signal.aborted || isTransient(error))) throw error;
+  let retry = MIN_RETRY_DELAY;
+  /** One connection: true once the server sent `end`. */
+  const connect = async (silence: ReturnType<typeof watchdog>) => {
+    const headers = lastEventId === undefined ? {} : { "Last-Event-ID": lastEventId };
+    const init = { headers, signal: AbortSignal.any([signal, silence.signal]) };
+    for await (const event of apiEvents(path, init, {
+      // `retry: 0` from a proxy or a bug would otherwise reconnect in a loop.
+      onRetry: (ms) => (retry = Math.max(MIN_RETRY_DELAY, ms)),
+      onComment: silence.alive,
+    })) {
+      silence.alive();
+      if (event.event === "end") return true;
+      lastEventId = event.id ?? lastEventId;
+      onEvent(event);
     }
+    return false;
+  };
+  for (let attempt = 0; !signal.aborted; attempt++) {
+    const openedAt = Date.now();
+    const silence = watchdog(idleMs);
+    try {
+      if (await connect(silence)) return;
+    } catch (error) {
+      if (signal.aborted) return;
+      if (!(silence.signal.aborted || isTransient(error))) throw error;
+    } finally {
+      silence.stop();
+    }
+    // Only a connection that held for a minute starts the backoff again: one that drops after each
+    // event would otherwise reconnect at the minimum delay forever.
+    if (Date.now() - openedAt >= 60_000) attempt = 0;
     await sleep(Math.random() * Math.min(MAX_RETRY_DELAY, retry * 2 ** attempt), signal);
   }
 }
 ```
 
 - Every attempt goes through `apiResponse`, so a reconnect sends the session's current token.
-- The server's `retry:` field becomes the base delay through `onRetry`.
+- The server's `retry:` field becomes the base delay through `onRetry`, never below one second: a
+  `retry: 0` from a proxy or a bug made every open tab reconnect hundreds of times a second.
+- The backoff starts again only after a connection held for 60 s. Resetting it on an event made a
+  server that sends one event and drops get reconnects at the minimum delay forever.
+- `idleMs`, for a server that promises a heartbeat (an event or a `: keepalive` comment every
+  N seconds): twice N. A connection silent that long is dropped and resumed, since a dead
+  connection (a laptop waking, an expired NAT entry) otherwise hangs until the operating system's
+  TCP timeout with stale data and no error. Without such a promise, leave it unset.
 - `Last-Event-ID` resumes only a GET feed whose server keeps events by id and honours the header.
   A POST answer stream (a generated answer) is read once with `apiEvents` and never resumed.
 - Unknown `event:` names are skipped by the consumer's `if` chain, never thrown on: a newer server
@@ -206,7 +253,7 @@ export const jobLogQueryOptions = (jobId: string) =>
     queryFn: streamedQuery({
       // Query aborts `signal` when the last component reading the log unmounts.
       streamFn: async function* ({ signal }) {
-        for await (const event of apiEvents(`/jobs/${jobId}/log`, { signal })) {
+        for await (const event of apiEvents(`/jobs/${encodeURIComponent(jobId)}/log`, { signal })) {
           if (event.event === "done") return;
           if (event.event === "error") throw new Error(`job ${jobId} log failed`);
           if (event.event === "line") yield event.data;
@@ -245,6 +292,77 @@ export function JobLog({ jobId }: { jobId: string }) {
   answer) puts a client-made request id in the key, so a remount within `gcTime` reads the cache
   instead of posting again.
 - Render streamed text as text (`{text}`), never as HTML.
+- A hand-written path encodes each dynamic segment with `encodeURIComponent`, as the generated
+  client does, so an id like `../admin` cannot reach another endpoint with the token.
+
+## A feed on screen: `followEvents`
+
+A long-lived feed has no query function to await it: the feed writes into the Query cache, and the
+component reads the cache through a query that never fetches. A failure that ends the feed (a 4xx,
+a broken stream) is awaited by nobody, so it goes to `reportError`; drops and 5xx are retried
+inside `followEvents` and show nothing.
+
+```tsx,verify
+// file: src/features/notifications/notification-feed.tsx
+import { queryOptions, skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { z } from "zod";
+import { followEvents } from "@/api/event-stream";
+
+const Notification = z.object({ id: z.string(), text: z.string() });
+
+/** Filled by the feed below, never fetched: the cache holds pushed data, not component state. */
+const notificationsQuery = queryOptions<z.infer<typeof Notification>[]>({
+  queryKey: ["notifications"],
+  queryFn: skipToken,
+});
+
+const parseJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+};
+
+/** Follows the signed-in user's notification feed while mounted, newest first. */
+export function NotificationFeed() {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const stop = new AbortController();
+    const onEvent = ({ event, data }: { event?: string | undefined; data: string }) => {
+      const parsed = Notification.safeParse(parseJson(data));
+      if (event !== "notification" || !parsed.success) return;
+      queryClient.setQueryData(notificationsQuery.queryKey, (old = []) =>
+        [parsed.data, ...old].slice(0, 20),
+      );
+    };
+    // The API promises a `: keepalive` comment every 30 s. A drop or a 5xx is retried inside
+    // followEvents; what ends it (a 4xx, a broken stream) is awaited by nobody, so it is reported.
+    followEvents("/notifications", onEvent, stop.signal, { idleMs: 60_000 }).catch(reportError);
+    return () => stop.abort();
+  }, [queryClient]);
+  const { data: notifications = [] } = useQuery(notificationsQuery);
+
+  return (
+    <section aria-label="Latest notifications">
+      <ul>
+        {notifications.map((notification) => (
+          <li key={notification.id}>{notification.text}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+```
+
+In the root layout, the feed's request runs in every route test: answer it once in the test
+setup, as `frontend-testing`'s rule for a request every page makes says, and let the feed's own
+test declare its own.
+
+Mounted in the root layout, the feed with `followEvents` added 5.0 KB gzip to the entry, measured
+on an app that already had Centrifugo (eventsource-parser and the stream module): raise
+`ENTRY_BUDGET_BYTES` by what `pnpm build` reports, naming the feed, as `frontend-tooling` says.
 
 ## Tests
 
@@ -337,6 +455,79 @@ test("a dropped feed reconnects after the backoff and resumes from Last-Event-ID
   expect(progress).toEqual(["10", "20", "30"]);
   expect(sentIds).toEqual([null, "2"]);
 });
+
+test("a server retry of 0 still waits at least a second between connections", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  configureApi({ baseUrl: origin });
+  let connections = 0;
+  server.use(
+    http.get(`${origin}/feed`, () => {
+      connections++;
+      // One event, then the stream ends: a proxy that cuts long responses does the same.
+      return eventStream("retry: 0\nid: 1\ndata: x\n\n");
+    }),
+  );
+  const stop = new AbortController();
+  const done = followEvents("/feed", () => {}, stop.signal);
+
+  await vi.advanceTimersByTimeAsync(1_000);
+  stop.abort();
+  await done;
+
+  expect(connections).toBe(2);
+});
+
+test("a stream that drops after each event backs off further each time", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  configureApi({ baseUrl: origin });
+  let connections = 0;
+  server.use(
+    http.get(`${origin}/feed`, () => {
+      connections++;
+      return eventStream("id: 1\ndata: x\n\n");
+    }),
+  );
+  const stop = new AbortController();
+  const done = followEvents("/feed", () => {}, stop.signal);
+
+  // Delays of 500, 1000 and 2000 ms; resetting the backoff on each event would connect every 500.
+  await vi.advanceTimersByTimeAsync(4_000);
+  stop.abort();
+  await done;
+
+  expect(connections).toBe(4);
+});
+
+test("a stream silent for longer than the promised heartbeat reconnects from the last id", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  configureApi({ baseUrl: origin });
+  const sentIds: (string | null)[] = [];
+  server.use(
+    http.get(`${origin}/feed`, ({ request }) => {
+      sentIds.push(request.headers.get("last-event-id"));
+      // A dead connection: the server neither sends nor closes.
+      const body = new ReadableStream({
+        start: (controller) => controller.enqueue(new TextEncoder().encode("id: 7\ndata: x\n\n")),
+      });
+      // Chunked, as a server streams it: undici asserts on a close-delimited body after the abort.
+      const headers = { "Content-Type": "text/event-stream", "Transfer-Encoding": "chunked" };
+      return new HttpResponse(body, { headers });
+    }),
+  );
+  const stop = new AbortController();
+  const done = followEvents("/feed", () => {}, stop.signal, { idleMs: 30_000 });
+
+  await vi.advanceTimersByTimeAsync(29_000);
+  expect(sentIds).toEqual([null]);
+  await vi.advanceTimersByTimeAsync(2_000);
+  stop.abort();
+  await done;
+
+  expect(sentIds).toEqual([null, "7"]);
+});
 ```
 
 Without the `advanceTimersByTimeAsync` call the third test times out: the backoff sleep is a fake
@@ -359,14 +550,20 @@ const encode = (text: string) => new TextEncoder().encode(text);
 test("the log query holds every line once the stream reports done", async () => {
   configureApi({ baseUrl: origin });
   server.use(
-    http.get(`${origin}/jobs/7/log`, () =>
-      HttpResponse.text(
-        "event: line\ndata: one\n\nevent: line\ndata: two\n\nevent: done\ndata:\n\n",
-        {
-          headers: { "Content-Type": "text/event-stream" },
+    http.get(`${origin}/jobs/7/log`, () => {
+      // Split mid-event: the parser joins the chunks.
+      const chunks = [
+        "event: line\ndata: one\n\nevent: li",
+        "ne\ndata: two\n\nevent: done\ndata:\n\n",
+      ];
+      const body = new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(encode(chunk));
+          controller.close();
         },
-      ),
-    ),
+      });
+      return new HttpResponse(body, { headers: { "Content-Type": "text/event-stream" } });
+    }),
   );
 
   const lines = await new QueryClient().query(jobLogQueryOptions("7"));
@@ -399,12 +596,25 @@ test("the last reader unsubscribing aborts the request", async () => {
 
 A screen that renders the stream is tested through `renderRoute` with the same handler.
 
+## End-to-end
+
+A stream that every page opens needs a route in `e2e/stub-api.ts` answering `text/event-stream`
+(an open stream, or `event: end`): without one the stub's 404 reaches `reportError`, and the guard
+fixture fails every spec.
+
+```ts
+function notifications(response: ServerResponse) {
+  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+  response.write(": open\n\n");
+}
+```
+
 ## Facts checked at the pinned versions
 
 | Fact | Version |
 | --- | --- |
 | `EventSourceParserStream` comes from `eventsource-parser/stream`; `maxBufferSize` defaults to unbounded and, when exceeded, always errors the stream | eventsource-parser 4.1.3 |
 | `onError` defaults to ignoring parse errors; `"terminate"` errors the stream | eventsource-parser 4.1.3 |
-| exported as `experimental_streamedQuery`; options `streamFn`, `refetchMode` (`reset`, `append`, `replace`), `reducer` with `initialValue`; no `queryFn` or `maxChunks` option | TanStack Query 5.107.1 |
-| `sse()` asserts a global `EventSource` when created and matches `GET` with `accept: text/event-stream` only | MSW 3.0.6 |
-| jsdom and Node have no `EventSource`; both have `fetch`, `ReadableStream`, `TextDecoderStream` | jsdom 30.1, Node 26.13 |
+| exported as `experimental_streamedQuery`; options `streamFn`, `refetchMode` (`reset`, `append`, `replace`), `reducer` with `initialValue`; no `queryFn` or `maxChunks` option | TanStack Query 5.108.0 |
+| `sse()` asserts a global `EventSource` when created and matches `GET` with `accept: text/event-stream` only | MSW 3.0.7 |
+| jsdom and Node have no `EventSource`; both have `fetch`, `ReadableStream`, `TextDecoderStream` | jsdom 31.0, Node 26.13 |

@@ -29,6 +29,8 @@ jobs:
         with:
           cache: true
           require-lockfile: true
+      # Every installed tarball carries a valid registry signature, also through a mirror or proxy.
+      - run: pnpm audit signatures
       - run: pnpm dedupe --check
       - run: pnpm exec biome ci --reporter=default --reporter=github
       - run: pnpm typecheck
@@ -61,9 +63,9 @@ jobs:
   e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # The tag matches @playwright/test in package.json exactly; the image carries the browsers.
+    # Pinned by digest; the tag in the comment equals @playwright/test in package.json. It carries the browsers.
     container:
-      image: mcr.microsoft.com/playwright:v1.65.1-noble
+      image: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.65.1-noble
       options: --user 1001
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

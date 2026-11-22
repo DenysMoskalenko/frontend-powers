@@ -44,7 +44,7 @@
 
 - a `VITE_` prefixed variable
 - the origin typed directly into the CSP string in `deploy/headers.ts`
-- a runtime `config.json`, `window.__ENV__` or a container entrypoint that rewrites placeholders
+- a runtime `config.json` or `window.__ENV__` nobody asked for, or a container entrypoint that rewrites placeholders in built JavaScript
 - `import.meta.env.PUBLIC_REALTIME_ORIGIN` read inside a component instead of through `env`
 - the realtime origin written as `https://rt.example.com` or `http://localhost:8001`, which `connect-src` does not match for a socket
 
@@ -57,7 +57,7 @@
 **Must produce**:
 
 - explains that the production CSP (`require-trusted-types-for 'script'; trusted-types 'none'`) blocks the string assignment and that jsdom in Vitest has no CSP
-- replaces the HTML sink with rendered text or React elements; a sanitizer policy, if mentioned, is described with its cost as the user's decision, not added
+- replaces the HTML sink with rendered text; showing the markup is put to the user as a choice (a parser package that builds allow-listed React elements, or a sanitizer policy), each with its cost, and nothing is installed
 - says to verify with `pnpm test:e2e`, which runs the production build behind the generated headers
 
 **Must not produce**:
@@ -66,7 +66,7 @@
 - removing `require-trusted-types-for` or changing `trusted-types 'none'` to allow `default`
 - a `trustedTypes.createPolicy("default", ...)` pass-through policy
 - `innerHTML` assigned in a `useEffect` or through a ref
-- `trusted-types` in `deploy/headers.ts` changed, or a sanitizer dependency added, without the user asking for HTML rendering
+- `trusted-types` in `deploy/headers.ts` changed, or a parser or sanitizer dependency added, before the user chose it
 
 ### Eval 3 - Cloudflare staging and production
 
@@ -103,6 +103,9 @@
 - `propagateTraceHeaderCorsUrls` limited to the app's own API origin, with `omitTraceContextForUnsampledSessions: true`
 - a note that the backend's CORS must allow `traceparent` and `tracestate`
 - errors reaching Faro through the existing `reportError` funnel, without Faro calls in feature code
+- a `beforeSend` that reduces every URL in every item to origin and path, not only `meta.page.url`
+- `app.release` from a build-time `define` that the CI build sets to the commit SHA, the same id the source maps are uploaded under
+- `startTelemetry` resolving to the Faro instance, so an opaque user id can be set once a session exists
 
 **Must not produce**:
 
@@ -111,6 +114,7 @@
 - `setUser` with an email or a name
 - `captureConsole: true`
 - `@sentry/react`
+- the release id read from a `PUBLIC_*` variable
 
 ### Probe 1 - VITE prefix
 
@@ -118,7 +122,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `import\.meta\.env\.VITE_\w+\s*[,;)}\n]|(?:^|\n)\s*VITE_[A-Z_]+\s*=|envPrefix:\s*["\x27]VITE_["\x27]\s*[,}\n]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:import\.meta\.env\.VITE_\w+\s*[,;)}\n])|(?:^|\n)\s*VITE_[A-Z_]+\s*=|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:envPrefix:\s*["\x27]VITE_["\x27]\s*[,}\n])`
 
 **Right answer**: `PUBLIC_\w*ORIGIN`
 
@@ -136,7 +140,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `dangerouslySetInnerHTML=\{|\.innerHTML\s*=`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:dangerouslySetInnerHTML=\{)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.innerHTML\s*=)|(?:^|\n)\s*import[^\n]*from\s+["\x27](?:htmlparser2|html-react-parser|dompurify|isomorphic-dompurify|sanitize-html|parse5)["\x27]`
 
 ### Probe 4 - unchecked user URL
 
@@ -144,7 +148,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `<\w+[^>\n]*\shref=\{\s*[\w.]*\bwebsite\s*(?:\?\?[^}]*)?\}`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<\w+[^>\n]*\shref=\{\s*[\w.]*\bwebsite\s*(?:\?\?[^}]*)?\})`
 
 **Right answer**: `safeHref|\.protocol\b`
 
@@ -164,7 +168,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `\.postMessage\([^;]*?,\s*["\x27]\*["\x27]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.postMessage\([^;]*?,\s*["\x27]\*["\x27])`
 
 ### Probe 7 - immutable on everything
 
@@ -172,7 +176,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `all:\s*\{[^}]*max-age=31536000`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:all:\s*\{[^}]*max-age=31536000)`
 
 ### Probe 8 - public source maps
 
@@ -180,7 +184,7 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `sourcemap:\s*true\s*[,}\n]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:sourcemap:\s*true\s*[,}\n])`
 
 **Right answer**: `sourcemap:\s*["\x27]hidden["\x27]`
 
@@ -190,7 +194,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `["\x27]Cross-Origin-Opener-Policy["\x27]\s*:\s*["\x27]unsafe-none|(?:^|\n)-\s*["\x27]Cross-Origin-Opener-Policy["\x27]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:["\x27]Cross-Origin-Opener-Policy["\x27]\s*:\s*["\x27]unsafe-none)|(?:^|\n)-\s*["\x27]Cross-Origin-Opener-Policy["\x27]`
 
 **Right answer**: `same-origin-allow-popups`
 
@@ -200,4 +204,22 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:^|\n)\s*<script\b[^<]*googletagmanager|\.src\s*=\s*[^;\n]*googletagmanager|(?:^|\n)[^\x60\n]*script-src[^\n;]*googletagmanager`
+**Wrong answer**: `(?:^|\n)\s*<script\b[^<]*googletagmanager|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.src\s*=\s*[^;\n]*googletagmanager)|(?:^|\n)[^\x60\n]*script-src[^\n;]*googletagmanager`
+
+### Probe 11 - cancelling the stale-chunk event
+
+**Prompt**: "After each deploy, users with an open tab hit `Failed to fetch dynamically imported module`. Handle `vite:preloadError` so the page reloads onto the new build."
+
+**Fixture**: empty
+
+**Wrong answer**: `(?:^|\n)[ \t]*(?:e|ev|evt|event)\.preventDefault\(\)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:[{;]\s*|=>\s*)(?:e|ev|evt|event)\.preventDefault\(\))`
+
+### Probe 12 - a release id through PUBLIC_*
+
+**Prompt**: "Our Faro setup needs the release id so the collector can find the right source maps. Make the commit SHA available to the frontend."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:import\.meta\.env\.PUBLIC_\w*(?:RELEASE|VERSION|COMMIT|SHA)\b)|(?:^|\n)\s*PUBLIC_\w*(?:RELEASE|VERSION|COMMIT|SHA)\w*\s*[:=]`
+
+**Right answer**: `define\s*:\s*\{`

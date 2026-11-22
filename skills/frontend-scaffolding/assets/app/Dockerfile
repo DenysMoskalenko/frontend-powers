@@ -2,7 +2,7 @@
 
 FROM node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS build
 # Node 25+ ships no corepack: install the pnpm that package.json's devEngines pins.
-RUN npm install --global pnpm@12.21.0
+RUN npm install --global pnpm@12.22.0
 WORKDIR /app
 # Lockfile only: this layer survives every source edit.
 COPY pnpm-lock.yaml pnpm-workspace.yaml ./

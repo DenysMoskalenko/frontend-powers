@@ -138,6 +138,8 @@ export function ButtonLink({
 
 Root, trigger and close are Base UI's parts unchanged; the wrapper owns the portal, backdrop and
 popup. Under reduced motion the popups still fade, only the scale goes, as in the scaffold's toast.
+The width is a `size` variant, not a `className`: with both `w-[min(28rem,…)]` in the base and a
+caller's `w-96`, the built CSS puts `w-96` first, so it silently loses.
 
 A confirmation of a destructive action ("Delete user?") is `AlertDialog` from
 `@base-ui/react/alert-dialog`, not `Dialog`: it has `role="alertdialog"` and an outside click does
@@ -166,20 +168,26 @@ export const Dialog = BaseDialog.Root;
 export const DialogTrigger = BaseDialog.Trigger;
 export const DialogClose = BaseDialog.Close;
 
+const sizes = {
+  sm: "w-[min(24rem,calc(100vw-2rem))]",
+  md: "w-[min(28rem,calc(100vw-2rem))]",
+  lg: "w-[min(40rem,calc(100vw-2rem))]",
+} as const;
+
+// No `className`: the base string sets the width and the placement, so a caller's class could lose.
 interface DialogPopupProps
   extends Omit<BaseDialog.Popup.Props, "className" | "children" | "title"> {
   title: ReactNode;
   description?: ReactNode | undefined;
   children?: ReactNode | undefined;
-  /** Layout only (width, placement of the content). */
-  className?: string | undefined;
+  size?: keyof typeof sizes | undefined;
 }
 
 export function DialogPopup({
   title,
   description,
   children,
-  className,
+  size = "md",
   ...props
 }: DialogPopupProps) {
   return (
@@ -188,8 +196,8 @@ export function DialogPopup({
       <BaseDialog.Popup
         {...props}
         className={cx(
-          "-translate-1/2 fixed top-1/2 left-1/2 flex w-[min(28rem,calc(100vw-2rem))] flex-col gap-3 rounded-lg bg-surface p-6 text-fg shadow-lg transition-[opacity,scale] duration-150 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-opacity",
-          className,
+          "-translate-1/2 fixed top-1/2 left-1/2 flex flex-col gap-3 rounded-lg bg-surface p-6 text-fg shadow-lg transition-[opacity,scale] duration-150 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-opacity",
+          sizes[size],
         )}
       >
         <BaseDialog.Title className="font-semibold text-lg">{title}</BaseDialog.Title>
@@ -365,7 +373,7 @@ export function UserActions({ user }: { user: UserResponse }) {
       </Menu>
       <Dialog>
         <DialogTrigger render={<Button />}>Details</DialogTrigger>
-        <DialogPopup title={user.name} description={user.email}>
+        <DialogPopup size="sm" title={user.name} description={user.email}>
           <DialogClose render={<Button className="self-end" />}>Close</DialogClose>
         </DialogPopup>
       </Dialog>

@@ -41,7 +41,7 @@ catalog exists, `catalog:` fails with `ERR_PNPM_CATALOG_ENTRY_NOT_FOUND_FOR_SPEC
 `@biomejs/biome`, `@j178/prek` and `knip` to the root. Add `packages: [apps/*, packages/*]` to
 `pnpm-workspace.yaml`.
 
-Check: `pnpm install` succeeds; `cd apps/web && pnpm --version` prints `12.21.0`.
+Check: `pnpm install` succeeds; `cd apps/web && pnpm --version` prints `12.22.0`.
 
 ## 3. The catalog
 

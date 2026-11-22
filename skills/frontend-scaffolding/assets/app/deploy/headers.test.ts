@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { caddyHeaders, cloudflareHeaders, headersFor } from "./headers.ts";
+import { caddyHeaders, cloudflareHeaders, headersFor, isBareOrigin } from "./headers.ts";
 
 const api = ["https://api.example.com"];
 
@@ -36,4 +36,31 @@ test("the Caddy snippets carry the same headers, quoted", () => {
     '(assets_headers) {\n\tCache-Control "public, max-age=31536000, immutable"\n}',
   );
   expect(caddyHeaders(api)).toContain('\tX-Content-Type-Options "nosniff"\n');
+});
+
+test.each([
+  "https://api.example.com",
+  "http://localhost:5173",
+  "wss://rt.example.com",
+  "http://[::1]:8080",
+  "https://xn--e1afmkfd.xn--p1ai",
+])("%s is a bare origin", (value) => {
+  expect(isBareOrigin(value)).toBe(true);
+});
+
+// Each would widen the CSP (a wildcard, a second source or directive) or become a Caddy placeholder.
+test.each([
+  "https://*",
+  "https://*.example.com",
+  "wss://*",
+  "https://a;b",
+  "https://a,b",
+  "https://{http.request.header.x}",
+  "https://$x",
+  "https://a'b",
+  "https://api.example.com/",
+  "https://api.example.com 'unsafe-inline'",
+  "data:",
+])("%s is refused", (value) => {
+  expect(isBareOrigin(value)).toBe(false);
 });

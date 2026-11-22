@@ -11,12 +11,13 @@ export const rootErrorHandlers = {
 
 /** A route chunk of the previous deploy is gone: reload onto the new `index.html`. */
 export function reloadOnStaleChunk() {
-  window.addEventListener("vite:preloadError", (event) => {
+  // Never `preventDefault()`: Vite would resolve the import with `undefined` and the router would report a
+  // TypeError; uncancelled, the router recognises the failed import and waits for the reload.
+  window.addEventListener("vite:preloadError", () => {
     // A failure within a minute of the last reload is not a stale deploy: no reload loop.
     const last = Number(sessionStorage.getItem("reloaded-for-stale-chunk"));
     if (Date.now() - last < 60_000) return;
     sessionStorage.setItem("reloaded-for-stale-chunk", String(Date.now()));
-    event.preventDefault();
     location.reload();
   });
 }

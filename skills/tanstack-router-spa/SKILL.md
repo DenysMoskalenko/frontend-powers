@@ -7,23 +7,22 @@ metadata:
 
 # TanStack Router in a client-rendered SPA
 
-Assumes @tanstack/react-router 1.170, @tanstack/router-plugin 1.169, @tanstack/react-query 5.107, zod 4.6.
+Assumes @tanstack/react-router 1.170, @tanstack/router-plugin 1.169, @tanstack/react-query 5.108, zod 4.6.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, use its own modules, helpers and scripts, and say so when it has no equivalent instead of adding one unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If `pnpm-lock.yaml` pins another major version than the line above, follow the project and say which rules may not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 ## Important
 
 - A route file exports only `Route`. Its page component is an unexported function; `autoCodeSplitting` keeps an exported one in the entry chunk, often without a warning (exporting `NewUserPage` adds about 19 KB gzip and fails the scaffold's 160 KB entry budget).
 - The loader fills the Query cache and the component reads it: `context.queryClient.query({ ...getXQueryOptions(deps), staleTime: "static" })` in the loader, `useSuspenseQuery(getXSuspenseQueryOptions(...))` in the component. Never `Route.useLoaderData()` for server data: it does not follow cache updates.
-- Shareable view state (page, filter, sort, tab) lives in `validateSearch`, never in `useState`: a zod schema passed directly, every key `.optional().catch(undefined)`, free text and string ids `z.coerce.string()`, because the router JSON-parses `?q=42` into the number `42`.
-- `createAppRouter` sets `defaultErrorComponent: RouteError`, so a failed load renders inside its parent's layout. A route sets its own `errorComponent` only to show a different screen.
-- `src/routeTree.gen.ts` is generated whenever Vite starts (dev, build, Vitest), committed, and never edited by hand.
+- Shareable view state (page, filter, sort, tab) lives in `validateSearch`, never in `useState`: a zod schema passed directly (zod needs `src/app/zod-config.ts` imported first: `tanstack-query-api`), every key `.optional().catch(undefined)`, free text and string ids `z.coerce.string()`, because the router JSON-parses `?q=42` into the number `42`. A search box trims on submit and navigates with `replace: true`; no `.trim()` in the schema.
+- A page under a detail URL that is not shown inside the detail page is `users/$userId_/edit.tsx` (id `/users/$userId_/edit`): never a flat `$userId_.edit.tsx`, never `$userId.tsx` turned into a layout.
 
 ## References
 
-- `references/route-files.md` — file names and URLs, layouts and groups, the generated tree, what `autoCodeSplitting` splits and what defeats it (measured), `getRouteApi`. When creating or moving a route file, or when the entry chunk grows.
-- `references/search-and-loaders.md` — how the router parses search values, a free-text search box and its test, a complete route with search ids, parallel loads, `notFound` and a pending component plus its test, loader shapes. When writing `validateSearch`, `loaderDeps` or a loader.
-- `references/navigation-and-guards.md` — `Link` and `navigate` options, `redirect`, the guard layout and context extension, `useBlocker` with a resolver, router options and defaults, pending, error and not-found placement. When adding navigation, a guard, a blocker or a router option.
+- `references/route-files.md` — file names and URLs, layouts and groups, the generated tree, what `autoCodeSplitting` splits and what defeats it (measured), `getRouteApi` and links from a feature. When creating or moving a route file, or when the entry chunk grows.
+- `references/search-and-loaders.md` — how search values parse (measured), a free-text search box and its test, a complete route with search ids, parallel loads, `notFound` and a pending component plus its test, loader shapes. When writing `validateSearch`, `loaderDeps` or a loader.
+- `references/navigation-and-guards.md` — `Link` and `navigate` options, `redirect`, the guard layout and context extension, `useBlocker` with a resolver, router options, focus after navigation, pending, error and not-found placement. When adding navigation, a guard, a blocker or a router option.
 
 ## File routes
 
@@ -38,13 +37,13 @@ Directory routes mirror the URL:
 | layout without a URL segment (guard, shell) | `src/routes/_signed-in.tsx` plus children in `src/routes/_signed-in/` |
 | root layout | `src/routes/__root.tsx` with `createRootRouteWithContext<{ queryClient: QueryClient }>()` |
 
-A file under `users/$userId/` nests inside `$userId.tsx`, which then shows only itself unless it renders `<Outlet />`. A child URL with its own page (edit, activity) goes under `$userId_/`: the trailing `_` keeps the URL and drops the nesting, and the detail file stays untouched. Turn `$userId.tsx` into a layout with `<Outlet />` only when the children render inside the detail page (a shared header, tabs).
+A file under `users/$userId/` nests inside `$userId.tsx`, which then shows only itself unless it renders `<Outlet />`; the trailing `_` of `$userId_/` keeps the URL and drops the nesting. Turn `$userId.tsx` into a layout only when the children render inside the detail page (a shared header, tabs).
 
-Route tests sit next to the route as `*.test.tsx`, kept out of the tree by `routeFileIgnorePattern`.
+Route tests sit next to the route as `*.test.tsx`, kept out of the tree by `routeFileIgnorePattern`. `src/routeTree.gen.ts` is regenerated by every Vite start (dev, build, Vitest), committed, never edited by hand.
 
 ## What a route file holds
 
-Routing only: options, then unexported components that read params and search and pass them as props to feature components. Options in this order:
+Routing only: options, then unexported components that pass params and search as props to feature components. Options in this order:
 
 | Option | Rule |
 |---|---|
@@ -57,9 +56,9 @@ Routing only: options, then unexported components that read params and search an
 | `errorComponent` | only for a screen other than the default `RouteError` |
 | `notFoundComponent` | where the loader throws `notFound()` |
 
-The loader and the component import from different modules (query options from `@/api/generated/api`, UI from feature files): chunks are assigned per module, so a shared barrel pulls the component into the entry chunk.
+The loader and the component import from different modules (query options from `@/api/generated/api`, UI from feature files): a shared barrel pulls the component into the entry chunk.
 
-Each page component, and each not-found and error component, renders React 19's `<title>` before its `<h1>`; the root layout renders none.
+Each page component, and each not-found and error component, renders React 19's `<title>` before its one `<h1>`; the root layout renders none. In a project that sets `document.title` through its own helper, use the helper: React's `<title>` replaces its text on every render.
 
 ## Search params
 
@@ -70,10 +69,11 @@ const searchSchema = z.object({
 });
 ```
 
+- `createAppRouter`'s parser makes a value a number only when it prints back as typed: `?q=1.50`, `?q=1e3` and ids past 2^53 stay text, `?q=42` is still `42`.
 - Defaults apply at the read (`search.page ?? 1`) and the default is written as `undefined`, so one page has one URL.
 - Read with `Route.useSearch({ select })`, the API params with `Route.useLoaderDeps()`, path params with `Route.useParams()`; never `window.location.search`, which skips validation.
-- Write with an updater that keeps the other keys: `<Link from={Route.fullPath} search={(prev) => ({ ...prev, page: page + 1 })}>`; a filter change also resets the page (`page: undefined`). In callbacks, `Route.useNavigate()` takes the same updater. A feature component, which may not import `Route`, writes the route's full path as a literal, still checked against the tree: `<Link from="/users/" search={...}>`, `useNavigate({ from: "/users/" })`.
-- A free-text box is uncontrolled (`defaultValue={q}`, `key={q}`) and trims on submit, which navigates with `replace: true` and `page: undefined`. No `.trim()` in the schema: a box fed from the URL value then cannot hold a space.
+- Write with an updater that keeps the other keys: `<Link from={Route.fullPath} search={(prev) => ({ ...prev, page: page + 1 })}>`; a filter change also resets the page (`page: undefined`). In callbacks, `Route.useNavigate()` takes the same updater; a feature component writes `from="/users/"` as a literal.
+- A free-text box is uncontrolled (`defaultValue={q}`, `key={q}`) and its submit resets the page (`page: undefined`): a box fed from the URL value over a trimming schema cannot hold a space.
 
 ## Loaders
 
@@ -88,7 +88,7 @@ loader: async ({ context, deps }) => {
     const last = pageCount(users);
     throw redirect({
       to: "/users",
-      search: { page: last > 1 ? last : undefined },
+      search: (prev) => ({ ...prev, page: last > 1 ? last : undefined }),
       replace: true,
     });
   }
@@ -96,26 +96,10 @@ loader: async ({ context, deps }) => {
 },
 ```
 
-- `staleTime: "static"` returns cached data at once and fetches only on a cold cache; `useSuspenseQuery` refetches stale data later.
-- Both getters take the same arguments; `query()` rejects the suspense options with TS2379.
+- `toListParams` and `pageCount` are the scaffold's `@/features/users/pagination`. The past-the-end redirect keeps the other search keys with an updater.
 - An optional search key enters the API params only when set: `...(search.q !== undefined && { q: search.q })`; a bare `q: search.q` is TS2375.
-- The list loader above sends a page past the end to the last page. A loader may return what it fetched, as this one does, but no component reads that value (see Important).
-- Every loader that takes an id from the path (detail, edit, any child page) checks it with the generated params schema (`GetXParams` in `api.zod.ts`) and throws `notFound()` before any request, and turns a 404 into `notFound()`, with a `notFoundComponent` on the route:
-
-```tsx
-if (!GetUserParams.safeParse({ id: params.userId }).success) throw notFound();
-try {
-  await context.queryClient.query({
-    ...getGetUserQueryOptions(params.userId),
-    staleTime: "static",
-  });
-} catch (error) {
-  if (error instanceof ApiError && error.status === 404) throw notFound();
-  throw error;
-}
-```
-
-- Await only what the first paint needs; start the rest with `void context.queryClient.query({ ...options, staleTime: "static" }).catch(() => undefined)` and read it with `useQuery`.
+- Every loader that takes an id from the path (detail, edit, any child page) checks it with the generated params schema (`GetXParams` in `api.zod.ts`) and throws `notFound()` before any request, and turns a 404 into `notFound()`, with a `notFoundComponent` on the route; the loader shapes in `references/search-and-loaders.md` show it.
+- What the page shows on arrival, a section under the details included, is awaited, all of it in one `Promise.all`, and read with `useSuspenseQuery`. Only what it can render without (behind a tab or toggle, a widget allowed to fail alone) is started without waiting, before the loader's first `await`, with `void context.queryClient.query({ ...options, staleTime: "static" }).catch(() => undefined)`, and read with `useQuery`: started after an `await`, it waits a round trip.
 
 ## Navigation
 
@@ -125,20 +109,20 @@ try {
 
 ## Errors, pending, not found
 
-- `RouteError` (`@/shared/ui/route-error`) resets the Query error boundary, shows `ApiError.requestId`, and its Try again calls `router.invalidate()`, which re-runs the loaders.
+- `RouteError` (`@/shared/ui/route-error`) shows `ApiError.requestId`; its Try again calls `router.invalidate()`, which re-runs the loaders.
 - An unknown URL gets the root's `notFoundComponent` inside the layout.
 
 ## Guards
 
-A pathless layout route whose `beforeLoad` reads the router context and either returns an object, merged into every child's context, or leaves the route. Context is typed on `createRootRouteWithContext<...>()` and filled in `createAppRouter`. Who may pass, where the rest go, and what 401 and 403 do belong to `keycloak-spa-auth`.
+A pathless layout route whose `beforeLoad` reads the router context and either returns an object, merged into every child's context, or leaves the route; the three edits are in `references/navigation-and-guards.md`. Who may pass, where the rest go, and what 401 and 403 do belong to `keycloak-spa-auth`.
 
 ## Navigation blockers
 
-`useBlocker({ shouldBlockFn, enableBeforeUnload })`: `shouldBlockFn` runs at navigation time and returns `true` to block, so it reads live state, never a rendered snapshot; `withResolver: true` returns `{ status, proceed, reset }` for an in-app dialog. When a form uses it belongs to `frontend-forms`.
+`useBlocker({ shouldBlockFn, enableBeforeUnload, withResolver })`; `shouldBlockFn` reads live state at navigation time, never a rendered snapshot. Options and an in-app dialog are in the navigation reference; when a form uses it belongs to `frontend-forms`.
 
 ## Router creation
 
-`createAppRouter` (`src/app/router.tsx`) builds the router, its `QueryClient` and providers, and declares `Register`; its options are in `references/navigation-and-guards.md`. `Wrap` is the one provider slot shared with route tests. Never create a `QueryClient` or router at module level.
+`createAppRouter` (`src/app/router.tsx`) declares `Register`; its options are in `references/navigation-and-guards.md`, and the providers in its `Wrap` are `frontend-project-structure`'s. After a navigation that changes the path it moves focus to the first `h1` inside `main` (never on the first render or a search-only change), so every page renders exactly one `h1` and needs no `tabIndex`.
 
 ## Prior-version corrections
 
@@ -157,9 +141,8 @@ A pathless layout route whose `beforeLoad` reads the router context and either r
 
 | About to… | Do this instead |
 |---|---|
-| `export function UsersPage` from a route file | keep it unexported; shared code goes to a feature file |
-| `import { Route } from "@/routes/..."` in a feature | props; `getRouteApi("<id>")` only in a component used by one route, when the value would pass through several layers |
-| `.default(1)` or a required key in a search schema | `.optional().catch(undefined)`, default at the read |
-| Render "not found" from the component after a 404 | `throw notFound()` in the loader, plus `notFoundComponent` |
-| Check the session in a component `useEffect` and call `navigate` | `beforeLoad` on a pathless layout, `throw redirect(...)` |
-| Remove `defaultPreloadStaleTime: 0` | keep it: Query owns freshness |
+| `import { Route } from "@/routes/..."` in a feature | props, since the boundaries lint rejects the import; `getRouteApi("<id>")` only in a component used by one route, when the value would pass through several layers |
+| `.default(1)` or a required key in a search schema | `.optional().catch(undefined)`, default at the read: one page keeps one URL, and a bad key falls back alone |
+| `errorComponent: RouteError` on a route | leave it out: `createAppRouter`'s `defaultErrorComponent` already renders it inside the parent's layout |
+| Render "not found" from the component after a 404 | `throw notFound()` in the loader, plus `notFoundComponent`, so the page never renders without its data |
+| Check the session in a component `useEffect` and call `navigate` | `beforeLoad` on a pathless layout, `throw redirect(...)`: the effect runs after the page and its loaders |

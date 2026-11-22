@@ -29,7 +29,7 @@ PINNED_PACKAGE_KEYS = ("dependencies", "devDependencies", "devEngines")
 ADDON_KEYS = ("dependencies", "devDependencies")
 EXACT_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 # Rejected names that are also ordinary English words count only as code: backticked, quoted, or `name.js`.
-COMMON_WORD_NAMES = {"moment"}
+COMMON_WORD_NAMES = {"moment", "turbo"}
 
 EXPECTED_SKILLS = {
     "frontend-code-style",
@@ -66,11 +66,14 @@ THIRD_PARTY_SKILLS = {
 
 SCOPE_BLOCK = (
     "Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the "
-    "frontend-scaffolding template. In a project built differently, use its own modules, helpers and scripts, and say "
-    "so when it has no equivalent instead of adding one unasked. Apply these rules to new code; when editing existing "
-    "code, keep its public contract, structure and tuned configuration and report differences instead of rewriting, "
-    "unless asked. The project's own plan and architecture documents win over this skill. If `pnpm-lock.yaml` pins "
-    "another major version than the line above, follow the project and say which rules may not apply."
+    "frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and "
+    "libraries and use those (a helper with the same name may have another shape), and say so when it has no "
+    "equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when "
+    "editing existing code, keep its public contract, structure and tuned configuration, even where a table below "
+    "calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and "
+    "architecture documents win over this skill. If the project pins another version of a package than the line "
+    "above, check the API or configuration key in the installed package before using it, follow the project and say "
+    "which rules do not apply."
 )
 
 ALLOWED_KEYS = {"name", "description", "metadata"}
@@ -111,6 +114,7 @@ ALLOWED_FENCES = TS_TAGS | TSX_TAGS | {
     "mermaid",
 }
 JSX_RE = re.compile(r"</[A-Za-z>]|/>")
+INDENTED_TS_FENCE_RE = re.compile(r"^\s+```tsx?\b")
 
 # Repository plumbing must not leak into skill text. No exemptions: a skill is read inside somebody
 # else's project, where none of these exist. Lookbehinds keep `src/tmp/` and `/tmp/` legal.
@@ -140,7 +144,7 @@ OUT_OF_STACK = [
 ]
 # Table rows under these headings may name out-of-stack terms: Red Flags, prior-version corrections,
 # and the third-party precedence table.
-EXEMPT_HEADING_RE = re.compile(r"red flags|prior[- ]version|corrections?\b|precedence", re.IGNORECASE)
+EXEMPT_HEADING_RE = re.compile(r"red flags|prior[- ]version|precedence", re.IGNORECASE)
 
 # A markdown link to a .md file other than SKILL.md.
 MD_LINK_RE = re.compile(r"\]\(([^)#\s]+)(?:#[^)]*)?\)")
@@ -348,6 +352,8 @@ def check_text(path: Path, lines: list[str], report: Report) -> None:
     tag: str | None = None
     exempt_table = False
     for idx, raw in enumerate(lines, start=1):
+        if INDENTED_TS_FENCE_RE.match(raw):
+            report.error(path, idx, "indented ts or tsx fence: un-indent it, the snippet check skips indented fences")
         if raw.startswith("```"):
             if tag is None:
                 tag = raw[3:].strip()
@@ -386,9 +392,15 @@ def check_references(skill_dir: Path, skill_md: Path, body: str, report: Report)
     refs = skill_dir / "references"
     if not refs.is_dir():
         return
-    if not re.search(r"^## References\s*$", body, re.MULTILINE):
+    index = re.search(r"^## References\s*$(.*?)(?=^## |\Z)", body, re.MULTILINE | re.DOTALL)
+    if index is None:
         report.error(skill_md, 1, "references/ exists but SKILL.md has no '## References' index")
-    for item in sorted(refs.rglob("*")):
+    else:
+        for name in sorted(set(re.findall(r"references/([\w.-]+)", index.group(1)))):
+            if not (refs / name).is_file():
+                report.error(skill_md, 1, f"## References names references/{name}, which does not exist")
+    # Dotfiles such as macOS .DS_Store are not content.
+    for item in sorted(p for p in refs.rglob("*") if not any(part.startswith(".") for part in p.relative_to(refs).parts)):
         rel = item.relative_to(refs)
         if len(rel.parts) > 1:
             report.error(item, 1, f"references/ must be one level deep, found {rel.as_posix()!r}")
@@ -634,19 +646,23 @@ def describe_drift(want: object, got: object) -> str:
 
 
 def rejected_terms() -> list[tuple[re.Pattern[str], str]]:
-    """Backticked names in the first column of STACK.md's `## Rejected` table."""
+    """Backticked names in the first column of STACK.md's `## Rejected` table, as one pattern."""
     if not STACK.is_file():
         return []
-    terms: list[tuple[re.Pattern[str], str]] = []
+    names: list[str] = []
     inside = False
     for ln in STACK.read_text(encoding="utf-8").splitlines():
         if ln.startswith("## "):
             inside = ln.strip() == "## Rejected"
         elif inside and ln.startswith("|"):
-            for name in re.findall(r"`([^`]+)`", ln.split("|")[1]):
-                n = re.escape(name)
-                pattern = rf"(?<=[`'\"]){n}(?=[`'\"/])|(?<![\w@/-]){n}\.js\b" if name in COMMON_WORD_NAMES else rf"(?<![\w@/-]){n}(?![\w-])"
-                terms.append((re.compile(pattern, re.IGNORECASE), f"rejected in STACK.md: {name}"))
+            names += re.findall(r"`([^`]+)`", ln.split("|")[1])
+    terms: list[tuple[re.Pattern[str], str]] = []
+    plain = "|".join(re.escape(n) for n in sorted(set(names) - COMMON_WORD_NAMES, key=len, reverse=True))
+    if plain:
+        terms.append((re.compile(rf"(?<![\w@/-])(?:{plain})(?![\w-])", re.IGNORECASE), "rejected in STACK.md"))
+    for name in sorted(set(names) & COMMON_WORD_NAMES):
+        n = re.escape(name)
+        terms.append((re.compile(rf"(?<=[`'\"]){n}(?=[`'\"/])|(?<![\w@/-]){n}\.js\b", re.IGNORECASE), "rejected in STACK.md"))
     return terms
 
 
@@ -685,28 +701,180 @@ def git_show(ref: str, rel: str) -> str | None:
     return result.stdout if result.returncode == 0 else None
 
 
+def skill_version(text: str) -> str | None:
+    fm = parse_frontmatter(text.splitlines(), ROOT, Report())
+    return unquote(fm["metadata.version"][0]) if "metadata.version" in fm else None
+
+
+def version_key(version: str) -> tuple[int, ...] | None:
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)$", version)
+    return tuple(int(n) for n in m.groups()) if m else None
+
+
+def moved_backwards(before: str | None, after: str | None) -> bool:
+    old, new = version_key(before or ""), version_key(after or "")
+    return old is not None and new is not None and new < old
+
+
 def check_version_bumps(report: Report, base: str) -> None:
-    """A change under skills/<name>/ must bump that skill's metadata.version and the plugin version."""
+    """A change under skills/<name>/ must bump that skill's metadata.version and the plugin version; no version moves back."""
     diff = subprocess.run(["git", "diff", "--name-only", base, "--", "skills/"], cwd=ROOT, capture_output=True, text=True)
     if diff.returncode != 0:
         report.error(ROOT, 1, f"git diff against {base!r} failed: {diff.stderr.strip()}")
         return
     changed = sorted({Path(p).parts[1] for p in diff.stdout.split() if len(Path(p).parts) > 2})
-    version_re = re.compile(r"^  version: *(.+)$", re.MULTILINE)
     for name in changed:
         rel = f"skills/{name}/SKILL.md"
         old = git_show(base, rel)
         path = ROOT / rel
         if old is None or not path.is_file():
             continue
-        before, after = version_re.search(old), version_re.search(path.read_text(encoding="utf-8"))
-        if before and after and before.group(1) == after.group(1):
-            report.error(path, 1, f"skills/{name}/ changed since {base} but metadata.version is still {after.group(1)}")
-    if changed:
-        rel = ".claude-plugin/plugin.json"
-        old = git_show(base, rel)
-        if old is not None and manifest_version(old, ("version",)) == manifest_version((ROOT / rel).read_text(encoding="utf-8"), ("version",)):
-            report.error(ROOT / rel, 1, f"skills/ changed since {base} but the plugin version did not: installed plugins update only on a version change")
+        before, after = skill_version(old), skill_version(path.read_text(encoding="utf-8"))
+        if before is not None and before == after:
+            report.error(path, 1, f"skills/{name}/ changed since {base} but metadata.version is still {after!r}")
+        elif moved_backwards(before, after):
+            report.error(path, 1, f"metadata.version moved backwards since {base}: {before} -> {after}")
+    rel = ".claude-plugin/plugin.json"
+    old = git_show(base, rel)
+    if old is None or not (ROOT / rel).is_file():
+        return
+    before, after = manifest_version(old, ("version",)), manifest_version((ROOT / rel).read_text(encoding="utf-8"), ("version",))
+    if changed and before == after:
+        report.error(ROOT / rel, 1, f"skills/ changed since {base} but the plugin version did not: installed plugins update only on a version change")
+    elif moved_backwards(before, after):
+        report.error(ROOT / rel, 1, f"the plugin version moved backwards since {base}: {before} -> {after}")
+
+
+# --------------------------------------------------------------------------- copies of pinned versions
+
+
+VERSION_COPY_SKIP_FILES = {"pnpm-lock.yaml"}  # --frozen-lockfile keeps the lockfile in step with package.json
+SEMVER = r"(\d+\.\d+\.\d+(?:-(?:alpha|beta|rc|next|canary)[\w.]*)?)(?![\w.]*\d)"
+ENGINE_VERSION_RE = re.compile(rf"\b(pnpm|node)[_-]version\b[\"']?\s*[:=]\s*[\"']?v?{SEMVER}", re.IGNORECASE)
+NAME_KEY_RE = re.compile(r"""["']?name["']?\s*:\s*["']?([@\w./-]+)["']?""")
+VERSION_KEY_RE = re.compile(rf"""["']?version["']?\s*:\s*["']?[\^~]?v?{SEMVER}""")
+VERSION_HINT_RE = re.compile(r"\d\.\d+\.\d")
+# Images whose tag STACK.md pins (its container-images line); the template's three and the add-ons' services.
+IMAGES = ("playwright", "node", "caddy", "keycloak", "centrifugo")
+# `node:26.13.1-trixie-slim`, or a digest pin with the tag in a comment: `node@sha256:<hex> # 26.13.1-trixie-slim`.
+IMAGE_TAG_RE = re.compile(rf"\b({'|'.join(IMAGES)})(?::|@sha256:[0-9a-f]+[ \t]*#[ \t]*)v?{SEMVER}")
+# Prose names of pinned packages: `TanStack Query 5.108.0` is a copy of the @tanstack/react-query pin.
+DISPLAY_NAMES = {
+    "tanstack query": "@tanstack/react-query",
+    "tanstack router": "@tanstack/react-router",
+    "tanstack form": "@tanstack/react-form",
+    "tanstack table": "@tanstack/react-table",
+    "tailwind css": "tailwindcss",
+    "tailwind": "tailwindcss",
+    "base ui": "@base-ui/react",
+    "biome": "@biomejs/biome",
+    "jest-dom": "@testing-library/jest-dom",
+    "user-event": "@testing-library/user-event",
+    "react compiler": "babel-plugin-react-compiler",
+}
+
+
+def stack_pins() -> dict[str, str]:
+    """Exact versions from STACK.md's two JSON blocks, plus `node`, `pnpm` and the image tags."""
+    pins: dict[str, str] = {}
+    for heading in (r"^##\s+package\.json\s*$", r"^##\s+Add-on packages\s*$"):
+        block = fenced_block_after(STACK, heading) if STACK.is_file() else None
+        try:
+            data = json.loads(block[0]) if block else {}
+        except json.JSONDecodeError:
+            continue  # check_package_parity and check_addon_block report it
+        if not isinstance(data, dict):
+            continue
+        for key in ADDON_KEYS:
+            packages = data.get(key, {})
+            if isinstance(packages, dict):
+                pins.update({k: v for k, v in packages.items() if isinstance(v, str) and EXACT_VERSION_RE.match(v)})
+        engines = data.get("devEngines", {})
+        for key, alias in (("packageManager", "pnpm"), ("runtime", "node")):
+            if isinstance(engines, dict) and isinstance(engines.get(key), dict) and isinstance(engines[key].get("version"), str):
+                pins[alias] = engines[key]["version"]
+    if "@playwright/test" in pins:
+        pins["playwright"] = pins["@playwright/test"]
+    text = STACK.read_text(encoding="utf-8") if STACK.is_file() else ""
+    for image in ("caddy", "keycloak", "centrifugo"):
+        if m := re.search(rf"`(?:[\w.-]+/)*{image}:v?(\d+\.\d+\.\d+)", text):
+            pins[image] = m.group(1)
+    return pins
+
+
+def pin_names(pins: dict[str, str]) -> str:
+    names = [*pins, *(d for d, n in DISPLAY_NAMES.items() if n in pins)]
+    return "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+
+
+def pin_pattern(pins: dict[str, str]) -> re.Pattern[str]:
+    """`"name": "^x.y.z"`, `name: x.y.z`, `name@~x.y.z`, `name x.y.z` in prose and `| name | x.y.z |`, for every pinned or display name."""
+    return re.compile(rf"(?<![\w@/.-])[\"'`]?({pin_names(pins)})[\"'`]?(?:\s*:\s*[\"']?|@|[ \t\u00a0]+|[ \t]*\|[ \t]*`?)[\^~]?v?{SEMVER}", re.IGNORECASE)
+
+
+def canonical(name: str) -> str:
+    return DISPLAY_NAMES.get(name.lower(), name.lower())
+
+
+def check_version_copies(report: Report) -> None:
+    """Every exact version of a STACK.md package or image written anywhere under skills/ equals the pin."""
+    pins = stack_pins()
+    if not pins:
+        return  # check_package_parity and check_addon_block report the unreadable blocks
+    pattern = pin_pattern(pins)
+    names = pin_names(pins)
+    # A name that ends a line and a version that starts the next one: `vite` / `8.2.0`, `"vite":` / `"8.2.0"`.
+    trailing_name = re.compile(rf"(?<![\w@/.-])[\"'`]?({names})[\"'`]?\s*:?\s*$", re.IGNORECASE)
+    leading_version = re.compile(rf"^\s*[\"'`]?[\^~]?v?{SEMVER}")
+    for dirpath, dirnames, filenames in os.walk(SKILLS):
+        dirnames[:] = sorted(d for d in dirnames if d not in BUILD_OUTPUT)
+        for filename in sorted(filenames):
+            path = Path(dirpath) / filename
+            if filename in VERSION_COPY_SKIP_FILES:
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (UnicodeDecodeError, OSError):
+                continue
+            markdown = path.suffix == ".md"
+            exempt = fenced = False
+            named: tuple[str, int] | None = None  # a `name:` key whose `version:` may follow
+            prev = ""
+            for idx, raw in enumerate(lines, start=1):
+                if markdown and raw.startswith("```"):
+                    fenced = not fenced
+                elif markdown and not fenced and raw.startswith("#"):
+                    exempt = bool(re.search(r"prior[- ]version", raw, re.IGNORECASE))
+                # A prior-version row's first cell is what older examples write; the rest is current.
+                text = "|".join(raw.split("|")[2:]) if exempt and raw.lstrip().startswith("|") else raw
+                if (m := NAME_KEY_RE.search(text)) and canonical(m.group(1)) in pins:
+                    named = (canonical(m.group(1)), idx)
+                before, prev = prev, text
+                if not VERSION_HINT_RE.search(text):
+                    continue
+                found = [(canonical(m.group(1)), m.group(2)) for m in pattern.finditer(text)]
+                found += [(m.group(1).lower(), m.group(2)) for regex in (ENGINE_VERSION_RE, IMAGE_TAG_RE) for m in regex.finditer(text)]
+                if (m := leading_version.match(text)) and (t := trailing_name.search(before)):
+                    found.append((canonical(t.group(1)), m.group(1)))
+                if named and idx - named[1] <= 3 and (m := VERSION_KEY_RE.search(text)):
+                    found.append((named[0], m.group(1)))
+                    named = None
+                # A bare `switches to 12.21.0` or `prints v26.13.1` after the word pnpm or node in the same sentence,
+                # same major, unclaimed; `node is replaced. Keycloak 26.4.0` is another product.
+                claimed = {version for _, version in found}
+                joined = before + " " + text
+                for alias in ("pnpm", "node"):
+                    major = pins.get(alias, "").split(".")[0]
+                    if major:
+                        bare = rf"\b{alias}\b(?:[^|\n.]|\.(?!\s)){{0,40}}?(?<![\d.])v?({major}\.\d+\.\d+)(?![\w.]*\d)"
+                        found += [
+                            (alias, m.group(1))
+                            for m in re.finditer(bare, joined, re.IGNORECASE)
+                            if m.start(1) > len(before) and m.group(1) not in claimed
+                        ]
+                for name, version in dict.fromkeys(found):
+                    if name in pins and version != pins[name]:
+                        report.error(path, idx, f"stale version: {name} {version}, but STACK.md pins {pins[name]}")
 
 
 # --------------------------------------------------------------------------- main
@@ -735,6 +903,11 @@ def main() -> int:
     check_package_parity(report)
     check_addon_block(report)
     check_manifest_versions(report)
+    check_version_copies(report)
+    for doc in ("AGENTS.md", "README.md"):  # they ship into every new app
+        path = SKILLS / SCAFFOLD_SKILL / "assets" / "app" / doc
+        if path.is_file():
+            check_text(path, path.read_text(encoding="utf-8").splitlines(), report)
     if args.base:
         check_version_bumps(report, args.base)
 

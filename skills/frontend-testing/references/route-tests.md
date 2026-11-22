@@ -72,7 +72,8 @@ server.events.on("request:unhandled", ({ request }) => {
   unhandled.push(`${request.method} ${request.url}`);
 });
 
-// jsdom has no reportError. An error the app reports fails the test unless the test stubs it.
+// jsdom's reportError only logs to the virtual console. This one records the error, and the test
+// fails unless it stubs reportError.
 const reported: unknown[] = [];
 globalThis.reportError = (error: unknown) => {
   reported.push(error);
@@ -86,6 +87,8 @@ beforeEach(() => {
 afterEach(() => {
   // `globals: false` turns off Testing Library's automatic cleanup.
   cleanup();
+  localStorage.clear();
+  sessionStorage.clear();
   // Also undoes a bare vi.setSystemTime(), which no config option resets.
   vi.useRealTimers();
   server.resetHandlers();
@@ -100,8 +103,9 @@ afterAll(() => server.close());
 ```
 
 - The unhandled-request check is needed beside `onUnhandledFrame: "error"`: that option alone only makes `fetch` reject, `RouteError` (the router's `defaultErrorComponent`) renders the failure, and a test that asserts on something else passes. The failure reads `Requests without an MSW handler: GET https://api.test/users?limit=20&offset=0`.
-- The recording `reportError` makes `.catch(reportError)` in app code safe under jsdom and fails a test that reports unexpectedly. `renderRoute` renders without `rootErrorHandlers`, so a failed loader that shows `RouteError` reports nothing here: its test needs no stub. Vitest prints the `AggregateError` as its inner errors, so the failure shows the app's own error, once per report. A test that expects a report replaces it with `vi.stubGlobal("reportError", vi.fn())` and asserts on that stub, as `src/app/error-reporting.test.ts` does; `unstubGlobals` puts the recording one back for the next test.
+- jsdom 31 has a `reportError` of its own, which only dispatches an `error` event and logs to the virtual console, so a reported error would pass the test. The recording one fails a test that reports unexpectedly. `renderRoute` renders without `rootErrorHandlers`, so a failed loader that shows `RouteError` reports nothing here: its test needs no stub. Vitest prints the `AggregateError` as its inner errors, so the failure shows the app's own error, once per report. A test that expects a report replaces it with `vi.stubGlobal("reportError", vi.fn())` and asserts on that stub, as `src/app/error-reporting.test.ts` does; `unstubGlobals` puts the recording one back for the next test.
 - When a test both missed a handler and reported, only the request failure is thrown; fix it and rerun.
+- `localStorage` and `sessionStorage` are cleared after every test, so a remembered choice (a theme, a return path) never leaks into the next test under the shuffled order; a test that needs a stored value writes it in its arrange block. `src/test/setup.test.ts` pins this with a `describe(..., { shuffle: false })` pair.
 
 ## MSW 3 recipes
 
@@ -121,6 +125,18 @@ afterAll(() => server.close());
 - Error answers use `TEST_API_ORIGIN` and the body the backend really sends (axum `{ error, request_id, details }`, FastAPI `{ detail }`, or RFC 9457), because `ApiError` is built from it: `request_id` becomes the "Request id" the UI prints, `details` the field errors. The mapping is `tanstack-query-api`'s.
 - Later `server.use` calls take precedence over earlier ones; `server.resetHandlers()` in setup drops them all after each test.
 - Handlers declared inside the test, in its arrange block; a module-level `beforeEach(() => server.use(...))` hides which endpoints a test depends on.
+- The one exception: a request the root layout makes on every page (a notification feed, `/me`) runs in every route test, because `renderRoute` always renders `__root.tsx`. Answer its neutral case once, in the setup's `beforeEach`; `resetHandlers` drops it after each test, and a test of that request declares its own `server.use`, which takes precedence. Nothing else goes there:
+
+```ts
+// src/test/setup.ts: add `import { HttpResponse, http } from "msw";` and
+// `import { TEST_API_ORIGIN } from "./render-route";`
+beforeEach(() => {
+  // Same data whatever the shuffle order, so a failure reproduces.
+  faker.seed(20_261_119);
+  // The root layout reads the signed-in user on every page; a test of that request declares its own.
+  server.use(http.get(`${TEST_API_ORIGIN}/me`, () => HttpResponse.json({ name: "Test user" })));
+});
+```
 
 The stateful create-then-list handlers, from the scaffold's `src/routes/users/new.test.tsx`:
 
@@ -249,6 +265,8 @@ test("a server error on create keeps the form and says the user was not created"
 The last line pins the mutation's `meta: { silent: true }`: without it the form error and a toast would both show.
 
 ## A unit test and a config test
+
+App-wide router behaviour (the lossless search parser, focus moving to the page's `h1` after a path change but not after a search-only change or on the first render) is tested through `renderRoute` in `src/app/router.test.tsx`; the test harness itself in `src/test/setup.test.ts`.
 
 A unit test is for a pure function or policy with branches worth enumerating, next to it, with `test.each`: `src/features/users/pagination.test.ts` for paging math, `src/app/query-client.test.ts` for the retry policy (each status and failure count against the `retry` that `createQueryClient` configures, no QueryClient run). It imports the function and nothing else; if it needs `renderRoute` or MSW, it is a route test.
 

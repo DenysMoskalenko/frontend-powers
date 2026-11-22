@@ -1,9 +1,16 @@
 language js
 
-JsModuleSource() as $source where {
+or {
+  JsModuleSource(),
+  `import($_)`
+} as $node where {
+  $node <: or {
+    JsModuleSource() as $source,
+    `import($source)`
+  },
   or {
     and {
-      $source <: r"[\"']\.\./.*[\"']",
+      $source <: r"[\"'](?:\./)*\.\./.*[\"']",
       register_diagnostic(span=$source, message="Import from another folder with the @/ alias, not ../")
     },
     and {

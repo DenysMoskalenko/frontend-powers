@@ -54,7 +54,7 @@ export default defineConfig({
 
 ## What each command does
 
-Measured on i18next-cli 1.88 against the scaffold with two namespaces:
+Measured on i18next-cli 1.91.2 against the scaffold with two namespaces:
 
 | Command | Fails (exit 1) when | Side effect |
 | --- | --- | --- |

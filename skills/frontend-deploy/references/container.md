@@ -12,7 +12,7 @@ Kubernetes security context · the curl checklist · compression · changing the
 
 FROM node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS build
 # Node 25+ ships no corepack: install the pnpm that package.json's devEngines pins.
-RUN npm install --global pnpm@12.21.0
+RUN npm install --global pnpm@12.22.0
 WORKDIR /app
 # Lockfile only: this layer survives every source edit.
 COPY pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -43,7 +43,8 @@ EXPOSE 8080
 ENTRYPOINT ["/caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
 ```
 
-Every `PUBLIC_*` name in `PUBLIC_ENV` needs its own `ARG` line before `RUN pnpm build`; a missing
+Older examples run `corepack enable` here; Node 25+ ships no corepack, hence the global install of
+the pinned pnpm. Every `PUBLIC_*` name in `PUBLIC_ENV` needs its own `ARG` line before `RUN pnpm build`; a missing
 one fails the image build with `Error: PUBLIC_<NAME> is not set`. `.dockerignore` excludes `.env*`,
 so `.env.development` never reaches the image. The maps are deleted after the build; upload them
 from the CI build first if an error tracker needs them.
@@ -100,7 +101,8 @@ import /etc/caddy/headers.caddy
 - `all_headers` and `assets_headers` are the snippets `caddyHeaders()` generates; never write
   headers into the Caddyfile by hand.
 - `handle /assets/*` has no `try_files`, so a missing chunk is a 404 with `no-cache`, and
-  `match status 200 304` keeps `immutable` off that 404.
+  `match status 200 304` keeps `immutable` off that 404. During a rolling update a new
+  `index.html` can ask an old pod for a chunk it lacks; the uncached 404 keeps that harmless.
 - `grace_period 10s`: on SIGTERM Caddy logs "grace period initiated", finishes open requests, and
   exits 0.
 
@@ -124,9 +126,9 @@ Dockerfile
 
 The runtime image holds one static binary, its MIME table, the Caddyfile, the generated header
 snippets and `dist/`: no shell, no package manager, about 65 MB. A missing hashed asset is a real
-404, `/.well-known/` is served, HEAD works on SPA routes, and the access log is JSON with the
-status. No shell also means no entrypoint script: configuration cannot be injected at start, which
-is why the image is built per environment.
+404 with `no-cache`, HEAD works on SPA routes, and the access log is JSON with the status. No
+shell also means no entrypoint script: configuration cannot be injected at start, which is why the
+image is built per environment.
 
 ## Run flags and the Kubernetes security context
 

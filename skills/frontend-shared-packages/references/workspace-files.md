@@ -2,7 +2,7 @@
 
 Every root and per-project configuration file of a workspace with one app (`apps/web`), a UI kit
 (`packages/ui`), an API client (`packages/api`) and the kit's harness (`apps/ui-harness`), as it
-passes `pnpm install --frozen-lockfile`, `pnpm check` and `pnpm build` at pnpm 12.21. Files not
+passes `pnpm install --frozen-lockfile`, `pnpm check` and `pnpm build` at pnpm 12.22. Files not
 shown are the single app's, unchanged, inside `apps/web/`. `@org` stands for the team's own npm
 scope: use the real one everywhere, `registries` and `minimumReleaseAgeExclude` included.
 
@@ -52,7 +52,7 @@ packages/api/      package.json tsconfig.json vitest.config.ts orval.config.ts o
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "12.21.0",
+      "version": "12.22.0",
       "onFail": "download"
     },
     "runtime": {
@@ -73,7 +73,7 @@ packages/api/      package.json tsconfig.json vitest.config.ts orval.config.ts o
 ```
 
 - `devEngines` lives here only. A `pnpm` run inside `apps/web` reads it too and switches to
-  12.21.0 with Node 26.13.1.
+  12.22.0 with Node 26.13.1.
 - `pnpm -r` never includes the root project, so `tsc && pnpm -r typecheck` does not recurse;
   `--include-workspace-root` would add it.
 - Root `vitest` runs only the boundary-plugin test (`--dir biome-plugins`): without `--dir` it
@@ -102,30 +102,30 @@ catalog:
   "@rolldown/plugin-babel": 0.3.1
   "@tailwindcss/vite": 4.3.5
   "@tanstack/react-form": 1.33.5
-  "@tanstack/react-query": 5.107.1
+  "@tanstack/react-query": 5.108.0
   "@tanstack/react-router": 1.170.46
   "@tanstack/router-plugin": 1.169.0
   "@testing-library/dom": 10.4.2
-  "@testing-library/jest-dom": 7.0.1
+  "@testing-library/jest-dom": 8.0.0
   "@testing-library/react": 16.3.3
-  "@testing-library/user-event": 14.6.12
+  "@testing-library/user-event": 14.6.13
   "@types/node": 26.6.6
   "@types/react": 19.3.0
   "@types/react-dom": 19.3.0
   "@vitejs/plugin-react": 6.3.0
-  "@vitest/coverage-v8": 5.1.0
+  "@vitest/coverage-v8": 5.1.1
   babel-plugin-react-compiler: 1.0.0
-  jsdom: 30.1.3
-  knip: 6.45.1
-  msw: 3.0.6
+  jsdom: 31.0.1
+  knip: 6.46.1
+  msw: 3.0.7
   orval: 8.48.0
   react: 19.3.1
   react-dom: 19.3.1
   tailwindcss: 4.3.5
   typescript: 7.0.2
   vite: 8.3.8
-  vitest: 5.1.0
-  wrangler: 4.163.0
+  vitest: 5.1.1
+  wrangler: 4.165.0
   zod: 4.6.7
 catalogMode: strict
 # 3 days: npm's 72-hour unpublish window. Set explicitly, the cooldown is strict.
@@ -145,11 +145,11 @@ permissions:
     skills: false
 ```
 
-| Key | Behaviour at pnpm 12.21 |
+| Key | Behaviour at pnpm 12.22 |
 |---|---|
 | `packages` | the project globs; the root is always a project too |
 | `catalog` | `"catalog:"` in any `dependencies`, `devDependencies` or `peerDependencies` resolves here; `pnpm pack` and `pnpm publish` write the catalog's exact version into the manifest |
-| `catalogMode: strict` | `pnpm add <new-pkg>` writes the version into the catalog and `"catalog:"` into `package.json`; `pnpm add react@19.3.0` against a `19.3.1` entry fails with `ERR_PNPM_CATALOG_VERSION_MISMATCH` ... `Wanted dependency outside the version range defined in catalog` |
+| `catalogMode: strict` | `pnpm add <new-pkg>` writes the version into the catalog and `"catalog:"` into `package.json`; `pnpm add` of a `react` version other than the catalog entry fails with `ERR_PNPM_CATALOG_VERSION_MISMATCH` ... `Wanted dependency outside the version range defined in catalog` |
 | the rest | the scaffold's supply-chain block, unchanged; `frontend-tooling` owns its keys |
 
 `catalogMode: strict` (and `prefer`) also moves a workspace reference into the catalog:
@@ -157,7 +157,7 @@ permissions:
 in the app. Write `"@org/ui": "workspace:*"` into the app's `package.json` by hand and run
 `pnpm install` instead.
 
-A hand-written version (`"react": "19.3.0"`) still installs under `catalogMode: strict`, and
+A hand-written version (`"react"` with any version other than the catalog's) still installs under `catalogMode: strict`, and
 `pnpm dedupe --check` still passes. Two things catch it: review of the `package.json` diff, and
 `pnpm peers check`, which exits 1 with `✕ unmet peer react` when the stray version meets a
 package's `catalog:` peer.

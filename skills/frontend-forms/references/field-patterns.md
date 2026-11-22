@@ -33,7 +33,7 @@ import { TextField } from "@/shared/ui/text-field";
 // Stand-ins until the spec has `PUT /users/{id}/tags`; then use the generated operation and schema.
 const TagsBody = z.object({ tags: z.array(z.string().trim().min(1)) });
 const saveTags = (userId: string, data: z.infer<typeof TagsBody>) =>
-  apiFetch<unknown>(`/users/${userId}/tags`, {
+  apiFetch<unknown>(`/users/${encodeURIComponent(userId)}/tags`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -156,7 +156,10 @@ function UserTagsPage() {
 }
 ```
 
-FastAPI reports the second item as `loc: ["body", "tags", 1]`; `toApiError` names it `tags[1]`:
+With `keycloak-spa-auth` installed, this file is `src/routes/_signed-in/users/$userId_/tags.tsx` with the id `/_signed-in/users/$userId_/tags`, and its test sits beside it.
+
+FastAPI reports the second item as `loc: ["body", "tags", 1]`; `toApiError` names it `tags[1]` and
+drops pydantic's `Value error, ` prefix:
 
 ```tsx,verify,test
 // file: src/routes/users/$userId_/tags.test.tsx
@@ -171,7 +174,13 @@ test("a server error for one tag shows under that tag", async () => {
     http.put(`${TEST_API_ORIGIN}/users/:id/tags`, () =>
       HttpResponse.json(
         {
-          detail: [{ loc: ["body", "tags", 1], msg: "Tags have no spaces.", type: "value_error" }],
+          detail: [
+            {
+              loc: ["body", "tags", 1],
+              msg: "Value error, Tags have no spaces.",
+              type: "value_error",
+            },
+          ],
         },
         { status: 422 },
       ),

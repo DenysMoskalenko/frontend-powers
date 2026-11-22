@@ -14,17 +14,17 @@ including the rejected alternatives.
 
 | Package | Pinned | Role |
 | --- | --- | --- |
-| Node, pnpm | 26.13, 12.21 | runtime and package manager, pinned in `devEngines` |
+| Node, pnpm | 26.13, 12.22 | runtime and package manager, pinned in `devEngines` |
 | TypeScript | 7.0 | the native compiler, one strict `tsconfig.json` |
 | Vite, `@vitejs/plugin-react` | 8.3, 6.3 | build on Rolldown, React Compiler on in dev and build |
 | React | 19.3 | UI library |
-| TanStack Router, Query | 1.170, 5.107 | file routes and loaders; server state |
+| TanStack Router, Query | 1.170, 5.108 | file routes and loaders; server state |
 | orval | 8.48 | query hooks, zod schemas and MSW handlers from a committed `openapi.json` |
 | zod, TanStack Form | 4.6, 1.33 | validation at trust boundaries; forms |
 | Tailwind CSS, `@base-ui/react` | 4.3, 1.9 | static CSS and unstyled accessible parts |
-| Biome, knip | 2.6, 6.45 | lint, format, module boundaries, dead code |
+| Biome, knip | 2.6, 6.46 | lint, format, module boundaries, dead code |
 | Vitest, MSW, Playwright | 5.1, 3.0, 1.65 | route integration tests and end-to-end tests |
-| wrangler, Caddy | 4.163, 2.11 | Cloudflare static assets, or a container on `scratch` |
+| wrangler, Caddy | 4.165, 2.11 | Cloudflare static assets, or a container on `scratch` |
 
 Add-ons pinned in STACK.md and added only when needed, such as keycloak-js, i18next with
 react-i18next, `centrifuge` and `eventsource-parser`, Grafana Faro, zustand, virtua, TanStack Table.
@@ -114,7 +114,9 @@ claude plugin marketplace add https://github.com/DenysMoskalenko/frontend-powers
 claude plugin install frontend-powers@frontend-powers
 ```
 
-**Local development:** install from a clean clone; a local install copies the directory whole.
+**Local development:** add a clean clone as a marketplace. Claude Code loads a plugin from a local
+marketplace in place, so an edit applies on `/reload-plugins` without a version bump; a clean clone
+keeps installs and build output out of `skills/`, which the plugin loads as it is.
 
 ```bash
 git clone https://github.com/DenysMoskalenko/frontend-powers
@@ -137,8 +139,8 @@ claude plugin update frontend-powers@frontend-powers
 The marketplace file is [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json), the
 manifest [`.codex-plugin/plugin.json`](.codex-plugin/plugin.json).
 
-**Codex app:** open **Plugins**, add the marketplace `https://github.com/DenysMoskalenko/frontend-powers`,
-then install and enable **Frontend Powers**.
+**ChatGPT desktop app (Codex):** open the **Plugins Directory**, add the marketplace
+`https://github.com/DenysMoskalenko/frontend-powers`, then install and enable **Frontend Powers**.
 
 **Codex CLI:**
 
@@ -183,30 +185,37 @@ document, and the scaffold's `openapi.json` mirrors the `users` API of the rust-
 - `STACK.md` - versions, library choices and rejected alternatives.
 - `AGENTS.md` (symlinked as `CLAUDE.md`) - house conventions and the checklist for changing a skill.
 - `evals/` - per-skill triggering cases, evals and probes ([format](evals/README.md)).
-- `scripts/` - the validator, the snippet checker and the eval tooling.
-- `maintenance/` - the [release audit](maintenance/release-audit.md) and [sources](maintenance/sources.md); not shipped.
+- `scripts/` - the validator and its tests, the snippet checker and the eval tooling.
+- `maintenance/` - the [release audit](maintenance/release-audit.md) and [sources](maintenance/sources.md); no skill
+  reads it, but the plugin source is the repository root, so every install copies it, as it copies
+  `evals/` and `scripts/`.
 - `.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`, `.agents/` - plugin and marketplace manifests.
 - `assets/` - the plugin logo.
 
 ## Development
 
 ```bash
-make check      # validate + snippets; both must be green before review
-make validate   # frontmatter, budgets, ownership hygiene, evals format, STACK.md parity
-make snippets   # tsc, Biome and Vitest over every verify block, in a temp copy of the scaffold
-make lint       # prek whitespace, JSON and YAML hooks
-make evals      # billed: run evals/ with and without the plugin via claude plugin eval
+make check            # everything CI's check job runs; green here predicts a green pull request
+make validate         # validate_skills.py --strict --base $(BASE): house rules, STACK.md parity, stale version copies, version bumps
+make test-scripts     # seeds a violation per validator check into a temporary copy and asserts the error
+make lint             # prek whitespace, JSON and YAML hooks
+make plugin-validate  # claude plugin validate --strict . (skipped with a notice when claude is not installed)
+make snippets         # tsc, Biome and Vitest over every verify block, in a temp copy of the scaffold
+make evals            # billed: run evals/ with and without the plugin via claude plugin eval
 ```
 
-[`.github/workflows/check.yml`](.github/workflows/check.yml) runs `validate_skills.py --strict`
-(with `--base` on pull requests, which fails a skill change without a version bump), the prek
-hooks, `claude plugin validate --strict .` and `check_snippets.py` on every push to `main` and
-every pull request. `make evals` makes real model calls on your account, so it runs before a
-release or when a new model ships, never in CI.
+`BASE` defaults to `origin/main`; when that ref does not exist (a clone without the remote branch),
+`make validate` says so and skips the version-bump check.
 
-The scaffold has its own gate, run from a copy outside the repository with
-`PUBLIC_API_ORIGIN=https://api.example.com` exported:
-`pnpm install --frozen-lockfile && pnpm check && pnpm build && pnpm test:e2e`.
+[`.github/workflows/check.yml`](.github/workflows/check.yml) runs on every push to `main` and every
+pull request. Its `check` job runs `validate_skills.py --strict` (with `--base` on pull requests,
+which fails a skill change without a version bump), the script tests, the prek hooks,
+`claude plugin validate --strict .` and `check_snippets.py`. Its `scaffold` job copies the template
+out of the repository and runs the template's own gate there: `pnpm dedupe --check`, `pnpm check`,
+`pnpm test:coverage`, the generated-client comparison after `pnpm api:generate`, `pnpm build` with
+`PUBLIC_API_ORIGIN=https://api.example.com`, the Playwright end-to-end tests and the container image
+build. `make evals` makes real model calls on your account, so it runs before a release or when a
+new model ships, never in CI.
 
 ## Versioning And Release
 

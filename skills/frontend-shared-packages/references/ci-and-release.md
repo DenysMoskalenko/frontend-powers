@@ -1,7 +1,7 @@
 # CI, release and registry consumers
 
 The workspace CI, the additions a publishing workspace needs, the release procedure, the setup of
-an app in another repository, and the container build. Commands and messages are pnpm 12.21's;
+an app in another repository, and the container build. Commands and messages are pnpm 12.22's;
 the release ran end to end against a local registry, and a separate app installed, type-checked,
 tested and built the published packages.
 
@@ -73,6 +73,8 @@ jobs:
         with:
           cache: true
           require-lockfile: true
+      # Every installed tarball carries a valid registry signature, also through a mirror or proxy.
+      - run: pnpm audit signatures
       - run: pnpm dedupe --check
       - run: pnpm peers check
       - run: pnpm exec biome ci --reporter=default --reporter=github
@@ -112,9 +114,9 @@ jobs:
       fail-fast: false
       matrix:
         app: [web, ui-harness]
-    # The tag matches @playwright/test in the catalog exactly; the image carries the browsers.
+    # Pinned by digest; the tag in the comment equals @playwright/test in the catalog. It carries the browsers.
     container:
-      image: mcr.microsoft.com/playwright:v1.65.1-noble
+      image: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.65.1-noble
       options: --user 1001
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -145,6 +147,8 @@ stays as is):
  check:
    stage: check
    script:
+     # Every installed tarball carries a valid registry signature, also through a mirror or proxy.
+     - pnpm audit signatures
      - pnpm dedupe --check
 +    - pnpm peers check
      - pnpm exec biome ci --reporter=default --reporter=gitlab --reporter-file=gl-code-quality.json
@@ -175,9 +179,9 @@ stays as is):
 ...
  e2e:
    stage: e2e
--  # The tag matches @playwright/test in package.json exactly; the image carries the browsers.
-+  # The tag matches @playwright/test in the catalog exactly; the image carries the browsers.
-   image: mcr.microsoft.com/playwright:v1.65.1-noble
+-  # Pinned by digest; the tag in the comment equals @playwright/test in package.json. It carries the browsers.
++  # Pinned by digest; the tag in the comment equals @playwright/test in the catalog. It carries the browsers.
+   image: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.65.1-noble
 +  parallel:
 +    matrix:
 +      - APP: [web, ui-harness]
@@ -197,7 +201,9 @@ stays as is):
 ## Publishing additions
 
 `pnpm-workspace.yaml` gains the lockstep group and the registry for the scope (the URL is the key;
-pnpm 12 does not expand `${VAR}` in it and fails the command on one):
+pnpm 12 does not expand `${VAR}` in it and fails the command on one). Use pnpm 12.22.0 or later, the
+pinned version: before it, adding or changing a scoped registry let `pnpm install` reuse the
+lockfile's verification and skip `minimumReleaseAge` and `trustPolicy` for the new registry.
 
 ```yaml
 # One version for every published package: a change to one releases all.
@@ -323,7 +329,7 @@ prerelease in an app's lockfile.
 
 ## What the change commands do
 
-| Command | Behaviour at 12.21 |
+| Command | Behaviour at 12.22 |
 |---|---|
 | `pnpm change --bump minor --summary "Add a Button size" @org/ui` | writes `.changeset/<three-word-name>.md`: front matter `"@org/ui": minor`, then the summary |
 | `pnpm change status` | `Release plan:` `@org/api: 0.1.0 → 0.2.0 (minor, via fixed)`, `@org/ui: 0.1.0 → 0.2.0 (minor, via fixed+intent)` |
@@ -371,8 +377,10 @@ knip, Vitest) and `pnpm build` pass, and the kit's classes are in the CSS. Two d
 the workspace:
 
 - Node cannot load the packages. A `vite.config.ts` that imports one fails with
-  `failed to load config` and `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`. Inside the workspace
-  the same import works, because the link resolves outside `node_modules`.
+  `failed to load config` and `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, and so do
+  `orval.config.ts`, a script, and a Playwright spec or fixture that imports a value from one;
+  Vitest compiles them and passes, and `import type` is erased. Inside the workspace the same
+  imports work, because the link resolves outside `node_modules`.
 - A React or Base UI version other than the packages' peers installs with
   `[WARN] Issues with peer dependencies found. Run "pnpm peers check" to list them.`, and
   `pnpm peers check` in CI turns it into a failure.

@@ -11,7 +11,7 @@
 
 ## How the router reads and writes search values
 
-The default parser runs `JSON.parse` on every value and keeps the raw string when that fails. Measured with `router.state.location.search`:
+The router's default parser runs `JSON.parse` on every value and keeps the raw string when that fails, so it rewrites `?q=1.50` to `1.5` and an id past 2^53 to another number. `createAppRouter` passes `parseSearch: parseSearchWith(exactJson)` and `stringifySearch: stringifySearchWith(JSON.stringify, exactJson)`, where `exactJson` accepts a parsed number only when `String(parsed)` equals the raw text. Measured with `router.state.location.search` through `createAppRouter`:
 
 | URL | `search` |
 |---|---|
@@ -19,8 +19,11 @@ The default parser runs `JSON.parse` on every value and keeps the raw string whe
 | `?t=true` | `{ t: true }` |
 | `?u=abc` | `{ u: "abc" }` |
 | `?s=%2242%22` | `{ s: "42" }` |
+| `?q=1.50` | `{ q: "1.50" }` (default parser: `1.5`) |
+| `?q=1e3` | `{ q: "1e3" }` (default parser: `1000`) |
+| `?id=12345678901234567890` | `{ id: "12345678901234567890" }` (default parser: `12345678901234567000`) |
 
-Writing goes the other way: `navigate({ search: { q: "42", n: 5 } })` produces `?q=%2242%22&n=5`. So a schema key that holds text or an id must accept a number (`z.coerce.string()`); with `z.string()` plus `.catch(undefined)`, `?q=42` silently becomes "no query".
+Writing goes the other way: `navigate({ search: { q: "42", n: 5, a: "1.50" } })` produces `?q=%2242%22&n=5&a=1.50`. So a schema key that holds text or an id must still accept a number (`z.coerce.string()`), because `?q=42` stays the number `42`; with `z.string()` plus `.catch(undefined)`, `?q=42` silently becomes "no query". A project on the default parser keeps `z.coerce.string()` and loses the three text rows above; adopting `exactJson` is one change in its router factory.
 
 ## Schema rules
 
@@ -368,11 +371,26 @@ test("Swap exchanges the two ids in the URL", async () => {
 | Need | Loader |
 |---|---|
 | one resource the page renders | `context.queryClient.query({ ...getXQueryOptions(deps), staleTime: "static" })`, awaited (returning it changes nothing) |
-| several independent resources | `await Promise.all([...])` of the same calls |
+| several independent resources the page shows on arrival | `await Promise.all([...])` of the same calls |
 | a resource that may be missing | `try` around the call; `ApiError` with status 404 becomes `throw notFound()`, anything else is rethrown |
 | a second resource that needs the first | await the first, then the second; or let the component fetch the second with `useQuery` |
-| data the first paint does not show | `void context.queryClient.query({ ...getXQueryOptions(...), staleTime: "static" }).catch(() => undefined)`; the component reads it with `useQuery` and renders its own pending and error state |
+| data the page can render without (behind a tab or toggle) | `void context.queryClient.query({ ...getXQueryOptions(...), staleTime: "static" }).catch(() => undefined)` before the loader's first `await`, or it waits a round trip; the component reads it with `useQuery` and renders its own pending and error state |
 | nothing from the API | no loader |
+
+A detail route checks the path id before any request and turns a 404 into its `notFoundComponent`:
+
+```tsx
+if (!GetUserParams.safeParse({ id: params.userId }).success) throw notFound();
+try {
+  await context.queryClient.query({
+    ...getGetUserQueryOptions(params.userId),
+    staleTime: "static",
+  });
+} catch (error) {
+  if (error instanceof ApiError && error.status === 404) throw notFound();
+  throw error;
+}
+```
 
 - A loader may return what it fetched (the users list loader does), but no component reads it with `Route.useLoaderData()`: that value is a snapshot, while `useSuspenseQuery` follows refetches and invalidations.
 - The loader has no `try` around errors other than 404: a thrown `ApiError` renders `RouteError`, the router's `defaultErrorComponent`, whose Try again re-runs the loader through `router.invalidate()`.

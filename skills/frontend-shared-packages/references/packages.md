@@ -1,7 +1,7 @@
 # The API-client package, the UI-kit package and the harness
 
 Complete files for `packages/api`, `packages/ui` and `apps/ui-harness`, as built and checked in a
-workspace at pnpm 12.21. Shown in the in-repository form: `"private": true`, no `version`, no
+workspace at pnpm 12.22. Shown in the in-repository form: `"private": true`, no `version`, no
 `files`. A package published for other repositories replaces `"private": true` with
 `"version": "0.1.0"` and adds the `files` line given under each manifest.
 
@@ -294,7 +294,9 @@ test("a disabled button exposes its state to CSS and keeps the caller's layout c
 
 A private Vite app that renders every kit component in its variants: the workshop during kit
 work (`pnpm --filter ui-harness dev`) and, built and previewed under the production CSP, the
-kit's CSP regression check in CI. It is never deployed.
+kit's CSP regression check in CI. It is never deployed. It is the kit's
+check because it runs the kit's production build under the production CSP and Trusted Types,
+which a component-catalogue preview does not; visual regression, when wanted, is `toHaveScreenshot` in its spec.
 
 ```json
 {
@@ -454,6 +456,6 @@ A new kit component gets a section in `Harness` in the same change, so the CSP c
 | A package imports another it does not declare | Biome: `Dependency @org/api isn't specified in packages/ui/package.json.`; the package's `tsc`: TS2307 |
 | `@/x` inside a package | the package's `tsc`: TS2307; the boundary plugin: `A package never imports @/` |
 | A stricter flag in one project's `tsconfig.json` | that project's `tsc` reports errors inside the packages' `src/` (TS4111 and the like) |
-| A Vite config or Node script imports a published source-only package | `failed to load config from .../vite.config.ts` / `Error [ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING]: Stripping types is currently unsupported for files under node_modules` |
+| Anything Node loads imports a value from a published source-only package: `vite.config.ts`, `orval.config.ts`, a script, a Playwright spec or fixture | `failed to load config from .../vite.config.ts` / `Error [ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING]: Stripping types is currently unsupported for files under node_modules`; a Playwright spec fails to load with the same message. Vitest compiles the package and passes; `import type` is erased and safe |
 | The kit's CSS without `@source "./"` | nothing fails: the app's CSS lacks every class used only inside the kit |
 | Two packages depend on each other | install warns `There are cyclic workspace dependencies:` |

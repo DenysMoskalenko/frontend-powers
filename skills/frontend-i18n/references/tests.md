@@ -6,6 +6,7 @@ Contents
 - [Route tests](#route-tests)
 - [The setup module's own test](#the-setup-modules-own-test)
 - [What covers a missing key](#what-covers-a-missing-key)
+- [No nested `$t()` with options](#no-nested-t-with-options)
 
 ## `renderRoute` with an instance
 
@@ -100,6 +101,9 @@ test("a route renders in the language it is given", async () => {
 });
 ```
 
+With `keycloak-spa-auth`, which moves the users routes under `_signed-in/`, the test file lives at
+`src/routes/_signed-in/users/language.test.tsx`; the URLs, and so the test, stay the same.
+
 `act` wraps `changeLanguage` because the state change starts outside Testing Library. With the
 users screen translated, the same test asserts `findByRole("heading", { name: "Пользователи" })`
 and a plural: `test.each` over counts `1`, `3`, `5`, `21` in Russian catches a missing `_few` or
@@ -169,4 +173,32 @@ inside the coverage gate. `localStorage` survives between tests in a file, so th
 | a screen that renders the wrong key | the route test asserting the visible text |
 
 No test asserts a key or loops over JSON files to compare languages: the gates already do, on every
-file, in `pnpm check`.
+file, in `pnpm check`. The one file loop is the guard below, which no gate covers.
+
+## No nested `$t()` with options
+
+On i18next 27.2.2 with `escapeValue: false`, a message such as `Hi $t(name, {"who": "{{who}}"})` lets
+the value of `who` rewrite the nested call's options: `t("greet", { who: 'x", "lng": "ru' })`
+renders the Russian `name`. React still escapes the result, so the harm is text from another
+language or namespace, chosen by whoever controls the value. Messages here never nest: the value
+goes through a second `t()` call and a plain variable (`t("greet", { name: t("name", { who }) })`
+with `"greet": "Hi {{name}}"`), which renders the same input as text. A translator can still write
+a nested call into any file, so a test fails on one:
+
+```ts,verify,test
+// file: src/app/locales.test.ts
+import { expect, test } from "vitest";
+
+// Releases after i18next 27.2.2 escape these values; delete this test once one is pinned.
+const messageFiles = import.meta.glob<string>("./locales/*/*.json", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
+test("no message file nests a $t() call with options", () => {
+  const nesting = Object.entries(messageFiles).filter(([, text]) => /\$t\([^)]*,\s*\{/.test(text));
+
+  expect(nesting.map(([path]) => path)).toEqual([]);
+});
+```

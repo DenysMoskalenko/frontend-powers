@@ -43,10 +43,12 @@
 **Must not produce**:
 
 - `forwardRef`
+- the dialog opened by a plain `Button` whose `onClick` sets `open` state instead of its trigger part
 - a palette class such as `bg-black/50` or `bg-red-600`
 - `data-[state=open]` or any Radix import
 - a `z-index` above `z-50`, such as `z-[9999]`
 - a `className` function `(state) =>` on a Base UI part
+- a popup width taken from the caller's `className` while the wrapper's base string also sets one
 - `framer-motion` or `motion` imports
 
 ### Eval 2 - user-selectable theme
@@ -114,7 +116,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `class(?:Name)?=[^>]*?\b(?:bg|text|border|ring|fill|stroke)-(?:red|rose|orange|amber|yellow|green|emerald|blue|sky|gray|slate|zinc|neutral|stone|black|white)(?:-\d{2,3})?\b`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:class(?:Name)?=[^>]*?\b(?:bg|text|border|ring|fill|stroke)-(?:red|rose|orange|amber|yellow|green|emerald|blue|sky|gray|slate|zinc|neutral|stone|black|white)(?:-\d{2,3})?\b)`
 
 **Right answer**: `\b(?:bg|text|border)-danger\b`
 
@@ -132,7 +134,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `from\s+["'](?:clsx|tailwind-merge|class-variance-authority|tailwind-variants)["']`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:from\s+["'](?:clsx|tailwind-merge|class-variance-authority|tailwind-variants)["'])`
 
 ### Probe 4 - link rendered as a button
 
@@ -140,7 +142,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?<!\x60)<Button\b[^>]*render=\{\s*<Link`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<Button\b[^>]*render=\{\s*<Link)`
 
 ### Probe 5 - CSS-in-JS
 
@@ -148,7 +150,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `from\s+["'](?:styled-components|@emotion\/(?:react|styled))["']`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:from\s+["'](?:styled-components|@emotion\/(?:react|styled))["'])`
 
 ### Probe 6 - inline theme script
 
@@ -156,7 +158,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `<script(?![^>]*\bsrc=)[^>]*>[^<]*localStorage|dangerouslySetInnerHTML=\{|from\s+["\x27]next-themes["\x27]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<script(?![^>]*\bsrc=)[^>]*>[^<]*localStorage)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:dangerouslySetInnerHTML=\{)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:from\s+["\x27]next-themes["\x27])`
 
 ### Probe 7 - bracketed CSS variable
 
@@ -164,7 +166,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `class(?:Name)?=[^>]*?\b[\w-]+-\[--[\w-]+\]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:class(?:Name)?=[^>]*?\b[\w-]+-\[--[\w-]+\])`
 
 **Right answer**: `\(--anchor-width\)`
 
@@ -174,7 +176,7 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `data-\[state=(?:open|closed)\]:[a-z]`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:data-\[state=(?:open|closed)\]:[a-z])`
 
 ### Probe 9 - toast library
 
@@ -191,3 +193,15 @@
 **Fixture**: scaffold
 
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:theme:\s*\{\s*extend)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:module\.exports\s*=)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:@config\s+["\x27])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:-\[#[0-9a-fA-F]{3,8}\])`
+
+### Probe 11 - width through className
+
+**Prompt**: "Our `src/shared/ui/dialog.tsx` `DialogPopup` wraps the Base UI dialog popup; its base class string has `w-[min(28rem,calc(100vw-2rem))]` and it accepts a layout-only `className`. The export dialog on the reports page needs to be wider. Do it."
+
+**Fixture**: empty
+
+**Note**: The prompt's `DialogPopup` accepts `className`, so a right answer adds a `size` variant and keeps `className` in the props for layout: the scope paragraph keeps an existing component's public contract, and the reference wrapper without `className` is for new code.
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<DialogPopup\b[^>]*\bclassName=["{\x60][^>]*\b(?:min-|max-)?w-)`
+
+**Right answer**: `(?<![\w-])sizes?\s*[=:]`
