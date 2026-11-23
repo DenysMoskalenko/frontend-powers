@@ -42,6 +42,14 @@ tarballs, `--help` output and sandbox runs; those are recorded in the release in
 | web-features: Temporal | https://web-platform-dx.github.io/web-features-explorer/features/temporal/ | `Date` and `Intl` instead of `Temporal`: the browser floor lacks it; the `## Watch` trigger (Chrome 144, Firefox 139, Safari 27.3) |
 | Biome VS Code reference | https://biomejs.dev/reference/vscode/ | the scaffold's `.vscode/` settings |
 | Playwright CI | https://playwright.dev/docs/ci | the Playwright image tag equal to `@playwright/test`, no browser cache |
+| MDN browser compatibility data | https://github.com/mdn/browser-compat-data | the browser floor: release dates for "audit date minus 30 months", and each API's first version by its exact key (`api.URL.parse_static`) |
+| web-features | https://github.com/web-platform-dx/web-features | cross-check of the floor: the highest requirement among features Baseline by the cut-off; a group's status is not its members' |
+| Tailwind CSS compatibility | https://tailwindcss.com/docs/compatibility | Firefox 128 as the floor's minimum for Tailwind 4 |
+| Base UI supported browsers | https://raw.githubusercontent.com/mui/base-ui/master/.browserslistrc | Base UI's own minimum is below the floor |
+| TanStack Query installation | https://tanstack.com/query/latest/docs/framework/react/installation | Query's documented browser minimum is below the floor |
+| pnpm `.npmrc` | https://pnpm.io/npmrc | `.npmrc` keeps registry URLs, tokens and certificates; behaviour settings move to `pnpm-workspace.yaml` |
+| GitHub Actions triggers | https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows | `audit-full` on `schedule` and `workflow_dispatch`: default branch only; a public repository's schedule stops after 60 days without activity |
+| GitLab pipeline schedules | https://docs.gitlab.com/ci/pipelines/schedules/ | `audit-full` in a schedule pipeline, created under Build > Pipeline schedules |
 
 ## Structure
 
@@ -60,7 +68,7 @@ tarballs, `--help` output and sandbox runs; those are recorded in the release in
 | Source | URL | Supports |
 |---|---|---|
 | TanStack Router external data loading | https://tanstack.com/router/latest/docs/framework/react/guide/external-data-loading | loaders that fill the Query cache |
-| TanStack Router Query integration | https://tanstack.com/router/latest/docs/framework/react/integrations/query | loaders call `queryClient.query`; `ensureQueryData` deprecated |
+| TanStack Router Query integration | https://tanstack.com/router/latest/docs/framework/react/integrations/query | loaders read through `loadQuery` over `queryClient.query`; `ensureQueryData` deprecated |
 | TanStack Router preloading | https://tanstack.com/router/latest/docs/framework/react/guide/preloading | `defaultPreloadStaleTime: 0`, so Query owns freshness |
 | React Router 8.0 changelog | https://reactrouter.com/8.0.0/changelog.md | the `## Watch` row: no typed, validated search params in data mode |
 | orval output configuration | https://github.com/orval-labs/orval/blob/master/docs/content/docs/reference/configuration/output.mdx | `override.zod.exactOptional`; the `zod/mini` variant in `## Watch` |
@@ -110,6 +118,8 @@ tarballs, `--help` output and sandbox runs; those are recorded in the release in
 | nginx security advisories | https://nginx.org/en/security_advisories.html | nginx rejected for the container |
 | Grafana Alloy `faro.receiver` | https://grafana.com/docs/alloy/latest/reference/components/faro/faro.receiver/ | optional Faro telemetry, receiver CORS and source-map settings |
 | Grafana Alloy Faro exporters source | https://github.com/grafana/alloy/blob/main/internal/component/faro/receiver/exporters.go | source maps resolved by `meta.app.release`, hence `__RELEASE__` |
+| Caddyfile concepts | https://caddyserver.com/docs/caddyfile/concepts | `{$VAR}` is substituted before the Caddyfile is parsed, so it cannot reach the bundle: configuration stays build-time |
+| CSP `report-uri` | https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/report-uri | a browser that supports `report-to` ignores `report-uri`, which stays as the fallback |
 
 ## Auth
 

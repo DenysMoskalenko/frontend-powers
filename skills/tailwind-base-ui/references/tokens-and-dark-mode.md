@@ -5,7 +5,7 @@
 - The entry file as the scaffold ships it
 - Adding a colour token
 - Adding a scale
-- What the build does to `light-dark()`
+- A surface dark in both schemes
 - Variants that compile differently from v3
 - Add-on: a user-selectable theme
 
@@ -91,6 +91,42 @@
   display: none;
 }
 
+/* The bar __root.tsx shows during a navigation: hidden for 200 ms, so a fast one does not flash it. */
+.navigation-progress {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  z-index: 50;
+  height: 3px;
+  background: var(--color-accent);
+  transform-origin: left;
+  opacity: 0;
+  animation:
+    navigation-progress-show 0s 200ms forwards,
+    navigation-progress-grow 8s 200ms cubic-bezier(0.1, 0.7, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navigation-progress {
+    animation: navigation-progress-show 0s 200ms forwards;
+  }
+}
+
+@keyframes navigation-progress-show {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes navigation-progress-grow {
+  from {
+    scale: 0.05 1;
+  }
+  to {
+    scale: 0.9 1;
+  }
+}
+
 /* Popups portal to <body>; the app root is its own stacking context so they always sit above it. */
 #root {
   isolation: isolate;
@@ -146,21 +182,12 @@ design owns, reset it like colours: `--radius-*: initial;`. The scaffold's
 `--grid-template-columns-label: auto 1fr` (`grid-cols-label`) is how a value that would otherwise be
 an arbitrary `grid-cols-[auto_1fr]` outside `src/shared/ui` becomes a name.
 
-## What the build does to `light-dark()`
+## A surface dark in both schemes
 
-At the scaffold's `build.target` (chrome119, edge119, firefox128, safari17.4) Lightning CSS, run by
-Vite on the built CSS, rewrites each `light-dark(a, b)` into a pair of `--lightningcss-light` /
-`--lightningcss-dark` variables switched by the `color-scheme` declarations it finds. Consequences:
-
-- Declare `color-scheme` only on `:root` selectors (`:root`, `:root[data-theme="dark"]`). The
-  tokens resolve once on `:root` in the built CSS, so `color-scheme` on an inner element does not
-  flip that subtree: it works in `pnpm dev` and stays light after `pnpm build`.
-- A surface that is dark in both schemes (a code block, a video player) gets its own role tokens,
-  such as `code-bg` and `code-fg`, added like any role but with one dark value and no `light-dark()`.
-- A token is read through `var()`, never copied into a `@theme` literal, or the polyfill has
-  nothing to switch.
-- Check dark mode on `pnpm build && pnpm preview`, not only `pnpm dev`; the E2E axe scan runs both
-  schemes on the production build.
+`light-dark()` resolves where the colour is used, against that element's `color-scheme`, so
+`scheme-dark` (`color-scheme: dark`) on a container flips every role token inside it in both
+schemes: a code block or a video player needs no tokens of its own. A `dark:` class still follows
+the page, not the container.
 
 ## Variants that compile differently from v3
 
@@ -293,7 +320,7 @@ export const useTheme = () => useSyncExternalStore(subscribeTheme, readTheme);
 ```
 
 ```ts,verify,test
-// file: src/shared/lib/theme.test.ts
+// file: src/shared/lib/theme.dom.test.ts
 import { afterEach, expect, test } from "vitest";
 import { parseTheme, setTheme } from "./theme";
 

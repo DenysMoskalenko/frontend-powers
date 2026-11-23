@@ -11,7 +11,7 @@
 
 Messages are quoted from `tsc` 7.0 on the scaffold's `tsconfig.json`. Fix the code; the flags stay
 on. A configuration error (TS5102, TS5108 on `baseUrl`, `moduleResolution: "node"` or `outFile`)
-belongs to `frontend-tooling`. TS2379 on `queryClient.query(getXSuspenseQueryOptions())` is the
+belongs to `frontend-tooling`. TS2379 on `loadQuery(queryClient, getXSuspenseQueryOptions())` is the
 loader-options split that `tanstack-query-api` documents.
 
 ## Error code table

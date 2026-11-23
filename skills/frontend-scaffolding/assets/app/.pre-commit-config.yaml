@@ -34,7 +34,7 @@ repos:
         pass_filenames: false
       - id: pnpm-audit
         name: pnpm audit
-        entry: pnpm audit --audit-level=high
+        entry: pnpm audit --prod --audit-level=high
         language: system
         files: ^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$
         pass_filenames: false

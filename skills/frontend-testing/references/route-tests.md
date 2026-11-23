@@ -3,11 +3,12 @@
 ## Contents
 
 - [What renderRoute builds](#what-renderroute-builds)
-- [The setup file](#the-setup-file)
+- [Two projects, two setup files](#two-projects-two-setup-files)
 - [MSW 3 recipes](#msw-3-recipes)
 - [Queries for this stack](#queries-for-this-stack)
 - [Factories](#factories)
 - [Verified examples](#verified-examples)
+- [A component rendered on its own](#a-component-rendered-on-its-own)
 - [A unit test and a config test](#a-unit-test-and-a-config-test)
 
 ## What renderRoute builds
@@ -50,30 +51,32 @@ export function renderRoute(path: string) {
 - `router.options.context.queryClient` is the client. Reach for it only to drive a state the UI cannot reach in a test (for example `invalidateQueries()` to force a refetch); never assert on cache contents.
 - Returns `{ user, router }`; an add-on may add its own value and options (`i18n`, `session`, `language`). Query through `screen`; there is no `container`.
 
-## The setup file
+## Two projects, two setup files
+
+Vitest runs two projects, and the file name alone picks one (the configuration is `frontend-tooling`'s):
+
+| File name | Project | Environment | Setup files |
+|---|---|---|---|
+| `*.test.tsx`, `*.dom.test.ts` | `dom` | jsdom | `src/test/setup.ts`, then `src/test/setup-dom.ts` |
+| every other `*.test.ts` | `node` | Node, no DOM | `src/test/setup.ts` |
+
+A test that touches `window`, `document`, storage or the DOM matchers is a `.test.tsx`, or a `.dom.test.ts` when it has no JSX: a stale-chunk handler on `window`, a storage helper, a query with `refetchInterval` (TanStack Query starts no interval where `window` is undefined), a `matchMedia` stub. Everything else, the pure logic and the config tests, is a plain `.test.ts`. In the wrong project such a test fails with `ReferenceError: document is not defined` (or `window`), and a `localStorage` call with `TypeError: Cannot read properties of undefined (reading 'setItem')`; rename the file, never add `// @vitest-environment` to it. `isolate: false` and `pool: "vmThreads"` are not used: the first gave no steady gain on the template's suite, the second breaks MSW (`WritableStream is not defined`).
 
 `src/test/setup.ts`, as the scaffold ships it; `src/test/server.ts` is `setupServer()` with no handlers:
 
 ```ts
-import "@testing-library/jest-dom/vitest";
+// Every test, in Node and in jsdom. The DOM-only part is setup-dom.ts.
 import { faker } from "@faker-js/faker";
-import { configure } from "@testing-library/dom";
-import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, vi } from "vitest";
 import { server } from "./server";
-
-// The bound only ends a hang; a loaded CI machine must never reach it.
-configure({ asyncUtilTimeout: 5_000 });
-// jsdom has no layout; the router restores scroll after every navigation.
-window.scrollTo = () => {};
 
 const unhandled: string[] = [];
 server.events.on("request:unhandled", ({ request }) => {
   unhandled.push(`${request.method} ${request.url}`);
 });
 
-// jsdom's reportError only logs to the virtual console. This one records the error, and the test
-// fails unless it stubs reportError.
+// The platform's reportError only logs. This one records the error, and the test fails unless it
+// stubs reportError.
 const reported: unknown[] = [];
 globalThis.reportError = (error: unknown) => {
   reported.push(error);
@@ -85,10 +88,6 @@ beforeEach(() => {
   faker.seed(20_261_119);
 });
 afterEach(() => {
-  // `globals: false` turns off Testing Library's automatic cleanup.
-  cleanup();
-  localStorage.clear();
-  sessionStorage.clear();
   // Also undoes a bare vi.setSystemTime(), which no config option resets.
   vi.useRealTimers();
   server.resetHandlers();
@@ -102,10 +101,45 @@ afterEach(() => {
 afterAll(() => server.close());
 ```
 
+`src/test/setup-dom.ts`:
+
+```ts
+// `*.test.tsx` and `*.dom.test.ts` only, after setup.ts.
+import "@testing-library/jest-dom/vitest";
+import { configure } from "@testing-library/dom";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
+
+// The bound only ends a hang; a loaded CI machine must never reach it.
+configure({ asyncUtilTimeout: 5_000 });
+// jsdom has no layout; the router restores scroll after every navigation.
+window.scrollTo = () => {};
+
+// Runs before setup.ts's afterEach (hooks run in reverse), so an unmount's reportError still fails the test.
+afterEach(() => {
+  // `globals: false` turns off Testing Library's automatic cleanup.
+  cleanup();
+  localStorage.clear();
+  sessionStorage.clear();
+});
+```
+
+- `afterEach` hooks run in reverse order of registration (Vitest's default `sequence.hooks: "stack"`): `setup-dom.ts` unmounts and clears storage first, then `setup.ts` checks requests and reports, so an error raised while unmounting still fails the test. Something that must happen for every test goes in `setup.ts`; something that needs a DOM goes in `setup-dom.ts`.
 - The unhandled-request check is needed beside `onUnhandledFrame: "error"`: that option alone only makes `fetch` reject, `RouteError` (the router's `defaultErrorComponent`) renders the failure, and a test that asserts on something else passes. The failure reads `Requests without an MSW handler: GET https://api.test/users?limit=20&offset=0`.
-- jsdom 31 has a `reportError` of its own, which only dispatches an `error` event and logs to the virtual console, so a reported error would pass the test. The recording one fails a test that reports unexpectedly. `renderRoute` renders without `rootErrorHandlers`, so a failed loader that shows `RouteError` reports nothing here: its test needs no stub. Vitest prints the `AggregateError` as its inner errors, so the failure shows the app's own error, once per report. A test that expects a report replaces it with `vi.stubGlobal("reportError", vi.fn())` and asserts on that stub, as `src/app/error-reporting.test.ts` does; `unstubGlobals` puts the recording one back for the next test.
+- jsdom 31 has a `reportError` of its own, which only dispatches an `error` event and logs to the virtual console, and Node has none, so a reported error would pass the test or throw a `TypeError` of its own. The recording one fails a test that reports unexpectedly. `renderRoute` renders without `rootErrorHandlers`, so a failed loader that shows `RouteError` reports nothing here: its test needs no stub. Vitest prints the `AggregateError` as its inner errors, so the failure shows the app's own error, once per report. A test that expects a report replaces it with `vi.stubGlobal("reportError", vi.fn())` and asserts on that stub, as `src/app/error-reporting.dom.test.ts` does; `unstubGlobals` puts the recording one back for the next test.
 - When a test both missed a handler and reported, only the request failure is thrown; fix it and rerun.
-- `localStorage` and `sessionStorage` are cleared after every test, so a remembered choice (a theme, a return path) never leaks into the next test under the shuffled order; a test that needs a stored value writes it in its arrange block. `src/test/setup.test.ts` pins this with a `describe(..., { shuffle: false })` pair.
+- `localStorage` and `sessionStorage` are cleared after every test, so a remembered choice (a theme, a return path) never leaks into the next test under the shuffled order; a test that needs a stored value writes it in its arrange block. `src/test/setup.dom.test.ts` pins this with a `describe(..., { shuffle: false })` pair.
+
+What the rest of the test configuration means for a test:
+
+| Setting | Consequence for a test |
+|---|---|
+| `globals: false` | import `test`, `expect`, `vi` from `vitest`; `setup-dom.ts` calls `cleanup()` |
+| `sequence.shuffle: true` | order varies per run; the seed is printed as `Running tests with seed "…"` |
+| `restoreMocks: true` | every `vi.spyOn` is restored after each test |
+| `unstubGlobals: true`, `unstubEnvs: true` | `vi.stubGlobal` and `vi.stubEnv` are undone before the next test, `reportError` back to the recording one; a direct `window.x = …` assignment is not |
+| `isolate` on (the default) | each file has its own module graph, so module state (a store, user-event's clipboard stub) carries over only between tests in one file; reset it where it is set |
+| `env: { TZ: "UTC" }` | `"2026-11-01T09:30:00Z"` renders `Nov 1, 2026, 9:30 AM` on every machine |
 
 ## MSW 3 recipes
 
@@ -119,7 +153,7 @@ afterAll(() => server.close());
 | An error status | `http.get(\`${TEST_API_ORIGIN}/users/:id\`, () => HttpResponse.json({ error: "user 1 not found" }, { status: 404 }))` |
 | A failure, then success | the error handler with `{ once: true }` as third argument, followed by the success handler in the same `server.use` |
 | Create, then list shows it | a closure array both handlers share (example below) |
-| Nothing for an endpoint | omit it; the unhandled-request check names it if the page calls it |
+| Nothing for an endpoint | omit it; the unhandled-request check names it if the page calls it; a click that a navigation blocker cancels requests nothing |
 
 - The generated handlers in `src/api/generated/api.msw.ts` match `*/users` on any origin and answer the first 2xx status of the operation. Called without an argument they return faker strings such as a 10-to-20-letter `name`, so a test never asserts on, or even renders against, one called without data. `getAppMock()` is that random set; never pass it to `setupServer`.
 - Error answers use `TEST_API_ORIGIN` and the body the backend really sends (axum `{ error, request_id, details }`, FastAPI `{ detail }`, or RFC 9457), because `ApiError` is built from it: `request_id` becomes the "Request id" the UI prints, `details` the field errors. The mapping is `tanstack-query-api`'s.
@@ -166,12 +200,14 @@ server.use(
 | Field error | `expect(field).toHaveAccessibleDescription("Invalid email address")`; `Field.Error` is wired as the control's description. Invalid state: `toHaveAttribute("aria-invalid", "true")` |
 | Focus after a failed submit | `await waitFor(() => expect(nameField).toHaveFocus())`; the form focuses the first invalid field in a `requestAnimationFrame` |
 | Form-level error, route error | `findByRole("alert")`; the form error and `RouteError` render `role="alert"` |
-| Toast | `findByText("Could not refresh the data")`, or `findByRole("dialog", { name: "Could not refresh the data" })`: a Base UI `Toast.Root` is a non-modal dialog named by its title. Its `Toast.Close` is `aria-hidden` until the stack is hovered or focused: `await user.hover(toast)`, then `getByRole("button", { name: "Dismiss" })` |
+| Failure toast | `const alert = await screen.findByRole("alert")`, then `expect(alert).toHaveTextContent("Could not refresh the data")`: a high-priority Base UI toast is announced through a visually hidden `role="alert"` copy, so `getByText(title)` finds two elements. The toast itself is an `aria-hidden` `alertdialog` with an `aria-hidden` Dismiss button until F6 moves focus into the toasts: `await user.keyboard("{F6}")`, then `getByRole("button", { name: "Dismiss" })` |
 | A disabled TanStack `Link` | `getByRole("link", { name: "Next" })` with `toHaveAttribute("aria-disabled", "true")`; it renders without `href` |
+| Navigation in progress | `findByRole("progressbar", { name: "Loading page" })` while a client-side navigation waits for its loader (a held handler, as `src/routes/__root.test.tsx` does); a page's own progress indicator needs another name. A first load shows the layout and the bar while the loaders run, so a test that starts at a slow page sees them; the page's own content arrives when the loader resolves |
 | An empty state | `findByText("No users yet.")` |
 | An element that is gone | `expect(screen.queryByText("…")).not.toBeInTheDocument()` |
+| A browser event user-event has no verb for | `window.dispatchEvent(new Event("visibilitychange"))` |
 
-A query that finds nothing by role means the markup lacks a role or an accessible name: fix the component, not the query. `getByTestId` needs a one-line reason, such as a canvas.
+A query that finds nothing by role means the markup lacks a role or an accessible name: fix the component, not the query. The `data-testid` attributes (`users-create-submit`, ``users-row-${id}``) are for automation outside the repository; a route test uses `getByTestId` only for an element with no stable accessible name, such as a canvas, with a one-line reason.
 
 ## Factories
 
@@ -264,10 +300,31 @@ test("a server error on create keeps the form and says the user was not created"
 
 The last line pins the mutation's `meta: { silent: true }`: without it the form error and a toast would both show.
 
+## A component rendered on its own
+
+A component that takes props and renders DOM, and needs no router, no QueryClient and no context, may be rendered directly with `render` when it has more visual states than its routes reach cheaply (a status badge, a table of cell formats, an empty and a full variant). Its routes still get their route tests. The line is the first provider: the moment the component renders a `Link`, calls a hook that reads the router, a query or a context, or is wrapped in anything to make it mount, it is tested through `renderRoute` instead. A wrapper in `src/shared/ui` needs no test of its own: the route tests that use it cover it. The direct test lives beside the component, as a `.test.tsx`:
+
+```tsx,verify,test
+// file: src/features/users/user-details.test.tsx
+import { render, screen } from "@testing-library/react";
+import { expect, test } from "vitest";
+import { buildUser } from "@/test/factories/user";
+import { UserDetails } from "./user-details";
+
+test("the details show the email and the creation time", () => {
+  const user = buildUser({ email: "ada@example.com", created_at: "2026-11-01T09:30:00Z" });
+
+  render(<UserDetails user={user} />);
+
+  expect(screen.getByText("ada@example.com")).toBeInTheDocument();
+  expect(screen.getByText("Nov 1, 2026, 9:30 AM")).toBeInTheDocument();
+});
+```
+
 ## A unit test and a config test
 
-App-wide router behaviour (the lossless search parser, focus moving to the page's `h1` after a path change but not after a search-only change or on the first render) is tested through `renderRoute` in `src/app/router.test.tsx`; the test harness itself in `src/test/setup.test.ts`.
+App-wide router behaviour (the lossless search parser, focus moving to the page's `h1` after a path change but not after a search-only change or on the first render) and the failure toasts (one per reason, updated in place) are tested through `renderRoute` in `src/app/router.test.tsx`, the navigation progress bar, on a first load and after one, in `src/routes/__root.test.tsx`, and the test harness itself in `src/test/setup.dom.test.ts`.
 
-A unit test is for a pure function or policy with branches worth enumerating, next to it, with `test.each`: `src/features/users/pagination.test.ts` for paging math, `src/app/query-client.test.ts` for the retry policy (each status and failure count against the `retry` that `createQueryClient` configures, no QueryClient run). It imports the function and nothing else; if it needs `renderRoute` or MSW, it is a route test.
+A unit test is for a pure function or policy with branches worth enumerating, next to it, with `test.each`, as a plain `.test.ts` in the `node` project: `src/features/users/pagination.test.ts` for paging math, `src/app/query-client.test.ts` for the retry policy (each status and failure count against the `retry` that `createQueryClient` configures, no QueryClient run). It imports the function and nothing else; if it needs `renderRoute` or MSW, it is a route test. When it needs one browser API (`window`, storage), it is a `.dom.test.ts`, as `src/app/error-reporting.dom.test.ts` is.
 
 A config test is for configuration that carries logic: `deploy/headers.test.ts` pins the whole generated CSP string with `toBe` and checks the cache headers each platform merges, `vite.config.test.ts` runs a real `vite build` against the exported `entryBudget` plugin, `biome-plugins/boundaries.test.ts` lints seeded violations with the real Biome binary. Each exports the logic from the config file and drives it with real inputs; none mocks the tool. The boundary test writes a `tmp-boundaries-*` directory inside the project while it runs, so do not run `biome check` in parallel with Vitest.

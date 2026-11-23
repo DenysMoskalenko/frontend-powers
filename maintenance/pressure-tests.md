@@ -466,3 +466,84 @@ Answers that followed a skill into something no eval line caught also led to cha
 string is rendered as text and a parser package is the user's decision (`frontend-deploy`); the
 forms example with a repeated email field is named for what it is; ids in tests come from the
 factory; an existing wrapper that accepts `className` keeps it.
+
+## Review of 23 November 2026 (outside specialist)
+
+No billed run. A frontend specialist reviewed commit `05727dc` end to end. About sixty API claims
+checked against the installed packages were accurate, and every automatic gate was green. The
+defects were about behaviour under real conditions, not library knowledge: code below the stated
+browser floor, events that race a navigation, what a user sees while a page loads or a session
+ends, a request that never answers, and rules that say "never" without saying what to do when the
+exception is real.
+
+| Area | Changed in response |
+|---|---|
+| Browser floor | Baseline Widely Available on the audit date, moved at each audit (now Chrome 125, Firefox 128, Safari 17.5); `light-dark()` native; `URL.parse` and stream async iteration replaced; the validator fails a stale copy |
+| Network | reads time out after 30 s without headers, writes never; the retry rule is a whitelist; polling and file references added |
+| Loaders | `loadQuery` refetches an invalidated query; `defaultStaleReloadMode: "blocking"`; the delete-from-detail recipe proved by a route test |
+| Loading and session | a navigation progress bar; the root layout is a `shellComponent`, so a slow first load is no longer a blank page; no request leaves without a token once sign-in starts; a long form keeps the session alive |
+| Errors | field errors keep the backend `code`; failure toasts are assertive, persistent and one per reason; an SSE handler error is reported and the feed continues; a push no longer races a first fetch; start-up is `.then(render).catch(startFailed)` |
+| Forms | `useAppForm` (`createFormHook`) replaces six hand-copied helper sets; validation follows each change after the first submit |
+| Tests | two Vitest projects by file name; the React Compiler runs under `pnpm test`; a WebKit phone project; `expectedErrors`; the `data-testid` convention |
+| Deploy | build-time configuration kept with its cost named; the stale-chunk reload fires on a navigation only, never a hover; audit gate on production dependencies plus a scheduled full audit |
+| Scope | responsive rules; calendar dates; images; an exception path for every "never" the review named; `## Not covered` in STACK.md |
+
+Declined, with the reason:
+
+- Forwarding React's `componentStack` to the tracker: it needs a second channel beside the one
+  reporting funnel.
+- A merging `configureApi`: tests rely on a second call resetting everything.
+- A runtime-configuration variant: the origins also live in the generated CSP, and a promoted
+  artifact is the platform team's decision.
+- Vitest `isolate: false` (no steady gain) and `pool: "vmThreads"` (breaks MSW).
+- The reviewer's fix for a push without data (invalidate): a successful fetch clears
+  `isInvalidated`, so the push is lost; `applyPush` waits for the first fetch instead.
+- zod's `customError` for translated messages: the bound field translates at render, so an error
+  on screen follows a language switch.
+- Replacing `oidc-client-ts` with keycloak-js's `oidcProvider`: keycloak-js decodes the refresh
+  token as a JWT, so a provider with opaque refresh tokens fails.
+- Cancelling a mutation through "the mutation's `signal`": no such field exists in TanStack Query 5.
+
+The review also ran one trial on a real project built differently (older TypeScript, Query and
+MSW, another UI library, code-based routes): a feature plan for a polled screen, one run each,
+scored by the reviewer against 64 criteria, not blind. Without the plugin 58, with it 60; 104
+thousand tokens and 2.4 minutes against 168 thousand and 6.4. The scope paragraph worked: the
+plan with the plugin used the project's own helpers and fell into no version trap. Both plans
+missed the request that never answers (no timeout, `networkMode` left `"online"`, default
+retries); `tanstack-query-api`'s polling reference now covers it. One run each, so the difference
+may be noise.
+
+A confirmation round then re-read the fixes from three angles and found three majors and ten
+minors, all fixed. Majors: a server error for a field the user had switched off made a failed
+submit show nothing; CI ran Vitest only with coverage, which switches the React Compiler off; the
+forms skill's number field turned `0.05` into 5 as the user typed (seen in Chromium and WebKit).
+Minors: a hung read kept the user waiting three timeouts (a `TimeoutError` is no longer retried);
+a write made offline paused and went out on reconnect (mutations now use `networkMode: "always"`);
+a polled screen could not silence its refresh toast (`meta.silent` now works for queries); the
+skills called `formatDate` the scaffold's; a stale schedule comment in the workspace CI copy; no
+correction row for `queryClient.query()` before TanStack Query 5.102; the "Not covered" list was
+invisible from the README; a CSP caveat lost from `keycloak-spa-auth`; the CSV download saved a
+string as a `Blob`; and a refused session refresh behind a leave guard left requests hanging.
+
+Not yet run against a model (added or rewritten in this pass):
+
+| Skill | Evals | Probes |
+|---|---|---|
+| `frontend-code-style` | | 15 calendar date in local time, 16 an API above the browser floor, 17 exhaustive switch over a server union |
+| `frontend-project-structure` | 5 (rewritten: start-up) | 10 (rewritten), 11 a hand-made SVG as a data URL, 12 a cart shared across routes |
+| `tanstack-router-spa` | 1, 2 (rewritten), 5 a slow first load | 12 loader read that ignores invalidation |
+| `tanstack-query-api` | 5 a polled screen, 6 delete from the detail page | 15 a timeout through the getter's request options, 16 multipart Content-Type by hand, 17 retrying a failed poll, 18 a read timeout retried, 19 a polled screen's toast |
+| `frontend-forms` | 4 form in steps | 2 catching the failed submit, 12 text part on a number field, 13 date input through `Date`, 14 success UI on submit flags, 15 conflict hard-wired to a field, 16 a number input that rewrites decimals |
+| `tailwind-base-ui` | 5 a kit component used in two widths, 6 failure toast | 12 polite failure toast, 13 bare class string in a record |
+| `frontend-testing` | 4 a calendar date under another time zone | 13 the file name picks the environment, 14 expected errors stay narrow, 15 test ids are not the first query |
+| `frontend-tooling` | 7 a dev-only advisory blocks the deploy, 8 moving `.npmrc` settings, 9 a test file that needs the DOM | 10 compiler off in tests, 11 deleting `.npmrc` |
+| `frontend-deploy` | 5 a deploy under an open tab, 6 one image for every environment | 13 a wildcard image source |
+| `frontend-scaffolding` | 5 one forge, one deploy target | |
+| `keycloak-spa-auth` | 5 a long form outliving the SSO session, 6 one Keycloak sign-in per Playwright worker | 13 other tabs sent to the login form, 14 password grant in Playwright |
+| `frontend-i18n` | 3 field and server errors in Russian | 12 start-up handler as the second argument of `then`, 13 `status` in the commit gate, 14 zod's locale as user text |
+| `frontend-realtime` | 4 a resumable feed that survives a reconnect storm | 11 async iteration of a response body, 12 presence in the Query cache |
+| `frontend-shared-packages` | | 13 exact peers in a published package |
+
+Each probe's wrong-answer regex was checked only against hand-written samples. Seven `SKILL.md`
+bodies stay above the 1,500-word target (none above the 2,000 cap): the new rules took the room
+the cuts made.

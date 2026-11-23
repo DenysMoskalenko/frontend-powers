@@ -1,6 +1,6 @@
 ---
 name: frontend-forms
-description: "Use when building or fixing a create or edit form: TanStack Form useForm, form.Field, form.Subscribe, a zod schema from api.zod.ts as the validator, Base UI Field errors, submitting with mutateAsync, mapping a 422's fieldErrors with setErrorMap, a 409 as a form error, a dirty-form leave guard, array or file fields, or a one-field FormData form. Not for mutation options or invalidation (tanstack-query-api), field wrapper styling (tailwind-base-ui), form tests (frontend-testing), or autocomplete tokens (modern-web-guidance)."
+description: "Use when building or fixing a create or edit form: TanStack Form useAppForm, createFormHook bound fields, revalidateLogic, a zod schema from api.zod.ts as validator, mutateAsync in onSubmit, a 422's or 409's fieldErrors, a form in steps, a dirty-form leave guard, number, select, date, file or array fields, a one-field FormData form. Not for mutation options or invalidation (tanstack-query-api), field wrapper styling (tailwind-base-ui), form tests (frontend-testing), or autocomplete tokens (modern-web-guidance)."
 metadata:
   version: "0.1.0"
 ---
@@ -15,50 +15,49 @@ Form UX (labels, error copy, unsaved-changes wording) belongs to `web-design-gui
 
 ## Important
 
-- Pass the request schema from `src/api/generated/api.zod.ts` straight to `validators: { onSubmit: CreateXBody }`, with `defaultValues` typed `z.input<typeof CreateXBody>`: it carries the backend's limits and needs no adapter. An untyped literal makes every key required, so an optional body key fails `onSubmit` with TS2322 (`Property 'note' is optional in type ... but required`).
-- Submit with `await mutation.mutateAsync(...)` inside `onSubmit`, `meta: { silent: true }` on the mutation, and every failure turned into `formApi.setErrorMap({ onSubmit: { form, fields } })`, with `fields: {}` even when only `form` is set, or the message never renders; never render `error.message`.
-- After a failed submit, focus the first `[aria-invalid='true']` field, both in `onSubmitInvalid` and after `setErrorMap`, so its error is read out.
+- Build every form with `useAppForm` from `@/shared/hooks/use-app-form`: `validationLogic: revalidateLogic()`, `validators: { onDynamic: CreateXBody }` from `src/api/generated/api.zod.ts`, `defaultValues` typed `z.input<typeof CreateXBody>` (untyped, an optional key fails with TS2322). Never copy `submitErrors`, `firstError` or `focusFirstError` into a form: `form.Form` maps every failure and focuses the first invalid field.
+- `onSubmit` awaits `mutation.mutateAsync(...)` and does not catch: the rejection is the failed submit that `form.Form` shows. The mutation has `meta: { silent: true }`; call `formApi.reset()` before navigating.
+- A bound part reads its value with `useFieldContext<Value>()`, an assertion: `field.TextField` on a number field compiles. Keep one bound part per value type, named for it, and add a missing kind to the hook (`references/field-patterns.md`).
 - An edit form renders with `key={entity.id}`: `defaultValues` are copied only while no field is touched.
 - A form schema with an extra field or a transform is not the request body: send `Schema.parse(value)`, because `onSubmit` receives the raw input.
 
 ## References
 
-- `references/form-examples.md`: edit form with its route and tests, a form schema with an extra field, cross-field rule and transform, an optional body key, custom zod messages, a one-field `FormData` form, the validation-timing table and its test. Open for any form other than a plain create form, or to see what a user sees when.
-- `references/field-patterns.md`: an array-field form with its route test, dependent and file fields, re-validating after the first submit, async validation. Open when a form has more than text inputs.
+- `references/form-examples.md`: edit form with route and tests, a form schema with an extra field, cross-field rule or transform, an optional body key, custom zod messages, a one-field `FormData` form, a form in steps, the validation-timing table and tests. Open for any form other than a plain create form.
+- `references/field-patterns.md`: the hook with number, select, checkbox and file parts, the type cost of `createFormHook`, a form with every field kind, file, array and dependent fields. Open when a form has more than text inputs.
 
 ## The standard form
 
-Every form with more than one field follows the scaffold's `src/features/users/create-user-form.tsx`:
+The scaffold's `src/features/users/create-user-form.tsx`:
 
 ```tsx
-const emptyUser: z.input<typeof CreateUserBody> = { email: "", name: "" };
-
-const form = useForm({
+const form = useAppForm({
   defaultValues: emptyUser,
-  validators: { onSubmit: CreateUserBody },
+  validationLogic: revalidateLogic(),
+  validators: { onDynamic: CreateUserBody },
   onSubmit: async ({ value, formApi }) => {
-    let user: UserResponse;
-    try {
-      user = await createUser.mutateAsync({ data: value });
-    } catch (error) {
-      formApi.setErrorMap({ onSubmit: submitErrors(error, formApi.fieldInfo) });
-      focusFirstError();
-      return;
-    }
+    const user = await createUser.mutateAsync({ data: value });
     formApi.reset();
     await onCreated(user);
   },
-  onSubmitInvalid: focusFirstError,
 });
+
+return (
+  <form.AppForm>
+    <form.Form failed="The user was not created.">
+      <form.FormError />
+      <form.AppField name="email">
+        {(field) => <field.TextField label="Email" type="email" />}
+      </form.AppField>
+      <form.SubmitButton pending="Creating…">Create user</form.SubmitButton>
+    </form.Form>
+  </form.AppForm>
+);
 ```
 
-- An optional text field defaults to `""` and is left out of the body when empty, or the API stores `""` for "no value": `const { note, ...rest } = value;` then `data: { ...rest, ...(note && { note }) }`.
-- `focusFirstError` waits one `requestAnimationFrame`, until the mark renders, then focuses `[aria-invalid='true']` inside a `ref` on the `<form>`.
-- `<form noValidate>`: the schema validates, not native bubbles. Its `onSubmit` calls `event.preventDefault()` and `void form.handleSubmit()`: it returns a promise.
-- The form-level message: `<form.Subscribe selector={(state) => state.errorMap.onSubmit}>` renders a string as `<p role="alert">`. `form.state` is a getter for callbacks, not a subscription.
-- Base UI's `Button` defaults to `type="button"`: the submit button needs `type="submit"`.
-- `TextField onValueChange={field.handleChange}`: `Field.Control` passes the string first.
-- The form lives in `src/features/<domain>/`; the route passes `onCreated` with the navigation (`frontend-project-structure`).
+- `form.Form` (`<form noValidate>`) clears the last attempt's server errors, submits, maps a failure with `submitErrors` from `src/shared/lib/submit-errors.ts`, reports what is not `ApiError`, `TypeError` or `DOMException`, and focuses the first invalid field. `failed` is the form's own sentence for a failed submit.
+- A field rendered without a bound part calls `field.setErrorMap({ onServer: undefined })` on change, or a stale server error stays. A field-level validator returns `{ message }`, which the bound parts show.
+- An optional text field defaults to `""` and is left out of the body when empty, or the API stores `""`: `data: { ...rest, ...(note && { note }) }` (`references/form-examples.md`).
 
 ## The schema
 
@@ -71,44 +70,25 @@ Write a form schema only when the form is not the request body:
 | a value to normalise (trim) | override that field with `z.string().trim().min(1).max(createXBodyNameMax)`, reusing orval's exported limit constants |
 | any of those | end with `.transform((form) => ({ ...only the body fields }))` and send `Schema.parse(value)` |
 
-Put `.trim()` before `.min()`: zod 4 runs checks in order, so `z.string().min(1).trim()` accepts `"   "` and returns `""`. Schema messages are zod's defaults; the one seam for the product's copy is a `customError` in `src/app/zod-config.ts` (`references/form-examples.md`).
+Put `.trim()` before `.min()`: zod 4 runs checks in order, so `z.string().min(1).trim()` accepts `"   "`. Product copy for schema messages goes through one `customError` in `src/app/zod-config.ts` (`references/form-examples.md`).
 
 ## Validation timing
 
-The house default is `validators.onSubmit` only: nothing is checked before the first submit, and a marked field's error clears on its next change or blur (the full table is in `references/form-examples.md`). To re-check on every change after the first submit, use `validationLogic: revalidateLogic()` with `validators: { onDynamic: schema }` (`references/field-patterns.md`). Never the schema in `onChange`: the first keystroke marks every field invalid, untouched ones included.
+Errors appear on the first submit and then follow every change: an error stays until its value is valid. A server field error stays while other fields change and goes when its own field changes; a new submit clears every server error and asks the server again (table and tests: `references/form-examples.md`).
 
-## Errors
+- `revalidateLogic({ mode: "blur" })` when a format the user cannot judge alone (a code, an IBAN) should be flagged on leaving the field; `modeAfterSubmission: "blur"` when the schema is too heavy for every keystroke.
+- A field's `validators.onChangeAsync` with `onChangeAsyncDebounceMs` only when the product asks for a live server check; the submit's 409 stays the check that counts.
+- Never the schema in `onChange`: the first keystroke marks every field invalid, untouched ones included.
+- Never build UI on `isSubmitSuccessful` or `isSubmitted`: an `onSubmit` that catches its own failure counts as successful there. Act on success inside `onSubmit`, after `mutateAsync` resolves.
 
-```tsx
-const firstError = (errors: readonly (string | { message: string } | undefined)[]) =>
-  errors.map((error) => (typeof error === "string" ? error : error?.message)).find(Boolean);
-```
+## Server errors
 
-Map the submit failure from `ApiError`, never the generated error types. The scaffold's mapping:
+`ApiError.fieldErrors` maps a field path (`address.city`, `items[0].name`) to `{ message, code? }[]`. `form.Form` puts each on its field when that field is mounted now or, in a form in steps (`onFieldErrors`), was mounted before; the rest, a field the user switched off included, become one form message, "The server gave a reason this form cannot show.", with the request id.
 
-```ts
-/** `fieldInfo`: the form's rendered fields, keyed by name (`email`, `items[0].name`). */
-function submitErrors(error: unknown, fieldInfo: object) {
-  if (error instanceof ApiError && error.status === 409) {
-    return { form: "A user with this email already exists.", fields: {} };
-  }
-  if (error instanceof ApiError && Object.keys(error.fieldErrors).length > 0) {
-    const fields = error.fieldErrors;
-    // setErrorMap drops errors for fields the form does not render.
-    return Object.keys(fields).every((name) => name in fieldInfo)
-      ? { fields }
-      : { form: "The server rejected the user for a reason this form cannot show.", fields };
-  }
-  const requestId =
-    error instanceof ApiError && error.requestId ? ` Request id: ${error.requestId}` : "";
-  return { form: `The user was not created. Try again.${requestId}`, fields: {} };
-}
-```
-
-- Every form keeps the unknown-field check, `name in formApi.fieldInfo`: `setErrorMap` writes only to rendered fields and drops the rest. `fieldErrors` keys arrive as field names (`address.city`, `items[0].name`).
-- The fallback names `requestId` when present. The form shows the failure, so it does not call `reportError` (`frontend-code-style`).
-- Without `silent`, a failed submit also toasts "The change was not saved". Mutation options, invalidation and `ApiError` are `tanstack-query-api`'s.
-- Show `fieldErrors` as sent (FastAPI's `Value error, ` prefix is already stripped); in a translated app, what to translate is `frontend-i18n`'s.
+- A field shows `message`. This is the one place the backend's own sentence reaches the user, as the fallback when the app has no text for the `code`; in an app with more than one language, translating by `code` is `frontend-i18n`'s.
+- A conflict (409) whose details name a field the form renders lands on that field; otherwise, and for a backend that sends a fixed 409 body, it is the form message "It conflicts with data saved earlier." Never hard-code a 409 to one field.
+- A submit while the browser is offline fails at once with "Try again." and is never sent later: mutations run with `networkMode: "always"` (`tanstack-query-api`).
+- A form in steps or with collapsed sections passes `onFieldErrors` to `form.Form` and opens the step that holds the first field with an error, derived from the field name (`references/form-examples.md`).
 
 ## After success and the leave guard
 
@@ -120,39 +100,40 @@ useBlocker({
 });
 ```
 
-- Call `formApi.reset()` before navigating after success: the guard reads `isDefaultValue` at navigation time, and a dirty form blocks its own success navigation.
 - `isDefaultValue`, not `isDirty`: `isDirty` stays `true` after the user types the original value back.
 - `useBlocker` options and custom confirm dialogs are `tanstack-router-spa`'s.
 
 ## Edit forms
 
-- The edit page is `src/routes/users/$userId_/edit.tsx`, not nested in the detail page; its loader checks the id and throws `notFound()` like every loader that takes one (`tanstack-router-spa`).
-- The route component reads the entity with `useSuspenseQuery` and passes it to the form, which builds `defaultValues` from it.
+The edit page is `src/routes/users/$userId_/edit.tsx`, not nested in the detail page, with the detail loader (`tanstack-router-spa`). Its component reads the entity with `useSuspenseQuery` and passes it to the form, which builds `defaultValues` from it.
+
+## Dates and files
+
+- A date input is `field.TextField type="date"`; its `YYYY-MM-DD` value is sent as it is, never through `new Date()`. Showing a date is `formatDate`, which `frontend-code-style`'s reference adds to `src/shared/lib/format-date.ts` (the scaffold does not ship it).
+- `field.FileField`'s type and size are checked in the schema, so a wrong file is a field error before anything is sent. Sending, progress and cancelling are `tanstack-query-api`'s (`references/files.md`).
 
 ## One-field forms
 
-A rename, a tag, a confirm-by-typing box: no form library. On submit read `new FormData(event.currentTarget)`, validate with the schema's field (`CreateUserBody.shape.name.safeParse(...)`), keep the error in one `useState`, call `mutation.mutate` (`references/form-examples.md`). A failed save reaches the global toast only where `createQueryClient` has the `MutationCache` notice; without one, show a message when `mutation.isError`. A search box or filters are URL search params (`tanstack-router-spa`).
-
-## Accessibility the wiring provides
-
-`TextField` (`tailwind-base-ui`'s) turns `error` into `aria-invalid="true"` and the control's accessible description. Pass `string | undefined`: an empty string still marks the field invalid. Form route tests are `frontend-testing`'s.
+A rename, a tag, a confirm-by-typing box: no form library. On submit read `new FormData(event.currentTarget)`, validate with the schema's field (`CreateUserBody.shape.name.safeParse(...)`), keep the error in one `useState`, call `mutation.mutate` (`references/form-examples.md`). A search box or filters are URL search params (`tanstack-router-spa`).
 
 ## Prior-version idioms
 
 | Older examples write | Correct now |
 |---|---|
-| `react-hook-form` with `zodResolver`, or `formik` with `validationSchema` | `useForm({ validators: { onSubmit: CreateXBody } })` from `@tanstack/react-form` |
+| `react-hook-form` with `zodResolver`, or `formik` with `validationSchema` | `useAppForm` with `validators: { onDynamic: CreateXBody }` |
+| `useForm` with `form.Field` wired to `TextField` by hand, and copies of `submitErrors`, `firstError`, `focusFirstError` | `useAppForm` with `field.TextField`, `form.Form`, `form.FormError`, `form.SubmitButton` |
+| `validators: { onSubmit: CreateXBody }` alone | `revalidateLogic()` with `onDynamic`: an error stays until its value is valid |
+| `FieldErrors` as `Record<string, string>` | `Record<string, FieldError[]>`, each `{ message, code? }` |
 | `@tanstack/zod-form-adapter`, `validatorAdapter: zodValidator()` | removed in TanStack Form 1: pass the zod schema directly (Standard Schema) |
-| `form.useStore(selector)`, `form.Provider` | `useStore(form.store, selector)` or `form.Subscribe`; no provider |
-| React 19 `<form action>` with `useActionState` for a server write | `onSubmit` + `mutateAsync`: TanStack Form owns values, submit state and errors, and an action adds a second owner that resets uncontrolled fields on success |
-| `.optional()` on a body key in `api.zod.ts`, and `data: value` failing TS2375 | orval's `override.zod.exactOptional: true` emits `.exactOptional()` (`tanstack-query-api`) |
-| `<input onChange={(e) => field.handleChange(e.target.value)}>` | `Field.Control onValueChange={field.handleChange}` through `TextField` |
-| `Field.Error` without `match` for a library error | `match={error !== undefined}`; without it the error shows only for native validity |
+| `form.useStore(selector)`, `form.Provider` | `useStore(form.store, selector)` or `form.Subscribe`; `form.AppForm` is the only provider |
+| React 19 `<form action>` with `useActionState` for a server write | `onSubmit` + `mutateAsync`: an action adds a second owner of values and errors |
 
 ## Red Flags — STOP
 
 | About to… | Do this instead |
 |---|---|
 | `const isDirty = useStore(form.store, (s) => s.isDirty)` then `shouldBlockFn: () => isDirty` | `shouldBlockFn: () => !form.state.isDefaultValue && ...`: a rendered snapshot is still dirty right after `reset()` |
-| `field.state.meta.errors.join(", ")` | `firstError(field.state.meta.errors)`: schema issues are `{ message }` objects |
-| Wrap the form in Base UI `<Form>` | a plain `<form noValidate>`; TanStack Form owns the state |
+| `value={String(value)}` on a number input | `field.NumberField`: rendering the number back on every keystroke turns `0.05` into 5 |
+| `field.state.meta.errors.join(", ")` | a bound part: schema issues are `{ message }` objects |
+| `{error.message}` or `form: error.message` after a failed save | `form.Form` with its `failed` sentence: `ApiError.message` is for developers |
+| Wrap the form in Base UI `<Form>` | `form.Form`; TanStack Form owns the state |

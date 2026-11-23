@@ -7,8 +7,9 @@ OpenAPI backend.
 
 - `pnpm check` - the gate after every change: Biome, `tsc`, knip, Vitest.
 - `pnpm test` / `pnpm exec vitest related <files> --run` - all tests / the tests a change touches.
-- `pnpm test:e2e` - Playwright against the production build and `e2e/stub-api.ts`; run it when
-  routes, `vite.config.ts`, `deploy/` or `index.html` change.
+- `pnpm test:e2e` - Playwright against the production build and `e2e/stub-api.ts`, in desktop
+  Chromium and a phone-sized WebKit; run it when routes, layout, `vite.config.ts`, `deploy/` or
+  `index.html` change.
 - `pnpm api:generate` - regenerate `src/api/generated/` after `openapi.json` changes.
 - `pnpm format` - Biome formatting and safe fixes.
 
@@ -29,8 +30,10 @@ No barrels, no default exports (config files excepted), kebab-case file names.
 
 ## Rules that are easy to miss
 
-- Server data lives in the Query cache: loaders call `queryClient.query({ ...getXQueryOptions(),
-  staleTime: "static" })`, components call `useSuspenseQuery(getXSuspenseQueryOptions())`.
+- Server data lives in the Query cache: loaders call `loadQuery(queryClient, getXQueryOptions())`
+  from `@/shared/lib/load-query`, components call `useSuspenseQuery(getXSuspenseQueryOptions())`.
+- Forms use `useAppForm` from `@/shared/hooks/use-app-form`; a failed submit's errors go through
+  `submitErrors` from `@/shared/lib/submit-errors`.
 - URL state (page, filters) goes in `validateSearch`, never in `useState`; a link or redirect that
   changes one key writes `search={(prev) => ({ ...prev, page })}` to keep the others.
 - Every page renders exactly one `h1` inside `main`: `createAppRouter` moves focus to it after a
@@ -50,4 +53,7 @@ No barrels, no default exports (config files excepted), kebab-case file names.
   401 as `ApiError`.
 - Tests render the whole app with `renderRoute(path)` and answer the network with
   `server.use(...)`; never mock the app's own modules.
+- The file name picks the test environment: `*.test.tsx` and `*.dom.test.ts` run in jsdom, every
+  other `*.test.ts` in Node without a DOM (`document is not defined` means a misnamed file).
+- Browser code under `src/` never uses `process`, `Buffer` or a `node:` import; tests and config may.
 - `wrangler` is the Cloudflare deploy CLI (`pnpm exec wrangler deploy`); no CI job deploys yet.

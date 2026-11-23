@@ -21,8 +21,8 @@ import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
-import type { Plugin } from "vite";
-import { defineConfig } from "vitest/config";
+import type { Plugin, PluginOption, ResolvedConfig } from "vite";
+import { defaultExclude, defineConfig } from "vitest/config";
 import { caddyHeaders, cloudflareHeaders, headersFor, isBareOrigin } from "./deploy/headers.ts";
 
 // The only variables that reach the bundle. Each is public, and each is an origin the CSP allows.
@@ -99,26 +99,54 @@ export function entryBudget(limit: number): Plugin {
   };
 }
 
+/**
+ * The React Compiler, under Vitest too. A coverage run (`--coverage` or `coverage.enabled`) leaves it
+ * out: its memo caches double the branch count.
+ */
+function reactCompiler(): PluginOption[] {
+  const preset = reactCompilerPreset();
+  const rolldown = {
+    ...preset.rolldown,
+    configResolvedHook: (config: ResolvedConfig) => !config.test?.coverage?.enabled,
+  };
+  return [
+    babel({ presets: [{ ...preset, rolldown }] }),
+    {
+      name: "react-compiler-state",
+      // Read from Vitest's own resolved config, so a test can check the switch above.
+      configureVitest: ({ vitest, project }) => {
+        project.provide("reactCompiler", !vitest.config.coverage.enabled);
+      },
+    },
+  ];
+}
+
+declare module "vitest" {
+  interface ProvidedContext {
+    reactCompiler: boolean;
+  }
+}
+
 export default defineConfig({
   envPrefix: PUBLIC_ENV,
   resolve: { tsconfigPaths: true },
   plugins: [
-    // Both off under Vitest, where they would skew coverage (split chunks map back poorly, compiler
-    // memo caches double the branch count); E2E runs the production build with both.
+    // Off under Vitest, where split chunks map back poorly to coverage; E2E runs the production build.
     tanstackRouter({
       target: "react",
       autoCodeSplitting: !process.env.VITEST,
       routeFileIgnorePattern: String.raw`\.test\.tsx?$`,
     }),
     react(),
-    !process.env.VITEST && babel({ presets: [reactCompilerPreset()] }),
+    reactCompiler(),
     tailwindcss(),
     securityHeaders(PUBLIC_ENV),
     entryBudget(ENTRY_BUDGET_BYTES),
   ],
   build: {
-    // The browser floor: Tailwind 4 needs Firefox 128; the rest matches `lib: es2024` in tsconfig.json.
-    target: ["chrome119", "edge119", "firefox128", "safari17.4"],
+    // The browser floor: Baseline Widely Available at the last version audit (the newest releases on
+    // or before 23 May 2024), Firefox raised to 128 for Tailwind 4. It moves at every audit.
+    target: ["chrome125", "edge125", "firefox128", "safari17.5"],
     // An inlined data: URL would need data: in the CSP's img-src and font-src.
     assetsInlineLimit: 0,
     // Written for the error tracker's upload, never referenced from the bundle, never deployed.
@@ -135,9 +163,28 @@ export default defineConfig({
   server: { port: 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
   test: {
-    environment: "jsdom",
-    include: ["**/*.test.{ts,tsx}"],
-    setupFiles: ["src/test/setup.ts"],
+    // Chosen by file name: `*.test.tsx` and `*.dom.test.ts` get a DOM, every other `*.test.ts` runs in Node.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "node",
+          environment: "node",
+          include: ["**/*.test.ts"],
+          exclude: [...defaultExclude, "**/*.dom.test.ts"],
+          setupFiles: ["src/test/setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "dom",
+          environment: "jsdom",
+          include: ["**/*.test.tsx", "**/*.dom.test.ts"],
+          setupFiles: ["src/test/setup.ts", "src/test/setup-dom.ts"],
+        },
+      },
+    ],
     env: { TZ: "UTC" },
     restoreMocks: true,
     unstubGlobals: true,
@@ -166,8 +213,10 @@ there is no separate `vitest.config.ts`.
    option is gone: `react({ babel: { ... } })` fails `tsc` with TS2353 (`'babel' does not exist
    in type 'Options'`). Its `compiler` option is experimental and needs `oxc-transform-react`,
    which is not installed; do not use it.
-3. `babel({ presets: [reactCompilerPreset()] })` from `@rolldown/plugin-babel` runs the React
-   Compiler; it needs `@babel/core` and `babel-plugin-react-compiler` as dev dependencies.
+3. `reactCompiler()`: `babel({ presets: [...] })` from `@rolldown/plugin-babel` with
+   `reactCompilerPreset()`, which runs the React Compiler; it needs `@babel/core` and
+   `babel-plugin-react-compiler` as dev dependencies. The preset compiles browser modules only
+   (its `applyToEnvironmentHook`), so files of the `node` test project are never compiled.
 4. `tailwindcss()`.
 5. `securityHeaders(PUBLIC_ENV)`: validates the public origins with `isBareOrigin` from
    `deploy/headers.ts`, emits `_headers`, `headers.caddy`
@@ -175,13 +224,20 @@ there is no separate `vitest.config.ts`.
    `frontend-deploy`'s, generated from `deploy/headers.ts`.
 6. `entryBudget(ENTRY_BUDGET_BYTES)`, `apply: "build"` only.
 
-Off under Vitest (`process.env.VITEST` is set by Vitest; a `false` entry in `plugins` is
-skipped): the React Compiler and route code splitting. Compiled components carry memo-cache
-branches that only an unchanged re-render takes: on the scaffold they raise the v8 branch count
-from 179 to 323, so the gate would measure the compiler instead of the app. Split route chunks
-map back to source poorly. The end-to-end suite runs the
-production build with both on. Do not turn either on in tests to "test what ships": that is
-what `pnpm test:e2e` is for.
+The React Compiler runs under `pnpm test`, so a test that renders code with a bug that exists
+only when compiled (mutating a prop with `push` or `sort`) fails under `pnpm test`, `pnpm check`
+and CI's plain test step. The coverage run leaves the compiler out and passes it: the preset's
+`rolldown.configResolvedHook` returns `!config.test?.coverage?.enabled`, and Vitest has merged
+`--coverage` and `--coverage.enabled=true` into that config before the hook runs, so the switch
+needs no script variable. Compiled components carry memo-cache branches that only an unchanged
+re-render takes: on the scaffold they raise the v8 branch count from 183 to 333, so the gate
+would measure the compiler instead of the app. The `react-compiler-state` plugin provides
+`inject("reactCompiler")` from Vitest's own resolved config, and
+`src/app/react-compiler.dom.test.ts` fails if the switch and the transform disagree. Running
+the compiler in tests cost nothing measurable on the scaffold (median 3.18 s against 3.27 s).
+
+Route code splitting stays off under Vitest (`!process.env.VITEST`): split chunks map back to
+source poorly. The end-to-end suite runs the production build with both on.
 
 `resolve.tsconfigPaths: true` makes Vite resolve the `@/*` alias from `tsconfig.json`; the
 option defaults to `false`, and no alias plugin or `resolve.alias` copy is needed.
@@ -206,6 +262,11 @@ origin and lands in the CSP's `connect-src`. `isBareOrigin` accepts `http`, `htt
 a path or trailing slash, and the characters that would widen the CSP or become a Caddy
 placeholder (`;`, `,`, `{`, `$`, `'`, a space). The other steps are
 `frontend-deploy`'s procedure for adding an origin.
+
+In dev the app calls `PUBLIC_API_ORIGIN` directly, and the backend's CORS allows the dev origin.
+A team that wants `server.proxy` keeps the variable a bare origin, the dev server's own
+(`http://localhost:5173`; `/api` fails as `not a bare origin`), and proxies only paths no page
+route uses.
 
 ## The bundle budget
 
@@ -238,19 +299,34 @@ RolldownError: entry + static imports: <n> B gzip (budget 160000 B)
 
 | Key | Why |
 |---|---|
-| `build.target` | The browser floor. The Vite 8 default (`baseline-widely-available`) is lower; Tailwind 4 needs Firefox 128. Raise it only together with `lib` in `tsconfig.json`. |
+| `build.target` | The browser floor (below the table). |
 | `build.assetsInlineLimit: 0` | No `data:` URLs, which the CSP would have to allow. |
 | `build.sourcemap: "hidden"` | Maps are written for an error tracker and never referenced; removing them from the deployed files is `frontend-deploy`'s. |
 | `build.rolldownOptions.output.codeSplitting.groups` | One group puts `src/app/zod-config.ts` and the zod core it imports into a `zod-*.js` chunk that every schema-building chunk imports, so `jitless` is set before any schema probes `eval` (a Trusted Types violation). Static schema imports in entry code are then safe whatever the chunking; the entry budget counts that chunk. Route splitting comes from the router plugin. |
 | `server`/`preview` `strictPort` | Fails when 5173 or 4173 is taken instead of moving to another port; Playwright expects 4173. |
 
+### The browser floor
+
+`build.target` is `chrome125`, `edge125`, `firefox128`, `safari17.5`: the browsers that are
+Baseline Widely Available on the date of the last version audit (the newest releases at least 30
+months old), with Firefox never below 128, which Tailwind 4 needs. It moves at every version
+audit, never between them. Vite 8's own default (`baseline-widely-available`) is a fixed, older
+list. What the floor guards and what it does not:
+
+- `build.target` lowers JavaScript syntax and CSS that Lightning CSS can rewrite; it adds no API
+  and no polyfill.
+- `lib: ["es2024", "dom"]` in `tsconfig.json` stops JavaScript built-ins from ES2025 on
+  (`Promise.try`, iterator helpers, `Temporal`) with a type error.
+- Nothing stops a DOM API or a CSS feature newer than the floor (`URL.parse`, `for await` over a
+  `ReadableStream`): the `dom` lib tracks current Chromium and CSS is never type-checked. The
+  rule for people is `frontend-code-style`'s.
+
 ## The test block
 
 | Key | Why |
 |---|---|
-| `environment: "jsdom"` | One DOM for every test. |
-| `include: ["**/*.test.{ts,tsx}"]` | Also collects the config tests next to their config (`vite.config.test.ts`, `deploy/headers.test.ts`, `biome-plugins/boundaries.test.ts`). |
-| `setupFiles` | The MSW server, jest-dom matchers, cleanup, storage clearing and the `reportError` guard. Its content is `frontend-testing`'s. |
+| `projects` | Two, chosen by file name with no judgement: `node` runs every `*.test.ts` except `*.dom.test.ts` in Node with `src/test/setup.ts`; `dom` runs `*.test.tsx` and `*.dom.test.ts` in jsdom with `setup.ts` then `setup-dom.ts`. Both `extends: true`, so every other key below applies to both. Which test goes where and what each setup file holds is `frontend-testing`'s. |
+| `projects[].include` | Also collects the config tests next to their config (`vite.config.test.ts`, `deploy/headers.test.ts`, `biome-plugins/boundaries.test.ts`), which run in `node`. |
 | `env: { TZ: "UTC" }` | Dates format the same on every machine. |
 | `restoreMocks`, `unstubGlobals`, `unstubEnvs` | Every test starts from the real implementations. |
 | `sequence.shuffle` | Order-dependent tests fail early. |
@@ -259,3 +335,11 @@ RolldownError: entry + static imports: <n> B gzip (budget 160000 B)
 | `coverage.exclude` | Generated code, the test harness and `main.tsx`. Which code belongs in the denominator is `frontend-testing`'s call. |
 
 `globals` is not set (default `false`): tests import `test`, `expect` and `vi` from `vitest`.
+
+The split exists because jsdom took 40 to 47 % of the run while most `*.test.ts` files need no
+DOM; on the scaffold it cut the median run from about 4.0 s to 3.3 s. A `*.test.ts` that touches
+the DOM fails in `node` with `ReferenceError: document is not defined` (storage: `TypeError:
+Cannot read properties of undefined (reading 'setItem')`): rename it to `*.dom.test.ts`, so the
+file name keeps deciding. `isolate: false` gave no stable gain, and
+`pool: "vmThreads"` breaks MSW (`WritableStream is not defined`) and `vite.config.test.ts`, so
+neither is used.

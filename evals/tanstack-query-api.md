@@ -13,6 +13,9 @@
 7. "why does orval.config.ts set includeHttpResponseReturnType false and shouldSplitQueryKey true?"
 8. "the API returns price as \"12.50\", a string. should I turn it into a number when it arrives?"
 9. "replace the Previous/Next pagination on /users with a Load more button"
+10. "the jobs page should refresh every 30 seconds and say when the data is out of date if the API stops answering"
+11. "let users download their invoice PDF from the API; a plain link gets a 401"
+12. "show a progress bar while the avatar file uploads"
 
 **Should not load**
 
@@ -23,6 +26,7 @@
 5. "patch the cached users list when a Centrifugo message says a user was renamed" -> `frontend-realtime`
 6. "the users table re-renders on every keystroke in the search box, make it cheaper" -> `vercel-react-best-practices`
 7. "staging calls a different API origin, add it to the CSP connect-src" -> `frontend-deploy`
+8. "reject avatar files over 5 MB with an error under the file input before anything is sent" -> `frontend-forms`
 
 ### Eval 1 - quick-add mutation that refreshes the list
 
@@ -55,7 +59,7 @@
 **Must produce**:
 
 - `pnpm format` and `pnpm api:generate` named as the steps after copying the document, with `src/api/generated/` committed together with `openapi.json`
-- the loader filling the cache with `queryClient.query({ ...getListUserSessionsQueryOptions(...), staleTime: "static" })`
+- the loader filling the cache with `loadQuery(context.queryClient, getListUserSessionsQueryOptions(...))`
 - the user and the sessions fetched in parallel in the loader (`Promise.all`)
 - the component reading with `useSuspenseQuery(getListUserSessionsSuspenseQueryOptions(...))`
 
@@ -63,6 +67,7 @@
 
 - a hand edit of `src/api/generated/api.ts`
 - `ensureQueryData`, `prefetchQuery` or `fetchQuery`
+- `queryClient.query({ ...options, staleTime: "static" })` in the loader, which returns an invalidated entry
 - a hand-written `queryFn` or `queryKey` for the sessions
 - a `useEffect` that fetches
 - a zod `.parse` of the response
@@ -106,6 +111,47 @@
 - `fetchInfiniteQuery`, `prefetchInfiniteQuery` or `ensureInfiniteQueryData`
 - a `useState` array that accumulates pages fetched in an effect
 
+### Eval 5 - a polled screen
+
+**Prompt**: "The users list should refresh itself every 30 seconds while it is open, and show when it was last updated. If the API stops answering, people must be able to tell the list is out of date."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- `refetchInterval: 30_000` (or 30000) passed through the generated getter's `query` argument
+- `retry: false` on the polled query, so a failed poll waits for the next tick
+- the time shown from `dataUpdatedAt`
+- the list marked as old from `isRefetchError` and `isPaused` (or `errorUpdatedAt` later than `dataUpdatedAt`), with the rows kept on screen
+- `meta: { silent: true }` on the polled query, so a failed tick raises no refresh toast
+
+**Must not produce**:
+
+- a `setInterval` or `useEffect` that calls `refetch` or `invalidateQueries`
+- a separate offline screen or a `navigator.onLine` check
+- a timeout passed as the getter's `request: { signal }`
+- `networkMode: "always"` set for queries
+
+### Eval 6 - delete from the detail page
+
+**Prompt**: "Add a Delete button on /users/$userId that deletes the user and returns to /users. The backend added `DELETE /users/{id}` and I regenerated the client, so `getDeleteUserMutationOptions` exists."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- `useMutation(getDeleteUserMutationOptions(...))`
+- the mutation's `onSuccess` returning `client.invalidateQueries({ queryKey: getListUsersQueryKey(), refetchType: "none" })`
+- navigation to `/users` after the mutation has settled (in `mutate`'s own `onSuccess`, or after `await mutateAsync`)
+- `removeQueries({ queryKey: getGetUserQueryKey(...), exact: true })` after the navigation
+- the button disabled while `isPending`
+
+**Must not produce**:
+
+- `await navigate(...)` inside the mutation options' `onSuccess`
+- a list invalidation that refetches the mounted detail (no `refetchType: "none"`)
+- `removeQueries` on the detail key before navigating away
+
 ### Probe 1 - deprecated loader read
 
 **Prompt**: "In our TanStack Router 1 + TanStack Query 5.108 app, orval generated getGetOrderQueryOptions(id) and getGetOrderSuspenseQueryOptions(id). Write the loader for /orders/$orderId so the order is in the Query cache before the page renders."
@@ -114,7 +160,7 @@
 
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.(?:ensureQueryData|prefetchQuery|fetchQuery)\(\s*[\w{])`
 
-**Right answer**: `queryClient\.query\(\s*\{\s*\.\.\.getGetOrderQueryOptions\(`
+**Right answer**: `queryClient\.query\(\s*\{\s*\.\.\.getGetOrderQueryOptions\(|loadQuery\(\s*(?:context\.)?queryClient,\s*getGetOrderQueryOptions\(`
 
 ### Probe 2 - suspense options in a loader
 
@@ -122,9 +168,9 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.query\(\s*(?:\{\s*\.\.\.)?get\w+SuspenseQueryOptions\()`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:\.query|\bloadQuery)\(\s*(?:(?:context\.)?queryClient,\s*)?(?:\{\s*\.\.\.)?get\w+SuspenseQueryOptions\()`
 
-**Right answer**: `\.query\(\s*\{\s*\.\.\.getGetOrderQueryOptions\(`
+**Right answer**: `\.query\(\s*\{\s*\.\.\.getGetOrderQueryOptions\(|loadQuery\(\s*(?:context\.)?queryClient,\s*getGetOrderQueryOptions\(`
 
 ### Probe 3 - hand-written key
 
@@ -192,9 +238,9 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.prefetchQuery\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:await\s+(?:context\.)?queryClient\.query\(\s*(?:\{\s*\.\.\.)?get\w*Audit\w*Options)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:await\s+(?:context\.)?queryClient\s*\.query\((?:(?!\bloader\b|\x60\x60\x60)[\s\S])*?\bvoid\s+(?:context\.)?queryClient\s*\.query\(\s*\{\s*\.\.\.get\w*Audit)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.prefetchQuery\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:await\s+(?:(?:context\.)?queryClient\.query\(\s*(?:\{\s*\.\.\.)?|loadQuery\(\s*(?:context\.)?queryClient,\s*)get\w*Audit\w*Options)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:await\s+(?:context\.)?queryClient\s*\.query\((?:(?!\bloader\b|\x60\x60\x60)[\s\S])*?\bvoid\s+(?:context\.)?queryClient\s*\.query\(\s*\{\s*\.\.\.get\w*Audit)`
 
-**Right answer**: `void\s+(?:context\.)?queryClient\s*\.query\([\s\S]*?\.catch\(\s*\(\)\s*=>\s*undefined\s*\)`
+**Right answer**: `void\s+(?:(?:context\.)?queryClient\s*\.query|loadQuery)\([\s\S]*?\.catch\(\s*\(\)\s*=>\s*undefined\s*\)`
 
 ### Probe 11 - null query parameter
 
@@ -212,7 +258,7 @@
 
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:refetchType:\s*["']all["'])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:staleTime:\s*0\b)`
 
-**Right answer**: `removeQueries\(\s*\{[^}]*type:\s*["']inactive["']|setQueriesData\(`
+**Right answer**: `loadQuery\(|defaultStaleReloadMode|setQueriesData\(`
 
 ### Probe 13 - raw path parameter
 
@@ -230,6 +276,54 @@
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:onSuccess\b(?:(?!removeQueries|navigate\()[\s\S])*?invalidateQueries\(\s*\{\s*queryKey:\s*getListUsersQueryKey\(\s*\))`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:onSuccess:\s*async\s*\([^)]*\{\s*client\s*\}\s*\)|mutation:\s*\{\s*onSuccess:\s*async\b)(?:(?!\x60\x60\x60)[\s\S]){0,300}?await\s+navigate\()|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:invalidateQueries\(\s*\{\s*queryKey:\s*getListUsersQueryKey\(\s*\)\s*\}\s*\)(?:(?!\x60\x60\x60)[\s\S]){0,400}?\bnavigate\(\s*\{\s*to:\s*["']\/users["'])`
 
-**Right answer**: `removeQueries\(\s*\{\s*queryKey:\s*getGetUserQueryKey\(`
+**Right answer**: `refetchType:\s*["']none["']`
+
+### Probe 15 - a timeout through the getter's request options
+
+**Prompt**: "The users list polls every 30 seconds. Give up on a poll that gets no answer within 10 seconds."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:request:\s*\{[^}]*\bsignal:\s*AbortSignal\.timeout\()`
+
+**Right answer**: `AbortSignal\.any\(`
+
+### Probe 16 - multipart Content-Type by hand
+
+**Prompt**: "The backend added `POST /users/{id}/avatar` taking `multipart/form-data` with a `file` field; I regenerated the client. Write the upload call for the avatar picker."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:["']?Content-Type["']?\s*[:,]\s*["']multipart\/form-data)`
+
+### Probe 17 - retrying a failed poll
+
+**Prompt**: "The job status card polls `getGetJobQueryOptions(jobId)` every 15 seconds. Write the card's query."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:refetchInterval:[^\n]*\n?(?:[^\n]*\n){0,4}?[^\n]*\bretry:\s*(?:[1-9]|true))`
+
+**Right answer**: `retry:\s*false`
+
+### Probe 18 - a read timeout retried
+
+**Prompt**: "Our API gateway sometimes hangs and apiFetch's 30 s timeout fires. Make createQueryClient's queries cope with it better."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:instanceof\s+TypeError\s*\|\|[^;]{0,120}?["']TimeoutError["'])`
+
+**Right answer**: `timeoutMs`
+
+### Probe 19 - a polled screen's toast
+
+**Prompt**: "The polled job list already says 'may be out of date' when a poll fails, but users also get a 'Could not refresh the data' toast on every failed poll. Stop the toast for that list only."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:onError:[^\n]*\n?(?:[^\n]*\n){0,3}?[^\n]*(?:refetchInterval|queryKey\[0\]))`
+
+**Right answer**: `meta:\s*\{\s*silent:\s*true`

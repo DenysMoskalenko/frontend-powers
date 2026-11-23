@@ -30,7 +30,22 @@ export function describeEvent(event: OrderEvent): string {
     case "cancelled":
       return event.reason ?? "Cancelled";
     default:
-      return event satisfies never;
+      // The server may send a variant this build does not know yet.
+      event satisfies never;
+      return "Unknown event";
+  }
+}
+
+type Tab = "profile" | "security";
+
+export function tabTitle(tab: Tab): string {
+  switch (tab) {
+    case "profile":
+      return "Profile";
+    case "security":
+      return "Security";
+    default:
+      return tab satisfies never;
   }
 }
 
@@ -42,8 +57,14 @@ export const statusLabel = {
 ```
 
 Adding a variant to `OrderEvent` fails `tsc` with TS1360 at `satisfies never`; adding a status
-fails it at `statusLabel`. Biome's `useExhaustiveSwitchCases` is silent once a `default` exists, so
-the `satisfies never` line is the guarantee.
+fails it at `statusLabel`. Biome's `useExhaustiveSwitchCases` (on in `biome.json`) reports missing
+cases only in a `switch` without a `default`, so with one the `satisfies never` line is the
+guarantee. That guarantee is compile-time only: `return value satisfies never` hands back the raw
+value at run time. A union the app alone produces (`Tab`) may end that way. A union that comes from
+the server can gain a variant before this build is replaced, so its `default` keeps
+`value satisfies never;` as a statement and then returns an explicit fallback, as `describeEvent`
+does, or throws `new Error("unknown order event", { cause: value })` where an error screen is the
+right outcome.
 
 Brand only where one signature takes ids of two entities and swapping them would compile:
 
@@ -200,7 +221,9 @@ export function CopyButton({ text }: { text: string }) {
 ```
 
 - `reportError` is a platform global with no import. It dispatches a `window` `error` event; a
-  tracker added later (`frontend-deploy` owns telemetry) listens there.
+  tracker added later (`frontend-deploy` owns telemetry) listens there. A promise rejection nobody
+  handles raises `unhandledrejection` instead, not `error`: Biome's `noFloatingPromises` keeps
+  them from being written, and an error tracker listens for that event itself.
 - A thrown error in a loader or render reaches `RouteError` (the router's
   `defaultErrorComponent`) or a route's own `errorComponent`, and React reports it through
   `rootErrorHandlers`, passed to `createRoot` in `main.tsx`. Rethrow; do not report first.
@@ -213,9 +236,57 @@ export function CopyButton({ text }: { text: string }) {
 
 ## Dates and money
 
-Dates go through the scaffold's `formatDateTime` in `src/shared/lib/format-date.ts`: a
-module-level `Intl.DateTimeFormat`, and `new Date(iso)` only inside it. Money goes through a
-formatter beside it:
+The API sends two kinds of date, and each has its own formatter in
+`src/shared/lib/format-date.ts`. An instant (`2026-03-01T09:30:00Z`, OpenAPI `format: date-time`)
+goes through the scaffold's `formatDateTime` and shows in the user's time zone. A calendar date
+(`2026-03-01`, `format: date`: a birthday, a due date) goes through `formatDate`, which the
+scaffold does not ship: the block below is the file with it added.
+`new Date("2026-03-01")` is midnight UTC, so a local-time formatter, `toLocaleDateString()` or
+`getDate()` shows 28 February to every user west of UTC; `formatDate` formats in UTC and shows the
+same day everywhere. Never pass a calendar date through local-time `Date` arithmetic; compare two
+as strings (`YYYY-MM-DD` sorts as text), and send a date input's value as it is (`frontend-forms`).
+
+```ts,verify
+// file: src/shared/lib/format-date.ts
+// English only until the app has translations; module level, so it is built once.
+const dateTime = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
+// A calendar date parses as midnight UTC: formatted in UTC it keeps its day in every time zone.
+const calendarDate = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
+
+/** Formats an ISO 8601 timestamp from the API for display. */
+export function formatDateTime(iso: string) {
+  return dateTime.format(new Date(iso));
+}
+
+/** Formats a calendar date from the API (`YYYY-MM-DD`), the same day in every time zone. */
+export function formatDate(isoDate: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) throw new Error(`not a calendar date: ${isoDate}`);
+  return calendarDate.format(new Date(isoDate));
+}
+```
+
+```ts,verify,test
+import { expect, test } from "vitest";
+import { formatDate } from "@/shared/lib/format-date";
+
+test("a calendar date keeps its day west of UTC", () => {
+  const newYork = new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeZone: "America/New_York",
+  });
+  expect(newYork.format(new Date("2026-03-01"))).toBe("Feb 28, 2026");
+  expect(formatDate("2026-03-01")).toBe("Mar 1, 2026");
+});
+
+test("a timestamp is not a calendar date", () => {
+  expect(() => formatDate("2026-03-01T09:30:00Z")).toThrow("not a calendar date");
+});
+```
+
+The first assertion is the bug a local-time formatter has in New York; `formatDate` ignores the
+process time zone by construction. Tests that run under another `TZ` are `frontend-testing`'s.
+
+Money goes through a formatter beside it:
 
 ```ts,verify
 // file: src/shared/lib/format-money.ts
@@ -242,17 +313,19 @@ export function formatMoney(amount: string, currency: string) {
 
 /** Integer minor units: exact for display below 2^53; sums stay in integers. */
 export function formatMinor(amountMinor: number, currency: string) {
-  return moneyFormat(currency).format(amountMinor / 100);
+  const format = moneyFormat(currency);
+  // JPY has no minor unit and KWD has three: the currency's own digits give the divisor.
+  return format.format(amountMinor / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2));
 }
 ```
 
 `Intl.NumberFormat#format` is typed to take a number, a bigint or a `` `${number}` `` string, so a
-plain `string` fails with TS2769; the guard narrows it. A currency with other than two minor digits (JPY, KWD)
-needs its own divisor. When the app gains translations the locale comes from i18next
-(`frontend-i18n`).
+plain `string` fails with TS2769; the guard narrows it. When the app gains translations the locale
+comes from i18next (`frontend-i18n`).
 
 ```ts,verify,test
 import { expect, test } from "vitest";
+import { formatMinor } from "@/shared/lib/format-money";
 
 const euro = new Intl.NumberFormat("en", { style: "currency", currency: "EUR" });
 
@@ -260,5 +333,11 @@ test("a decimal string keeps digits that parseFloat loses", () => {
   const amount = "12345678901234567.89";
   expect(euro.format(amount)).toBe("€12,345,678,901,234,567.89");
   expect(euro.format(Number.parseFloat(amount))).toBe("€12,345,678,901,234,568.00");
+});
+
+test("minor units follow each currency's own fraction digits", () => {
+  expect(formatMinor(123_456, "USD")).toBe("$1,234.56");
+  expect(formatMinor(123_456, "JPY")).toBe("¥123,456");
+  expect(formatMinor(123_456, "KWD")).toBe("KWD\u00a0123.456");
 });
 ```

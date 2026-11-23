@@ -79,9 +79,15 @@ message first):
 {
   "check": "biome check && pnpm i18n:check && tsc && knip && vitest run",
   "i18n:extract": "i18next-cli extract && i18next-cli types",
-  "i18n:check": "i18next-cli extract --ci && i18next-cli types --ci && i18next-cli status && i18next-cli lint"
+  "i18n:check": "i18next-cli extract --ci && i18next-cli types --ci && i18next-cli lint",
+  "i18n:status": "i18next-cli status"
 }
 ```
+
+`status` is not in `i18n:check`: it fails until every language has every key, and a commit gate
+that waits for translators pushes people to paste machine translation. Between releases a missing
+translation shows the English text (i18next 27 falls back on `""`), and `status` gates the release
+instead.
 
 `.pre-commit-config.yaml`, a local hook before `tsc`:
 
@@ -94,15 +100,32 @@ message first):
         pass_filenames: false
 ```
 
-Both CI files, in the `check` job after the Biome step:
+The CI file the app has, in the `check` job after the Biome step. GitLab (`.gitlab-ci.yml`):
 
 ```yaml
     - pnpm i18n:check
 ```
 
+GitHub Actions (`.github/workflows/ci.yml`):
+
 ```yaml
       - run: pnpm i18n:check
 ```
+
+The release gate goes in the job that deploys to production, or that tags a release, before its
+build step; a preview or staging deploy skips it. In GitLab, in that job's `script`:
+
+```yaml
+    - pnpm i18n:status
+```
+
+In GitHub Actions, a step of that job:
+
+```yaml
+      - run: pnpm i18n:status
+```
+
+Run `pnpm i18n:status` locally to see what is left; `pnpm i18n:status ru` lists the keys.
 
 `biome.json`: the generated resources file is not linted, like the route tree:
 
@@ -146,8 +169,8 @@ A string that stays English on purpose (the start-up failure in `main.tsx`) carr
 1. Write the code with `t("...")` calls and literal keys.
 2. `pnpm i18n:extract`: new keys appear in every language file and in `resources.d.ts`.
 3. Replace each English placeholder value (the key repeated) with the English text, and fill the
-   other languages, or hand them to translators: `status` keeps failing on `""` until they are
-   filled.
+   other languages, or hand them to translators: until then those languages show the English
+   text, and `pnpm i18n:status` fails the release.
 4. `pnpm i18n:extract` again after editing text by hand: `types` only rewrites
    `resources.d.ts` when it runs, and `types --ci` fails on the stale literal values.
 5. `pnpm check`.

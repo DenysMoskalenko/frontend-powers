@@ -45,7 +45,7 @@ jobs:
   # The template's own gate, as a new app's CI runs it. The copy sits beside the checkout, outside the repository.
   scaffold:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CI: "1"
       PUBLIC_API_ORIGIN: https://api.example.com
@@ -77,8 +77,9 @@ jobs:
           diff -r "$RUNNER_TEMP/generated-committed" src/api/generated
       - working-directory: app
         run: pnpm build
+      # The suite's two projects: `chromium` and `phone` (WebKit); --with-deps adds their system libraries.
       - working-directory: app
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium webkit
       - working-directory: app
         run: pnpm test:e2e
       - run: docker build --build-arg PUBLIC_API_ORIGIN="$PUBLIC_API_ORIGIN" --tag scaffold-check app

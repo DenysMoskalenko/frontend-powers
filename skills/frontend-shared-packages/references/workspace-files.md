@@ -148,7 +148,7 @@ permissions:
 | Key | Behaviour at pnpm 12.22 |
 |---|---|
 | `packages` | the project globs; the root is always a project too |
-| `catalog` | `"catalog:"` in any `dependencies`, `devDependencies` or `peerDependencies` resolves here; `pnpm pack` and `pnpm publish` write the catalog's exact version into the manifest |
+| `catalog` | `"catalog:"` in any `dependencies`, `devDependencies` or `peerDependencies` resolves here; `pnpm pack` and `pnpm publish` write the catalog's exact version into the manifest; a publishing workspace adds a `peers` catalog of ranges (`references/ci-and-release.md`) |
 | `catalogMode: strict` | `pnpm add <new-pkg>` writes the version into the catalog and `"catalog:"` into `package.json`; `pnpm add` of a `react` version other than the catalog entry fails with `ERR_PNPM_CATALOG_VERSION_MISMATCH` ... `Wanted dependency outside the version range defined in catalog` |
 | the rest | the scaffold's supply-chain block, unchanged; `frontend-tooling` owns its keys |
 

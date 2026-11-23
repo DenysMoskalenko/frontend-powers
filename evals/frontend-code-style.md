@@ -115,7 +115,7 @@ tsc reports TS1294, TS1484, TS18048 and TS2379."
 
 ### Eval 4 - money and dates from the API
 
-**Prompt**: "Orders come from the API as `{ total: "1234.50", currency: "EUR", created_at: "2026-11-19T10:00:00Z" }`. Write the helper that formats the total and the date for the order row."
+**Prompt**: "Orders come from the API as `{ total: "1234.50", currency: "EUR", created_at: "2026-11-19T10:00:00Z", due_date: "2026-12-01" }` (`due_date` is OpenAPI `format: date`). Write the helpers that format the total and both dates for the order row."
 
 **Fixture**: scaffold
 
@@ -124,12 +124,14 @@ tsc reports TS1294, TS1484, TS18048 and TS2379."
 - `Intl.NumberFormat` and `Intl.DateTimeFormat` instances created at module level, not per call or per render.
 - The decimal string passed to `format` as a string, narrowed to a numeric-string type first.
 - `created_at` kept as an ISO string and turned into a `Date` only to format it.
+- `due_date` formatted in UTC: `formatDate` added to `src/shared/lib/format-date.ts` as `frontend-code-style` writes it (the scaffold ships only `formatDateTime`), or a module-level formatter with `timeZone: "UTC"`.
 
 **Must not produce**:
 
 - `parseFloat(total)`, `Number(total)` or `+total` before formatting.
 - `Temporal`, `moment` or `dayjs`.
 - `new Intl.NumberFormat(` inside the formatting function's body without a cache.
+- `due_date` shown through `toLocaleDateString()`, `getDate()` or a formatter without `timeZone: "UTC"`, which shows 30 November west of UTC.
 
 ### Probe 1 - enum for a fixed set
 
@@ -284,3 +286,33 @@ export function Panel({ children }: { children: React.ReactNode }) {
 **Wrong answer**: `^(?![\s\S]*(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\buse(?:Callback|Effect)\s*\()`
 
 **Right answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\buse(?:Callback|Effect)\s*\(`
+
+### Probe 15 - calendar date in local time
+
+**Prompt**: "Show the order's `due_date` (OpenAPI `format: date`, for example `"2026-03-01"`) in the orders table. Write only the function that formats it."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.toLocale(?:Date)?String\((?![^)]*timeZone)|\.get(?:Date|Month|FullYear)\(\))`
+
+**Right answer**: `timeZone:\s*["\x27]UTC["\x27]|\bformatDate\(`
+
+### Probe 16 - an API above the browser floor
+
+**Prompt**: "Write `safeLink(value: string): string | undefined` in src/shared/lib/safe-link.ts: parse a user-supplied link and return it only when it is an https link."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bURL\.parse\s*\()`
+
+**Right answer**: `new\s+URL\(`
+
+### Probe 17 - exhaustive switch over a server union
+
+**Prompt**: "GET /orders/{id}/events returns events typed `{ type: "paid" } | { type: "shipped"; trackingCode: string } | { type: "cancelled" }` in the generated client. Write `describeEvent(event)` in the orders feature, returning a label for each type."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:default\s*:\s*return\s+\w+\s+satisfies\s+never)`
+
+**Right answer**: `satisfies\s+never`

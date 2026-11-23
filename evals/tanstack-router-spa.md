@@ -12,6 +12,8 @@
 6. "GET /users/{id} answering 404 shows the generic error page instead of 'User not found'"
 7. "use a custom dialog with useBlocker instead of window.confirm when leaving the page"
 8. "the Users nav link stays highlighted on /users/new, how do I make it exact?"
+9. "after deleting a user and going back to /users the deleted row is still there for a moment, the loader uses staleTime static"
+10. "the /reports page takes three seconds to load, should it get a pendingComponent or is the progress bar enough?"
 
 **Should not load**
 
@@ -35,7 +37,7 @@
 - `q` declared with `z.coerce.string()`
 - `sort` declared with `z.enum(...)`
 - `loaderDeps` adding `q` and `sort` to the API params only when set (`...(search.q !== undefined && { q: search.q })`)
-- the loader still calling `context.queryClient.query({ ...getListUsersQueryOptions(deps), staleTime: "static" })`
+- the loader still calling `loadQuery(context.queryClient, getListUsersQueryOptions(deps))`
 - the filter write going through `navigate({ search: (prev) => ({ ...prev, ... }) })` or `<Link search>` with `page: undefined`
 - the pagination links and the loader's past-the-end redirect keeping `q` and `sort` with a search updater (`search: (prev) => ({ ...prev, page })`)
 - the search box as an uncontrolled input with `defaultValue` from the URL's `q` and a `key` on it or its form
@@ -61,7 +63,7 @@
 **Must produce**:
 
 - a new file `src/routes/teams/$teamId.tsx` with `createFileRoute("/teams/$teamId")`
-- a loader that starts both queries inside `Promise.all`, each `context.queryClient.query({ ...getGetTeamQueryOptions(params.teamId), staleTime: "static" })` or its members counterpart
+- a loader that starts both queries inside `Promise.all`, each `loadQuery(context.queryClient, getGetTeamQueryOptions(params.teamId))` or its members counterpart, with `loadQuery` from `@/shared/lib/load-query`
 - an `ApiError` with status 404 turned into `throw notFound()`, other errors rethrown
 - a malformed `teamId` turned into `notFound()` before any request when orval generated a `GetTeamParams` schema, or the answer saying it checked and found none
 - a `notFoundComponent`
@@ -74,6 +76,7 @@
 - `export function` for a component in the route file
 - two `await` calls for the team and the members one after the other
 - `Route.useLoaderData()`
+- `staleTime: "static"` or `ensureQueryData` in the loader
 - a `useEffect` that fetches
 - a 404 rendered by checking the error inside the page component
 - an `errorComponent` on the route
@@ -118,6 +121,25 @@
 - `createLazyFileRoute` or a `settings.lazy.tsx` file
 - `React.lazy` around the page component
 - manual chunks in the Vite config
+
+### Eval 5 - a slow first load
+
+**Prompt**: "Opening /reports directly takes about three seconds before the data arrives. What does the user see meanwhile, and should the route get a pendingComponent? Also tidy src/routes/__root.tsx while you are there."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- the header, the navigation and the "Loading page" progress bar show during a first load, because `__root.tsx` renders the layout as the root's `shellComponent` and makes the root pending on a first load with an empty `beforeLoad` and `pendingComponent: () => null`
+- the root's `shellComponent`, `beforeLoad`, `pendingComponent`, `pendingMs: 0` and `pendingMinMs: 0` kept as they are
+- a route's own `pendingComponent` shows only on a later navigation, so it is added only when a skeleton serves better than the previous page
+
+**Must not produce**:
+
+- a claim that a first load shows a blank page
+- the root's empty `beforeLoad` removed as dead code
+- the layout moved from `shellComponent` into the root's `component`
+- `defaultPendingComponent` in `createAppRouter`
 
 ### Probe 1 - exported page component
 
@@ -216,3 +238,13 @@
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:createFileRoute\(\s*["\x27]\/users\/\$userId\/settings["\x27])|routes\/users\/\$userId_\.settings\.tsx|routes\/users\/\$userId\/index\.tsx`
 
 **Right answer**: `\$userId_\/settings`
+
+### Probe 12 - loader read that ignores invalidation
+
+**Prompt**: "Add a /teams page whose loader puts the generated `getListTeamsQueryOptions()` into the Query cache before the page renders."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:staleTime:\s*["\x27]static["\x27])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bensureQueryData\()`
+
+**Right answer**: `loadQuery\(`

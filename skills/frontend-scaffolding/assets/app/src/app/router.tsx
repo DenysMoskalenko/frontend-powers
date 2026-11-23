@@ -31,8 +31,13 @@ export function createAppRouter({ history }: { history?: RouterHistory } = {}) {
   const toastManager = Toast.createToastManager();
   const queryClient = createQueryClient((reason, error) =>
     toastManager.add({
+      // One toast per reason: a repeated failure updates it, with its latest request id.
+      id: reason,
       title: NOTICES[reason],
       description: error instanceof ApiError && error.requestId && `Request id: ${error.requestId}`,
+      // A failure is announced at once and stays until dismissed: a 5 s polite toast is easy to miss.
+      priority: "high",
+      timeout: 0,
     }),
   );
   const router = createRouter({
@@ -42,8 +47,9 @@ export function createAppRouter({ history }: { history?: RouterHistory } = {}) {
     parseSearch: parseSearchWith(exactJson),
     stringifySearch: stringifySearchWith(JSON.stringify, exactJson),
     defaultPreload: "intent",
-    // Query owns freshness: the router always runs loaders, and they read the cache.
+    // Query owns freshness: the router always runs loaders and waits for them; they read the cache.
     defaultPreloadStaleTime: 0,
+    defaultStaleReloadMode: "blocking",
     scrollRestoration: true,
     // Each route catches its own error, so the root layout and its navigation stay on screen.
     defaultErrorComponent: RouteError,

@@ -8,6 +8,7 @@ Contents
 - [Wiring in `createAppRouter`](#wiring-in-createapprouter)
 - [A screen that follows a channel](#a-screen-that-follows-a-channel)
 - [The cache bridge for versioned entities](#the-cache-bridge-for-versioned-entities)
+- [Signals no endpoint returns](#signals-no-endpoint-returns)
 - [Authentication](#authentication)
 - [Recovery and the server side](#recovery-and-the-server-side)
 - [Tests](#tests)
@@ -32,7 +33,7 @@ Contents
    The Playwright run needs it too, with a socket mock and a Centrifugo server: [End-to-end](#end-to-end).
 3. The new files below: `src/api/realtime.ts`, `src/shared/hooks/use-channel.ts`,
    `src/shared/ui/live-status.tsx`, `src/features/users/use-live-user.ts`, and for tests
-   `src/test/fake-centrifuge.ts`. Add each in the same change as its first caller (`useChannel`
+   `src/test/fake-centrifuge.ts`, for end-to-end `e2e/realtime.ts`. Add each in the same change as its first caller (`useChannel`
    with the screen that follows a channel, `LiveStatus` with the route that shows it): knip fails
    on a file or export nothing imports.
 4. The changed scaffold files. Every block of them here is the complete file for the bare
@@ -46,6 +47,7 @@ Contents
      `QueryClientProvider` and `ToastProvider` in `Wrap`.
    - `src/routes/users/$userId.tsx`: `useLiveUser(userId)` and `<LiveStatus />`.
    - `src/test/setup.ts`: the `vi.mock("centrifuge", ...)` line.
+   - `e2e/fixtures.ts` and `playwright.config.ts`: `e2e/realtime.ts` merged and listed.
 
 ```ts
 // src/vite-env.d.ts
@@ -217,9 +219,10 @@ export function createRealtime({ url, getData }: { url: string; getData: () => P
   channel is followed in the same commit: React runs the old screen's cleanup and the new screen's
   effect together, so `/users/1` to `/users/2` keeps one socket instead of a new handshake, token
   read and connect-proxy call per navigation.
-- A failed chunk load is reported and leaves that channel unsubscribed until the screen mounts
-  again; a stale chunk after a deploy is already handled by the scaffold's `vite:preloadError`
-  reload.
+- A failed load of the `centrifuge` chunk, a stale tab after a deploy included, rejects to
+  `subscribe`, which reports it and drops the channel: the status reads off and the page keeps the
+  data it has. The scaffold reloads only on a navigation that misses a route chunk; the next screen
+  that follows a channel imports again.
 - centrifuge 5.8 already reconnects with full-jitter backoff (`minReconnectDelay` 500,
   `maxReconnectDelay` 20000), detects a dead connection from missing server pings
   (`maxServerPingDelay` 10000), reconnects on the `online` event, and closes on a bfcache
@@ -340,8 +343,13 @@ export function createAppRouter({ history }: { history?: RouterHistory } = {}) {
   const toastManager = Toast.createToastManager();
   const queryClient = createQueryClient((reason, error) =>
     toastManager.add({
+      // One toast per reason: a repeated failure updates it, with its latest request id.
+      id: reason,
       title: NOTICES[reason],
       description: error instanceof ApiError && error.requestId && `Request id: ${error.requestId}`,
+      // A failure is announced at once and stays until dismissed: a 5 s polite toast is easy to miss.
+      priority: "high",
+      timeout: 0,
     }),
   );
   // The token goes in connect data, which a Centrifugo connect proxy checks; never in the URL.
@@ -356,8 +364,9 @@ export function createAppRouter({ history }: { history?: RouterHistory } = {}) {
     parseSearch: parseSearchWith(exactJson),
     stringifySearch: stringifySearchWith(JSON.stringify, exactJson),
     defaultPreload: "intent",
-    // Query owns freshness: the router always runs loaders, and they read the cache.
+    // Query owns freshness: the router always runs loaders and waits for them; they read the cache.
     defaultPreloadStaleTime: 0,
+    defaultStaleReloadMode: "blocking",
     scrollRestoration: true,
     // Each route catches its own error, so the root layout and its navigation stay on screen.
     defaultErrorComponent: RouteError,
@@ -431,6 +440,7 @@ import { getGetUserQueryOptions, getGetUserSuspenseQueryOptions } from "@/api/ge
 import { GetUserParams } from "@/api/generated/api.zod";
 import { useLiveUser } from "@/features/users/use-live-user";
 import { UserDetails } from "@/features/users/user-details";
+import { loadQuery } from "@/shared/lib/load-query";
 import { LiveStatus } from "@/shared/ui/live-status";
 
 export const Route = createFileRoute("/users/$userId")({
@@ -438,10 +448,7 @@ export const Route = createFileRoute("/users/$userId")({
     // The API rejects a malformed id with 400; to the user it is a user that does not exist.
     if (!GetUserParams.safeParse({ id: params.userId }).success) throw notFound();
     try {
-      await context.queryClient.query({
-        ...getGetUserQueryOptions(params.userId),
-        staleTime: "static",
-      });
+      await loadQuery(context.queryClient, getGetUserQueryOptions(params.userId));
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) throw notFound();
       throw error;
@@ -457,12 +464,12 @@ function UserPage() {
   useLiveUser(userId);
 
   return (
-    <>
+    <div data-testid="users-detail-page" className="flex flex-col gap-4">
       <title>{user.name}</title>
       <h1 className="font-semibold text-2xl">{user.name}</h1>
       <LiveStatus />
       <UserDetails user={user} />
-    </>
+    </div>
   );
 }
 
@@ -494,16 +501,26 @@ straight into the cache:
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 /**
- * Writes a pushed entity into the cache. A fetch in flight is cancelled first, or its older
- * snapshot would land after the push; the version guard drops duplicates and out-of-order pushes.
+ * Writes a pushed entity into the cache, keeping the higher version. A first fetch in flight is
+ * awaited, never cancelled: cancelling a query without data rejects every caller awaiting it, a
+ * route loader included. A fetch of an entity that has data is cancelled before the write, or its
+ * older snapshot would land after the push.
  */
 export async function applyPush<T extends { version: number }>(
   queryClient: QueryClient,
   queryKey: QueryKey,
   next: T,
 ) {
-  await queryClient.cancelQueries({ queryKey, exact: true });
-  queryClient.setQueryData<T>(queryKey, (old) => (old && old.version >= next.version ? old : next));
+  const query = queryClient.getQueryCache().find<T>({ queryKey, exact: true });
+  if (query?.state.data === undefined) await query?.promise?.catch(() => undefined);
+  const old = queryClient.getQueryData<T>(queryKey);
+  // A duplicate or older push changes nothing, and leaves a refetch in flight alone.
+  if (old && old.version >= next.version) return;
+  // With data in the cache, a caller awaiting the cancelled fetch gets that data back.
+  if (old) await queryClient.cancelQueries({ queryKey, exact: true });
+  queryClient.setQueryData<T>(queryKey, (current) =>
+    current && current.version >= next.version ? current : next,
+  );
 }
 ```
 
@@ -521,16 +538,105 @@ useChannel("orders", OrderEvent, (event) => {
 ```
 
 - `applyPush` and `invalidateQueries` resolve even when a fetch fails, so `void` is safe on both.
-- `cancelQueries` makes a `queryClient.query()` awaiting the same key reject with
-  `CancelledError`. Channels are subscribed by mounted components, after their loader resolved, so
-  only a preload of another screen can meet it.
+- No loader meets `CancelledError` from a push. A list or layout that follows the channel stays
+  mounted while the next route's loader awaits the same key through `loadQuery`: during a first
+  fetch `applyPush` waits for it and then compares versions, and a cancelled fetch of an entity
+  that has data resolves its callers with that data. An `invalidateQueries` during a first fetch
+  would not help: the fetch's success clears the mark, and its older snapshot stays.
 - A list cache holds entities without per-item versions: invalidate it instead of editing it.
-- To skip entities nobody views, test `queryClient.getQueryState(queryKey)`, not `getQueryData`: an
-  entry whose first fetch is in flight has a state and no data, and that is the race `applyPush`
-  closes.
 - Optimistic updates (`tanstack-query-api`) carry the pre-write version, so a push of the saved
   entity replaces the optimistic value. A failed mutation's `onError` may then restore the older
   snapshot over the push; the recipe's `onSettled` invalidation repairs it, so keep it.
+
+## Signals no endpoint returns
+
+Presence, cursors and "is typing" arrive many times a second and no request returns them, so a
+refetch cannot restore them and an invalidation has nothing to fetch. They stay out of the Query
+cache: they live in a small store beside the hook that follows the channel, read with
+`useSyncExternalStore`, and they expire on their own. A store that several routes read is the store
+rung of `frontend-project-structure`'s state ladder. Anything a request can also return goes
+through the cache bridge above.
+
+```ts,verify
+// file: src/features/chat/use-typing.ts
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { z } from "zod";
+import { useChannel } from "@/shared/hooks/use-channel";
+
+const Typing = z.object({ type: z.literal("typing"), user: z.string() });
+
+/** Who is typing; each signal lasts `ttlMs` unless repeated. Pushed only, never fetched or cached. */
+export function createTypingStore(ttlMs: number) {
+  let users: readonly string[] = [];
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const listeners = new Set<() => void>();
+  const publish = (next: readonly string[]) => {
+    users = next;
+    for (const listener of listeners) listener();
+  };
+  return {
+    getSnapshot: () => users,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    typing(user: string) {
+      clearTimeout(timers.get(user));
+      const expire = () => {
+        timers.delete(user);
+        publish(users.filter((other) => other !== user));
+      };
+      timers.set(user, setTimeout(expire, ttlMs));
+      if (!users.includes(user)) publish([...users, user]);
+    },
+    /** A (re)subscribe or unmount: signals from before it are stale. */
+    clear() {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+      if (users.length > 0) publish([]);
+    },
+  };
+}
+
+/** The users typing in `roomId` right now. */
+export function useTyping(roomId: string, ttlMs = 5_000) {
+  const [store] = useState(() => createTypingStore(ttlMs));
+  useEffect(() => store.clear, [store]);
+  useChannel(`rooms:${roomId}`, Typing, ({ user }) => store.typing(user), store.clear);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot);
+}
+```
+
+```ts,verify,test
+// file: src/features/chat/use-typing.test.ts
+import { expect, test, vi } from "vitest";
+import { createTypingStore } from "./use-typing";
+
+test("a typing signal lasts until its time runs out, and a repeat extends it", () => {
+  vi.useFakeTimers();
+  const store = createTypingStore(5_000);
+
+  store.typing("ada");
+  vi.advanceTimersByTime(4_000);
+  store.typing("ada");
+  vi.advanceTimersByTime(4_000);
+  expect(store.getSnapshot()).toEqual(["ada"]);
+
+  vi.advanceTimersByTime(1_000);
+  expect(store.getSnapshot()).toEqual([]);
+});
+
+test("a resubscribe clears the signals from before it", () => {
+  const store = createTypingStore(5_000);
+  store.typing("ada");
+
+  store.clear();
+
+  expect(store.getSnapshot()).toEqual([]);
+});
+```
 
 ## Authentication
 
@@ -663,32 +769,26 @@ export class Centrifuge extends Emitter {
 }
 ```
 
-The scaffold's `src/test/setup.ts` with one added `vi.mock` line, which applies to every test file:
+The scaffold's `src/test/setup.ts` with one added `vi.mock` line, which applies to every test file
+in both Vitest projects:
 
 ```ts,verify
 // file: src/test/setup.ts
-import "@testing-library/jest-dom/vitest";
+// Every test, in Node and in jsdom. The DOM-only part is setup-dom.ts.
 import { faker } from "@faker-js/faker";
-import { configure } from "@testing-library/dom";
-import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, vi } from "vitest";
 import { server } from "./server";
 
 // The realtime socket is network too: every test gets the fake client, driven with `emit`.
 vi.mock("centrifuge", () => import("./fake-centrifuge"));
 
-// The bound only ends a hang; a loaded CI machine must never reach it.
-configure({ asyncUtilTimeout: 5_000 });
-// jsdom has no layout; the router restores scroll after every navigation.
-window.scrollTo = () => {};
-
 const unhandled: string[] = [];
 server.events.on("request:unhandled", ({ request }) => {
   unhandled.push(`${request.method} ${request.url}`);
 });
 
-// jsdom's reportError only logs to the virtual console. This one records the error, and the test
-// fails unless it stubs reportError.
+// The platform's reportError only logs. This one records the error, and the test fails unless it
+// stubs reportError.
 const reported: unknown[] = [];
 globalThis.reportError = (error: unknown) => {
   reported.push(error);
@@ -700,10 +800,6 @@ beforeEach(() => {
   faker.seed(20_261_119);
 });
 afterEach(() => {
-  // `globals: false` turns off Testing Library's automatic cleanup.
-  cleanup();
-  localStorage.clear();
-  sessionStorage.clear();
   // Also undoes a bare vi.setSystemTime(), which no config option resets.
   vi.useRealTimers();
   server.resetHandlers();
@@ -813,12 +909,17 @@ test("a route change from one channel to another keeps the socket; the last chan
 });
 ```
 
-The version guard and the in-flight race are logic with branches, tested beside `apply-push.ts`:
+The version guard and the in-flight races are logic with branches, tested beside `apply-push.ts`.
+The old order, `cancelQueries` before anything else, fails the first and the third test (the loader
+rejects with `CancelledError`; the refetch's newer order is lost), and leaving out the cancel fails
+the second:
 
 ```ts,verify,test
-import { CancelledError, QueryClient } from "@tanstack/react-query";
+// file: src/shared/lib/apply-push.test.ts
+import { QueryClient } from "@tanstack/react-query";
 import { expect, test } from "vitest";
-import { applyPush } from "@/shared/lib/apply-push";
+import { applyPush } from "./apply-push";
+import { loadQuery } from "./load-query";
 
 interface Order {
   id: string;
@@ -827,77 +928,199 @@ interface Order {
 }
 
 const key = ["orders", "1"];
+const order = (status: string, version: number): Order => ({ id: "1", status, version });
 
-test("a push beats the older snapshot of a fetch that was in flight", async () => {
+/** A fetch of the order that waits until the test answers it. */
+function pendingFetch() {
+  let answer = (_order: Order) => {};
+  const queryFn = () => new Promise<Order>((resolve) => (answer = resolve));
+  return { queryFn, answer: (value: Order) => answer(value) };
+}
+
+test("a push during a loader's first fetch neither fails the loader nor loses to its snapshot", async () => {
   const queryClient = new QueryClient();
-  let resolveFetch = (_order: Order) => {};
-  const fetching = queryClient.query({
-    queryKey: key,
-    queryFn: () => new Promise<Order>((resolve) => (resolveFetch = resolve)),
-  });
+  const fetch = pendingFetch();
+  const loading = loadQuery(queryClient, { queryKey: key, queryFn: fetch.queryFn });
 
-  await applyPush(queryClient, key, { id: "1", status: "paid", version: 2 });
-  resolveFetch({ id: "1", status: "new", version: 1 });
-  await expect(fetching).rejects.toBeInstanceOf(CancelledError);
+  const pushed = applyPush(queryClient, key, order("paid", 2));
+  fetch.answer(order("new", 1));
 
-  expect(queryClient.getQueryData(key)).toEqual({ id: "1", status: "paid", version: 2 });
+  await expect(loading).resolves.toEqual(order("new", 1));
+  await pushed;
+  expect(queryClient.getQueryData(key)).toEqual(order("paid", 2));
 });
 
-test("a duplicate or out-of-order push leaves the newer entity", async () => {
+test("a newer push beats the older snapshot of a refetch, and the loader awaiting it resolves", async () => {
   const queryClient = new QueryClient();
-  queryClient.setQueryData<Order>(key, { id: "1", status: "shipped", version: 3 });
+  queryClient.setQueryData(key, order("new", 1));
+  await queryClient.invalidateQueries({ queryKey: key });
+  const fetch = pendingFetch();
+  const loading = loadQuery(queryClient, { queryKey: key, queryFn: fetch.queryFn });
 
-  await applyPush(queryClient, key, { id: "1", status: "paid", version: 2 });
-  await applyPush(queryClient, key, { id: "1", status: "shipped", version: 3 });
+  await applyPush(queryClient, key, order("paid", 2));
+  fetch.answer(order("new", 1));
 
-  expect(queryClient.getQueryData(key)).toEqual({ id: "1", status: "shipped", version: 3 });
+  await expect(loading).resolves.toMatchObject({ id: "1" });
+  expect(queryClient.getQueryData(key)).toEqual(order("paid", 2));
+});
+
+test("a duplicate push leaves the refetch a mutation started alone", async () => {
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(key, order("paid", 2));
+  const fetch = pendingFetch();
+  const refetch = queryClient.fetchQuery({ queryKey: key, queryFn: fetch.queryFn, staleTime: 0 });
+
+  await applyPush(queryClient, key, order("paid", 2));
+  fetch.answer(order("shipped", 3));
+  await refetch;
+
+  expect(queryClient.getQueryData(key)).toEqual(order("shipped", 3));
+});
+
+test("an out-of-order push leaves the newer entity", async () => {
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(key, order("shipped", 3));
+
+  await applyPush(queryClient, key, order("paid", 2));
+
+  expect(queryClient.getQueryData(key)).toEqual(order("shipped", 3));
 });
 ```
-
-Without the `cancelQueries` line the first test fails: the fetch lands `new` after the push.
 
 ## End-to-end
 
 The scaffold's guard fixture fails a spec on any console error, and a page that follows a channel
 with nothing to connect to logs "WebSocket connection to ... failed". So every spec gets a socket
-mock, and a spec that needs a push switches it off and talks to a real Centrifugo: a container
-started by Playwright locally, a service in CI. Run with Centrifugo 6.10.3: the smoke specs pass
-with the mock; the spec below passes against the server and fails when the stub does not publish;
-the same run passes inside the Playwright image with Centrifugo as a service on the job's network.
-The host port is 8100, so a development Centrifugo on 8001 is never mistaken for it.
-`frontend-testing`'s Playwright reference shows these files merged with `keycloak-spa-auth`'s, for
-an app with both add-ons.
+mock, and a spec that needs a push writes `test.use({ mockRealtime: false })` and talks to a real
+Centrifugo: the server at `E2E_REALTIME_ORIGIN` when it is set (the CI service), otherwise a
+container the first such spec starts on this machine. A run whose specs all mock the socket never
+starts Docker. Nothing keys on `CI`, so `CI=1 pnpm test:e2e` on a workstation still starts the
+container. Run with Centrifugo 6.10.3 in both projects (`chromium` and the phone WebKit project):
+the smoke specs pass with the mock and start no container; the spec below starts it, passes, and
+fails when nothing publishes.
 
-What the add-on adds to the template's files: in `e2e/fixtures.ts`, `REALTIME_ORIGIN`, the
-`mockRealtime` option and the `context` override that mocks the socket; in `playwright.config.ts`,
-`centrifugoEnv`, the Centrifugo container as the first `webServer` entry unless
-`E2E_REALTIME_ORIGIN` is set, the stub's `HOST` and `CENTRIFUGO_API_URL`, and
-`PUBLIC_REALTIME_ORIGIN` for the build. The mock is on the context, so every tab gets it before its
-first page loads:
+The add-on's end-to-end support is one file, `e2e/realtime.ts`: the `mockRealtime` option, the
+start on first use, the build's `PUBLIC_REALTIME_ORIGIN`, and the teardown that removes the
+container. The container runs with `client.insecure`: the stand-in API would accept every
+connection anyway, so the server calls no connect proxy and the stub needs no new route; the spec
+publishes through Centrifugo's HTTP API itself. Never set `insecure` outside a test server.
+
+```ts,verify
+// file: e2e/realtime.ts
+import { execFileSync } from "node:child_process";
+import { test as base } from "@playwright/test";
+
+/** Centrifugo for specs that need a push: E2E_REALTIME_ORIGIN (a CI service), else a local container. */
+export const REALTIME_ORIGIN = process.env.E2E_REALTIME_ORIGIN ?? "http://127.0.0.1:8100";
+/** The HTTP API key a spec publishes with; a CI service gets the same. */
+export const REALTIME_API_KEY = "e2e-api-key";
+/** The origin as the browser dials it, for the app's build. */
+export const realtimeBuildEnv = { PUBLIC_REALTIME_ORIGIN: REALTIME_ORIGIN.replace(/^http/, "ws") };
+
+const CONTAINER = "app-e2e-centrifugo";
+
+const isUp = () =>
+  fetch(`${REALTIME_ORIGIN}/health`).then(
+    (response) => response.ok,
+    () => false,
+  );
+
+async function startCentrifugo(appOrigin: string) {
+  if (process.env.E2E_REALTIME_ORIGIN || (await isUp())) return;
+  const settings = {
+    CENTRIFUGO_HTTP_API_KEY: REALTIME_API_KEY,
+    CENTRIFUGO_HEALTH_ENABLED: "true",
+    // No connect proxy: the stand-in API accepts every page anyway. Never outside a test server.
+    CENTRIFUGO_CLIENT_INSECURE: "true",
+    CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: appOrigin,
+    CENTRIFUGO_CHANNEL_NAMESPACES: JSON.stringify([{ name: "users" }]),
+  };
+  const port = new URL(REALTIME_ORIGIN).port;
+  const env = Object.entries(settings).flatMap(([name, value]) => ["-e", `${name}=${value}`]);
+  // Published on 127.0.0.1 only: the API key is in this file.
+  const publish = `127.0.0.1:${port}:8000`;
+  try {
+    const image = "centrifugo/centrifugo:v6.10.3";
+    const run = ["run", "-d", "--rm", "--name", CONTAINER, "-p", publish, ...env, image];
+    execFileSync("docker", run, { stdio: "pipe" });
+  } catch (error) {
+    // Another worker started it first.
+    if (!String((error as { stderr?: unknown }).stderr).includes("is already in use")) throw error;
+  }
+  for (const deadline = Date.now() + 30_000; Date.now() < deadline; ) {
+    if (await isUp()) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Centrifugo did not answer at ${REALTIME_ORIGIN}/health`);
+}
+
+let started: Promise<void> | undefined;
+
+export const test = base.extend<{ mockRealtime: boolean }>({
+  // A spec that needs a push writes `test.use({ mockRealtime: false })`.
+  mockRealtime: [true, { option: true }],
+  context: [
+    async ({ context, mockRealtime, baseURL }, use) => {
+      // The socket opens and never answers, so a page that follows a channel stays "Connecting".
+      if (mockRealtime) await context.routeWebSocket(/\/connection\/websocket$/, () => {});
+      else {
+        started ??= startCentrifugo(new URL(baseURL ?? "").origin);
+        await started;
+      }
+      await use(context);
+    },
+    // Its own timeout: the first start may pull the image.
+    { scope: "test", timeout: 180_000 },
+  ],
+});
+
+/** Playwright's globalTeardown: removes the local container, if a spec started one. */
+// biome-ignore lint/style/noDefaultExport: Playwright runs the default export of a globalTeardown file.
+export default function removeCentrifugo() {
+  if (process.env.E2E_REALTIME_ORIGIN) return;
+  try {
+    execFileSync("docker", ["rm", "-f", CONTAINER], { stdio: "ignore" });
+  } catch {
+    // No container, or no Docker: nothing to remove.
+  }
+}
+```
+
+`e2e/fixtures.ts` merges it with the template's fixtures, and `playwright.config.ts` lists the
+teardown and the build's origin. Both blocks are the template's files with only those lines added;
+with another add-on, `frontend-testing`'s Playwright reference shows the merged form.
 
 ```ts,verify
 // file: e2e/fixtures.ts
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, mergeTests, type Page } from "@playwright/test";
+import { test as realtime } from "./realtime.ts";
 
 /** Where the stub API listens; a real backend's origin works the same way. */
 export const API_ORIGIN = "http://127.0.0.1:4010";
-/** Centrifugo: a container `playwright.config.ts` starts, unless E2E_REALTIME_ORIGIN names one (CI). */
-export const REALTIME_ORIGIN = process.env.E2E_REALTIME_ORIGIN ?? "http://127.0.0.1:8100";
+
+interface Options {
+  /** Errors a spec provokes on purpose (the route error screen reports one); others still fail it. */
+  expectedErrors: RegExp[];
+}
 
 /**
  * Every test fails on a console error, an uncaught page error or a CSP / Trusted Types violation.
  * "Failed to load resource" is the browser logging an HTTP error status a test asked for.
  */
-export const test = base.extend<{ guard: undefined; mockRealtime: boolean }>({
+const app = base.extend<Options & { guard: undefined }>({
+  expectedErrors: [[], { option: true }],
   guard: [
-    async ({ page }, use) => {
+    async ({ page, expectedErrors }, use) => {
       const problems: string[] = [];
+      const record = (text: string) => {
+        if (!expectedErrors.some((expected) => expected.test(text))) problems.push(text);
+      };
       page.on("console", (message) => {
         if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
-          problems.push(message.text());
+          record(message.text());
         }
       });
-      page.on("pageerror", (error) => problems.push(error.message));
+      page.on("pageerror", (error) => record(error.message));
       await page.addInitScript(() => {
         document.addEventListener("securitypolicyviolation", (event) => {
           console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
@@ -908,40 +1131,30 @@ export const test = base.extend<{ guard: undefined; mockRealtime: boolean }>({
     },
     { auto: true },
   ],
-  // A spec that needs a push writes `test.use({ mockRealtime: false })` and talks to Centrifugo.
-  mockRealtime: [true, { option: true }],
-  // The socket opens and never answers, so a page that follows a channel stays "Connecting".
-  context: async ({ context, mockRealtime }, use) => {
-    if (mockRealtime) await context.routeWebSocket(/\/connection\/websocket$/, () => {});
-    await use(context);
-  },
 });
+
+export const test = mergeTests(app, realtime);
+
+/** The page never scrolls sideways (a wide table scrolls inside its own container). */
+export async function expectNoSidewaysScroll(page: Page) {
+  const { scrollWidth, clientWidth } = await page.evaluate(() => {
+    const root = document.documentElement;
+    return { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth };
+  });
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+}
 
 export { expect };
 ```
 
-`playwright.config.ts`: the stub listens where the container can call its connect proxy and
-publishes to `CENTRIFUGO_API_URL`:
-
 ```ts,verify
 // file: playwright.config.ts
 import { defineConfig, devices } from "@playwright/test";
-import { API_ORIGIN, REALTIME_ORIGIN } from "./e2e/fixtures.ts";
+import { API_ORIGIN } from "./e2e/fixtures.ts";
+import { realtimeBuildEnv } from "./e2e/realtime.ts";
 
 const isCI = !!process.env.CI;
 const APP_ORIGIN = "http://localhost:4173";
-
-/** Centrifugo's settings; both CI files give their service the same, with `build` as the host. */
-const centrifugoEnv = {
-  CENTRIFUGO_HTTP_API_KEY: "e2e-api-key",
-  CENTRIFUGO_HEALTH_ENABLED: "true",
-  CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: APP_ORIGIN,
-  CENTRIFUGO_CLIENT_PROXY_CONNECT_ENABLED: "true",
-  CENTRIFUGO_CLIENT_PROXY_CONNECT_ENDPOINT: `http://host.docker.internal:${new URL(API_ORIGIN).port}/centrifugo/connect`,
-  CENTRIFUGO_CHANNEL_NAMESPACES: JSON.stringify([
-    { name: "users", allow_subscribe_for_client: true },
-  ]),
-};
 
 export default defineConfig({
   testDir: "e2e",
@@ -952,45 +1165,25 @@ export default defineConfig({
   failOnFlakyTests: isCI,
   reporter: isCI ? [["list"], ["junit", { outputFile: "test-results/junit.xml" }]] : "list",
   use: { baseURL: APP_ORIGIN, trace: "on-first-retry" },
-  projects: [{ name: "chromium", use: devices["Desktop Chrome"] }],
+  projects: [
+    { name: "chromium", use: devices["Desktop Chrome"] },
+    // Safari's engine on a phone-sized touch screen: the narrow layout and WebKit-only bugs.
+    { name: "phone", use: devices["iPhone 17e"] },
+  ],
+  // Removes the Centrifugo container a spec started on this machine.
+  globalTeardown: "./e2e/realtime.ts",
   webServer: [
-    // Centrifugo in Docker, on this machine only; none where E2E_REALTIME_ORIGIN names one (CI).
-    ...(process.env.E2E_REALTIME_ORIGIN
-      ? []
-      : [
-          {
-            command: [
-              `docker run --rm --name app-e2e-centrifugo -p 127.0.0.1:${new URL(REALTIME_ORIGIN).port}:8000`,
-              "--add-host=host.docker.internal:host-gateway",
-              ...Object.keys(centrifugoEnv).map((name) => `-e ${name}`),
-              "centrifugo/centrifugo:v6.10.3",
-            ].join(" "),
-            env: centrifugoEnv,
-            url: `${REALTIME_ORIGIN}/health`,
-            // The default SIGKILL ends the docker CLI and leaves the container running.
-            gracefulShutdown: { signal: "SIGTERM" as const, timeout: 10_000 },
-            reuseExistingServer: true,
-          },
-        ]),
     {
       command: "node e2e/stub-api.ts",
       url: `${API_ORIGIN}/health/live`,
-      env: {
-        PORT: new URL(API_ORIGIN).port,
-        // Reachable from the Centrifugo container, not only from this machine.
-        HOST: "0.0.0.0",
-        CENTRIFUGO_API_URL: REALTIME_ORIGIN,
-      },
+      env: { PORT: new URL(API_ORIGIN).port },
       reuseExistingServer: !isCI,
     },
     {
       // The production build with the generated security headers, as users get it.
       command: "pnpm build && pnpm preview",
       url: APP_ORIGIN,
-      env: {
-        PUBLIC_API_ORIGIN: API_ORIGIN,
-        PUBLIC_REALTIME_ORIGIN: REALTIME_ORIGIN.replace(/^http/, "ws"),
-      },
+      env: { PUBLIC_API_ORIGIN: API_ORIGIN, ...realtimeBuildEnv },
       reuseExistingServer: !isCI,
       timeout: 120_000,
     },
@@ -998,189 +1191,25 @@ export default defineConfig({
 });
 ```
 
-- `E2E_REALTIME_ORIGIN` set means a Centrifugo already runs there (the CI service): no container.
-  The run never keys on `CI`, so `CI=1 pnpm test:e2e` on a workstation starts the container and
-  the container calls the stub on this machine.
-- The container publishes its port on `127.0.0.1` only: its API key is known. The stub listens on
-  every interface, because the container calls it.
-- Each origin and port is written once: `REALTIME_ORIGIN` and `API_ORIGIN` in `e2e/fixtures.ts`
-  (the container's `-p` and the proxy endpoint follow them), the app's in `APP_ORIGIN`. Another
-  preview or stub port also changes `preview.port` in `vite.config.ts` and
-  `CENTRIFUGO_CLIENT_ALLOWED_ORIGINS` and the proxy endpoint in both CI files.
+- The container publishes its port on `127.0.0.1` only, since its API key is known. It is `--rm`,
+  so the teardown leaves nothing behind; a container left by a killed run answers `/health` and is
+  reused.
+- The local port is 8100, so a development Centrifugo on 8001 is never mistaken for it. Another
+  port changes only `REALTIME_ORIGIN`; another preview port also changes `preview.port` in
+  `vite.config.ts` and the CI service's `CENTRIFUGO_CLIENT_ALLOWED_ORIGINS`.
 
-`e2e/stub-api.ts` gains the connect proxy, the write the spec saves through (the `PATCH` of
-`frontend-forms`' edit page) with its publish call, and a configurable listen address:
-
-```ts,verify
-// file: e2e/stub-api.ts
-// An in-memory stand-in for the backend's users API, with the same paths, status codes and
-// `ErrorBody` shapes, so the E2E suite runs without a database. Point PUBLIC_API_ORIGIN at a real
-// backend to run the same suite against it.
-import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  created_at: string;
-}
-
-const users: User[] = [];
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function send(response: ServerResponse, status: number, body?: unknown) {
-  response.writeHead(status, body === undefined ? {} : { "content-type": "application/json" });
-  response.end(body === undefined ? undefined : JSON.stringify(body));
-}
-
-function errorBody(response: ServerResponse, error: string, details?: unknown) {
-  const request_id = String(response.getHeader("x-request-id"));
-  return details === undefined ? { error, request_id } : { error, request_id, details };
-}
-
-// The shape `validator` serialises a failed rule to.
-const rule = (code: string, params: Record<string, unknown>) => [{ code, message: null, params }];
-
-async function readJson(request: IncomingMessage): Promise<unknown> {
-  let text = "";
-  for await (const chunk of request) text += chunk;
-  return JSON.parse(text);
-}
-
-function listUsers(response: ServerResponse, query: URLSearchParams) {
-  const limit = Number(query.get("limit") ?? 20);
-  const offset = Number(query.get("offset") ?? 0);
-  const details = {
-    ...(!(limit >= 1 && limit <= 100) && {
-      limit: rule("range", { min: 1, max: 100, value: limit }),
-    }),
-    ...(!(offset >= 0 && offset <= 10_000) && {
-      offset: rule("range", { max: 10_000, value: offset }),
-    }),
-  };
-  if (Object.keys(details).length > 0) {
-    return send(response, 422, errorBody(response, "validation failed", details));
-  }
-  const items = users.toReversed().slice(offset, offset + limit);
-  send(response, 200, { items, total: users.length, limit, offset });
-}
-
-async function createUser(request: IncomingMessage, response: ServerResponse) {
-  let body: unknown;
-  try {
-    body = await readJson(request);
-  } catch {
-    return send(response, 400, errorBody(response, "Failed to parse the request body as JSON"));
-  }
-  const { email, name }: { email?: unknown; name?: unknown } =
-    typeof body === "object" && body !== null ? body : {};
-  const details = {
-    ...(!(typeof email === "string" && /^[^@\s]+@[^@\s]+$/.test(email)) && {
-      email: rule("email", { value: email }),
-    }),
-    ...(!(typeof name === "string" && name.length >= 1 && name.length <= 100) && {
-      name: rule("length", { min: 1, max: 100, value: name }),
-    }),
-  };
-  if (Object.keys(details).length > 0 || typeof email !== "string" || typeof name !== "string") {
-    return send(response, 422, errorBody(response, "validation failed", details));
-  }
-  if (users.some((user) => user.email === email)) {
-    return send(response, 409, errorBody(response, "conflict"));
-  }
-  const user = { id: randomUUID(), email, name, created_at: new Date().toISOString() };
-  users.push(user);
-  send(response, 201, user);
-}
-
-/** Centrifugo's connect proxy. A real backend checks `data.token`; the stub accepts every page. */
-function centrifugoConnect(response: ServerResponse) {
-  send(response, 200, { result: { user: "e2e" } });
-}
-
-/** What the backend does after a write: tells the open pages through the realtime server's API. */
-async function publishUserChanged(id: string) {
-  const api = process.env.CENTRIFUGO_API_URL;
-  if (!api) return;
-  await fetch(`${api}/api/publish`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": "e2e-api-key" },
-    body: JSON.stringify({ channel: `users:${id}`, data: { type: "user.changed" } }),
-  });
-}
-
-async function updateUser(request: IncomingMessage, response: ServerResponse, id: string) {
-  const user = users.find((candidate) => candidate.id === id);
-  if (!user) return send(response, 404, errorBody(response, `user ${id} not found`));
-  let body: unknown;
-  try {
-    body = await readJson(request);
-  } catch {
-    return send(response, 400, errorBody(response, "Failed to parse the request body as JSON"));
-  }
-  const { email, name }: { email?: unknown; name?: unknown } =
-    typeof body === "object" && body !== null ? body : {};
-  if (typeof email === "string") user.email = email;
-  if (typeof name === "string") user.name = name;
-  await publishUserChanged(id);
-  send(response, 200, user);
-}
-
-function getUser(response: ServerResponse, id: string) {
-  if (!uuid.test(id)) return send(response, 400, errorBody(response, `Invalid URL: ${id}`));
-  const user = users.find((candidate) => candidate.id === id);
-  if (!user) return send(response, 404, errorBody(response, `user ${id} not found`));
-  send(response, 200, user);
-}
-
-const server = createServer(async (request, response) => {
-  const url = new URL(request.url ?? "/", "http://stub");
-  response.setHeader("x-request-id", randomUUID());
-  // The backend's CORS layer: the browser app runs on another origin.
-  response.setHeader("access-control-allow-origin", request.headers.origin ?? "*");
-  response.setHeader("vary", "origin");
-  if (request.method === "OPTIONS") {
-    response.setHeader("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE");
-    response.setHeader("access-control-allow-headers", "*");
-    return send(response, 204);
-  }
-
-  const [, resource, id, ...rest] = url.pathname.split("/");
-  if (request.method === "GET" && url.pathname === "/health/live") return send(response, 200);
-  if (resource === "users" && id === undefined && request.method === "GET") {
-    return listUsers(response, url.searchParams);
-  }
-  if (resource === "users" && id === undefined && request.method === "POST") {
-    return createUser(request, response);
-  }
-  if (resource === "users" && id && rest.length === 0 && request.method === "GET") {
-    return getUser(response, id);
-  }
-  if (resource === "users" && id && rest.length === 0 && request.method === "PATCH") {
-    return updateUser(request, response, id);
-  }
-  if (request.method === "POST" && url.pathname === "/centrifugo/connect") {
-    return centrifugoConnect(response);
-  }
-  send(response, 404, errorBody(response, "route not found"));
-});
-
-// HOST: a realtime server in another container calls the connect proxy here.
-server.listen(Number(process.env.PORT ?? 4010), process.env.HOST ?? "127.0.0.1");
-```
-
-The spec. The edit page is `frontend-forms`'; any save the stub publishes for works the same way.
+The spec. A publication tells the page that the user changed, and the page reads the user again;
+`page.route` answers that read with the name another client saved:
 
 ```ts,verify
 // file: e2e/realtime.spec.ts
 import { API_ORIGIN, expect, test } from "./fixtures.ts";
+import { REALTIME_API_KEY, REALTIME_ORIGIN } from "./realtime.ts";
 
 test.use({ mockRealtime: false });
 
-test("a save in one tab reaches the user page open in another", async ({
+test("a user.changed publication shows the user as the API now returns it", async ({
   page,
-  context,
   request,
 }, testInfo) => {
   const created = await request.post(`${API_ORIGIN}/users`, {
@@ -1189,49 +1218,45 @@ test("a save in one tab reaches the user page open in another", async ({
       email: `e2e-${testInfo.testId}-${testInfo.retry}@example.com`,
     },
   });
-  const { id } = await created.json();
-  const reader = await context.newPage();
-  await reader.goto(`/users/${id}`);
-  await expect(reader.getByRole("status")).toHaveText("Live");
+  const user = await created.json();
+  await page.goto(`/users/${user.id}`);
+  await expect(page.getByRole("status")).toHaveText("Live");
 
-  // The edit page is frontend-forms'; its save is a PATCH the stub publishes for.
-  await page.goto(`/users/${id}/edit`);
-  await page.getByRole("textbox", { name: "Name" }).fill("Katherine G. Johnson");
-  await page.getByRole("button", { name: "Save" }).click();
+  // The stand-in API has no update: the next read returns what another client saved.
+  await page.route(`${API_ORIGIN}/users/${user.id}`, async (route) => {
+    const json = { ...user, name: "Katherine G. Johnson" };
+    await route.fulfill({ response: await route.fetch(), json });
+  });
+  await request.post(`${REALTIME_ORIGIN}/api/publish`, {
+    headers: { "x-api-key": REALTIME_API_KEY },
+    data: { channel: `users:${user.id}`, data: { type: "user.changed" } },
+  });
 
-  await expect(reader.getByRole("heading", { name: "Katherine G. Johnson" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Katherine G. Johnson" })).toBeVisible();
 });
 ```
 
-CI runs the e2e job inside the Playwright image, which has no Docker, so Centrifugo is a service of
-the job: on one network with the job, reached by its name, its settings as environment variables
-(a service cannot mount a file from the repository), and the job waits for it (GitHub by its
-`--health-cmd`, GitLab by `HEALTHCHECK_TCP_PORT`). It calls the stub's connect proxy in the job
-container, named `build` on that network. GitHub, in the `e2e` job (the alias goes in the
-container's `options`):
+CI runs the end-to-end job inside the Playwright image, which has no Docker, so Centrifugo is a
+service of the job, reached by its name, with its settings as environment variables; the job waits
+for it (GitHub by its `--health-cmd`, GitLab by `HEALTHCHECK_TCP_PORT`). Add it to the CI file the
+app has. GitHub, in the `e2e` job:
 
 ```yaml
-    container:
-      image: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.65.1-noble
-      # `build`: the name Centrifugo calls the stub's connect proxy by.
-      options: --user 1001 --network-alias build
     services:
       centrifugo:
         image: centrifugo/centrifugo@sha256:33fdbbce7d195dde316cbde17bc1d2a17b9e345de82799d1ec3c2bb8916e3803 # v6.10.3
         env:
           CENTRIFUGO_HTTP_API_KEY: e2e-api-key
           CENTRIFUGO_HEALTH_ENABLED: "true"
+          CENTRIFUGO_CLIENT_INSECURE: "true"
           CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: http://localhost:4173
-          CENTRIFUGO_CLIENT_PROXY_CONNECT_ENABLED: "true"
-          CENTRIFUGO_CLIENT_PROXY_CONNECT_ENDPOINT: http://build:4010/centrifugo/connect
-          CENTRIFUGO_CHANNEL_NAMESPACES: '[{"name":"users","allow_subscribe_for_client":true}]'
+          CENTRIFUGO_CHANNEL_NAMESPACES: '[{"name":"users"}]'
         options: --health-cmd "wget -qO- http://127.0.0.1:8000/health" --health-interval 2s --health-retries 15
     env:
       E2E_REALTIME_ORIGIN: http://centrifugo:8000
 ```
 
-GitLab, in the `e2e` job (`FF_NETWORK_PER_BUILD` puts the job and its services on one network,
-where the job container is `build`):
+GitLab, in the `e2e` job:
 
 ```yaml
   services:
@@ -1240,17 +1265,13 @@ where the job container is `build`):
       variables:
         CENTRIFUGO_HTTP_API_KEY: e2e-api-key
         CENTRIFUGO_HEALTH_ENABLED: "true"
+        CENTRIFUGO_CLIENT_INSECURE: "true"
         CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: http://localhost:4173
-        CENTRIFUGO_CLIENT_PROXY_CONNECT_ENABLED: "true"
-        CENTRIFUGO_CLIENT_PROXY_CONNECT_ENDPOINT: http://build:4010/centrifugo/connect
-        CENTRIFUGO_CHANNEL_NAMESPACES: '[{"name":"users","allow_subscribe_for_client":true}]'
+        CENTRIFUGO_CHANNEL_NAMESPACES: '[{"name":"users"}]'
         HEALTHCHECK_TCP_PORT: "8000"
   variables:
-    # The job and its services on one network, each reached by its name.
-    FF_NETWORK_PER_BUILD: "true"
     E2E_REALTIME_ORIGIN: http://centrifugo:8000
 ```
 
-The service runs the same settings as `centrifugoEnv` in `playwright.config.ts`, with `build` for
-the stub's host; change both together. A stream every page opens needs a stub route too, as the
-SSE reference says.
+The service runs the settings of `startCentrifugo` in `e2e/realtime.ts`; change both together. A
+stream every page opens needs a stub route too, as the SSE reference says.

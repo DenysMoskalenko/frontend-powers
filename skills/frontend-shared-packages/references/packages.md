@@ -78,9 +78,9 @@ Published form: `"files": ["src", "!src/**/*.test.ts", "!src/test"]`.
 - `sideEffects: false`: importing a module only defines things; `configureApi` is a call.
 
 `vitest.config.ts`, `src/test/server.ts` and `src/test/setup.ts`: the package's own MSW server
-for the fetcher tests, which import it as `./test/server`. The app's `src/test/setup.ts`, with its
-`reportError` double, stays in the app; package code never reports, so the packages' setups leave
-it out.
+for the fetcher tests, which import it as `./test/server`. Its tests are `*.test.ts` and run in
+Node, as in the app. The app's two setup files, with the `reportError` double, stay in the app;
+package code never reports, so the packages' setups leave it out.
 
 ```ts
 // packages/api/vitest.config.ts
@@ -186,16 +186,24 @@ Published form: `"files": ["src", "!src/**/*.test.tsx", "!src/test"]`.
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  test: { environment: "jsdom", setupFiles: ["src/test/setup.ts"] },
+  test: { environment: "jsdom", setupFiles: ["src/test/setup-dom.ts"] },
 });
 
-// packages/ui/src/test/setup.ts
+// packages/ui/src/test/setup-dom.ts: the app's DOM setup without the router's scrollTo stub
 import "@testing-library/jest-dom/vitest";
+import { configure } from "@testing-library/dom";
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
 
-// `globals: false` turns off Testing Library's automatic cleanup.
-afterEach(cleanup);
+// The bound only ends a hang; a loaded CI machine must never reach it.
+configure({ asyncUtilTimeout: 5_000 });
+
+afterEach(() => {
+  // `globals: false` turns off Testing Library's automatic cleanup.
+  cleanup();
+  localStorage.clear();
+  sessionStorage.clear();
+});
 ```
 
 ## The kit's CSS and the app's
@@ -400,7 +408,7 @@ createRoot(container).render(
 );
 ```
 
-`playwright.config.ts` is the app's with one `webServer` and no stub API:
+`playwright.config.ts` is the app's, with both browser projects, one `webServer` and no stub API:
 
 ```ts
 import { defineConfig, devices } from "@playwright/test";
@@ -417,7 +425,11 @@ export default defineConfig({
   failOnFlakyTests: isCI,
   reporter: isCI ? [["list"], ["junit", { outputFile: "test-results/junit.xml" }]] : "list",
   use: { baseURL: APP_ORIGIN, trace: "on-first-retry" },
-  projects: [{ name: "chromium", use: devices["Desktop Chrome"] }],
+  projects: [
+    { name: "chromium", use: devices["Desktop Chrome"] },
+    // Safari's engine on a phone-sized touch screen: the narrow layout and WebKit-only bugs.
+    { name: "phone", use: devices["iPhone 17e"] },
+  ],
   webServer: {
     // The production build under the production CSP.
     command: "pnpm build && pnpm preview",

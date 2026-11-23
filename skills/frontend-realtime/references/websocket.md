@@ -57,20 +57,32 @@ const parse = (data: unknown) => {
 export function openSocket(url: string, token: string, timeoutMs = 10_000) {
   return new Promise<WebSocket>((resolve, reject) => {
     const socket = new WebSocket(url);
+    // The handshake's listeners go once it settles, or every later frame is parsed here too.
+    const handshake = new AbortController();
+    const settle = (error?: Error) => {
+      clearTimeout(timer);
+      handshake.abort();
+      if (error) reject(error);
+      else resolve(socket);
+    };
     // A server or proxy that accepts and never answers would leave the caller waiting forever.
     const timer = setTimeout(() => {
-      reject(new Error("socket handshake timed out"));
+      settle(new Error("socket handshake timed out"));
       socket.close(4000, "handshake timeout");
     }, timeoutMs);
-    socket.addEventListener("open", () => socket.send(JSON.stringify({ type: "auth", token })));
-    socket.addEventListener("message", (event) => {
-      if (!Ready.safeParse(parse(event.data)).success) return;
-      clearTimeout(timer);
-      resolve(socket);
+    const { signal } = handshake;
+    socket.addEventListener("open", () => socket.send(JSON.stringify({ type: "auth", token })), {
+      signal,
     });
-    socket.addEventListener("close", (event) => {
-      clearTimeout(timer);
-      reject(new Error(`socket closed: ${event.code}`));
+    socket.addEventListener(
+      "message",
+      (event) => {
+        if (Ready.safeParse(parse(event.data)).success) settle();
+      },
+      { signal },
+    );
+    socket.addEventListener("close", (event) => settle(new Error(`socket closed: ${event.code}`)), {
+      signal,
     });
   });
 }
@@ -78,16 +90,16 @@ export function openSocket(url: string, token: string, timeoutMs = 10_000) {
 
 ## Tests
 
-MSW 3's `ws.link(url)` intercepts the global `WebSocket` in jsdom; a handler listens for
-`connection` and talks through `client.send` and `client.close`. A socket with no handler gets an
-`error` event and MSW prints `intercepted a WebSocket connection without a matching event handler`,
-but the setup file's `afterEach` counts only HTTP requests, so the test does not fail on it: assert
-what the app shows instead. Reconnect delays are timers: `vi.useFakeTimers()` and
+MSW 3's `ws.link(url)` intercepts the global `WebSocket` (Node and jsdom both have one); a handler
+listens for `connection` and talks through `client.send` and `client.close`. A socket with no
+handler gets an `error` event and MSW prints `intercepted a WebSocket connection without a matching
+event handler`, but the setup file's `afterEach` counts only HTTP requests, so the test does not
+fail on it: assert what the app shows instead. Reconnect delays are timers: `vi.useFakeTimers()` and
 `vi.advanceTimersByTimeAsync`.
 
 ```ts,verify,test
 import { ws } from "msw";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { openSocket } from "@/api/open-socket";
 import { server } from "@/test/server";
 
@@ -108,6 +120,25 @@ test("the token goes in the first frame, and the socket opens on ready", async (
 
   expect(frames).toEqual([{ type: "auth", token: "token-1" }]);
   expect(socket.url).toBe("wss://rt.test/game");
+  socket.close();
+});
+
+test("after ready, a frame reaches only the app's own listener", async () => {
+  server.use(
+    game.addEventListener("connection", ({ client }) => {
+      client.addEventListener("message", (event) => {
+        const auth = String(event.data).includes('"auth"');
+        client.send(JSON.stringify(auth ? { type: "ready" } : { type: "moved", x: 1 }));
+      });
+    }),
+  );
+  const socket = await openSocket("wss://rt.test/game", "token-1");
+  const parse = vi.spyOn(JSON, "parse");
+
+  socket.send(JSON.stringify({ type: "move", x: 1 }));
+  await new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
+
+  expect(parse).not.toHaveBeenCalled();
   socket.close();
 });
 

@@ -12,6 +12,8 @@
 6. "add a 'repeat email' input to the create user form that must match the email"
 7. "I call formApi.setErrorMap({ onSubmit: { form: 'Email taken' } }) and nothing appears"
 8. "the project form needs a list of tags with Add and Remove buttons"
+9. "add a seats number input and a visibility select to the useAppForm event form; field.TextField is the only bound field we have"
+10. "in our three-step signup form a 422 for a field on step one shows nothing when the user submits on step three"
 
 **Should not load**
 
@@ -35,7 +37,7 @@
 - a `.refine` whose options carry `path` naming the repeat-email field
 - `.trim()` placed before `.min(1)` on the name
 - the request body produced by parsing the form values (`Schema.parse(value)` or a `.transform`) so the repeat-email field is not sent
-- `validators: { onSubmit: <form schema> }` kept as the only validator
+- `useAppForm` with `validationLogic: revalidateLogic()` and `validators: { onDynamic: <form schema> }` as the only validator
 
 **Must not produce**:
 
@@ -55,12 +57,11 @@
 
 - the route file `src/routes/users/$userId_/edit.tsx` with `createFileRoute("/users/$userId_/edit")`, leaving `src/routes/users/$userId.tsx` as it is
 - a route loader filling the cache that throws `notFound()` for an id the generated `GetUserParams` rejects and for a 404, with a `notFoundComponent`
-- `useForm` whose `defaultValues` come from the user returned by `useSuspenseQuery(getGetUserSuspenseQueryOptions(...))`
-- `validators: { onSubmit: CreateUserBody }` (or a regenerated update schema)
-- the PATCH sent through `useMutation` with `meta: { silent: true }`, awaited with `mutateAsync` inside `onSubmit`, using `apiFetch` or a regenerated operation rather than raw `fetch`
-- failures mapped with `formApi.setErrorMap({ onSubmit: ... })`, every form-level-only case carrying `fields: {}`
+- `useAppForm` from `@/shared/hooks/use-app-form` whose `defaultValues` come from the user returned by `useSuspenseQuery(getGetUserSuspenseQueryOptions(...))`
+- `validationLogic: revalidateLogic()` with `validators: { onDynamic: CreateUserBody }` (or a regenerated update schema)
+- the PATCH sent through `useMutation` with `meta: { silent: true }`, awaited with `mutateAsync` inside `onSubmit` without a `catch`, using `apiFetch` or a regenerated operation rather than raw `fetch`
+- the fields rendered as `form.AppField` children with `field.TextField`, inside `form.AppForm` and `form.Form` with a `failed` sentence, `form.FormError` and `form.SubmitButton`
 - `formApi.reset()` before the navigation back to the user's page
-- focus moved to the first invalid field after a failed submit, both as `onSubmitInvalid` and after `setErrorMap`
 - `useBlocker` whose callbacks read `form.state.isDefaultValue`
 - the form rendered with `key={user.id}` or an equivalent remount per user
 
@@ -72,31 +73,50 @@
 - a `shouldBlockFn` reading a value captured at render (`isDirty` from `useStore` or a prop)
 - a flat dot route file such as `$userId_.edit.tsx`, or `$userId.tsx` moved or turned into a layout
 - `react-hook-form`
+- a local copy of `submitErrors`, `firstError` or `focusFirstError`, or `setErrorMap` called in a `catch`
 
 ### Eval 3 - server errors that toast instead of showing on the form
 
-**Prompt**: "The new invite user form's onSubmit is `try { const user = await inviteUser.mutateAsync({ data: value }); navigate({ to: '/users/$userId', params: { userId: user.id } }); } catch (error) { toast((error as Error).message); }`. A 422 shows a generic toast and the field messages never appear, and an email that is already invited shows a technical message. Fix it."
+**Prompt**: "The new invite user form uses useAppForm, and its onSubmit is `try { const user = await inviteUser.mutateAsync({ data: value }); navigate({ to: '/users/$userId', params: { userId: user.id } }); } catch (error) { toast((error as Error).message); }`. A 422 shows a generic toast and the field messages never appear, and an email that is already invited shows a technical message. Fix it."
 
 **Fixture**: scaffold
 
 **Must produce**:
 
+- the `try`/`catch` removed, so a rejected `mutateAsync` is the failed submit that `form.Form` maps
 - `meta: { silent: true }` on the mutation options
-- `formApi.setErrorMap({ onSubmit: { fields: error.fieldErrors } })` for an `ApiError` with field errors
-- a 409 mapped to a form-level message written in the UI, with `fields: {}`
-- a generic form-level message for any other failure, naming `error.requestId` when present
-- a form-level message when `fieldErrors` names a field the form does not render, checked with `name in formApi.fieldInfo`
-- focus moved to the first invalid field after the failed submit
+- the form rendered in `form.AppForm` and `form.Form` with a `failed` sentence and `form.FormError`, the fields through `field.TextField`
+- the 409 left to `form.Form`: under the field its details name, otherwise the form message; if the backend sends no field, a note that it should name one
 - `formApi.reset()` before the navigation
-- if the answer shows field rendering, field errors read through a normaliser that accepts both strings and `{ message }` objects (`firstError`), never `errors.join` or `errors[0]` rendered directly
 
 **Must not produce**:
 
 - `error.message` in the UI
 - parsing the response body or `error.body` in the component
 - a new error class or a branch on generated error types
-- `setErrorMap({ onSubmit: { form: ... } })` without `fields`
+- a 409 hard-coded to the email field or to "already exists" text
+- a local copy of `submitErrors` or a `setErrorMap` call in the form
 - `reportError` called for a failure the form shows
+
+### Eval 4 - form in steps
+
+**Prompt**: "Split the create user form into two steps, Name then Email, with Back and Next buttons and the submit on the last step. If the server rejects the name, the user must see why."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- one `useAppForm` for both steps, with `revalidateLogic()` and `validators: { onDynamic: CreateUserBody }`, and only the current step's `form.AppField`s rendered
+- `onFieldErrors` on `form.Form` (or an equivalent hook on a failed submit) that opens the earliest step holding a field with an error
+- the step derived from the field name (a map from top-level name to step), not from the error text
+- a route test where a 422 for `name` after submitting on the email step shows the message under Name
+
+**Must not produce**:
+
+- a separate form or mutation per step
+- a `try`/`catch` around `mutateAsync` in `onSubmit`
+- every step rendered and hidden with CSS so the errors have a field to land on
+- a step switch driven by `isSubmitSuccessful` or `isSubmitted`
 
 ### Probe 1 - zod adapter
 
@@ -106,17 +126,17 @@
 
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:from\s+["\x27]@tanstack\/zod-form-adapter["\x27])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:validatorAdapter\s*:)`
 
-**Right answer**: `onSubmit:\s*(?:CreateUserBody|UpdateUserBody)\b`
+**Right answer**: `on(?:Dynamic|Submit):\s*(?:CreateUserBody|UpdateUserBody)\b`
 
-### Probe 2 - form-level error without fields
+### Probe 2 - catching the failed submit
 
-**Prompt**: "On the edit user form (PATCH /users/{id}, TanStack Form 1, errors set with formApi.setErrorMap), a 409 means the email belongs to someone else: show 'This email belongs to another user.' at the top of the form."
+**Prompt**: "The scaffold's create user form uses useAppForm. When the API answers 422, put the backend's field messages under the inputs."
 
-**Fixture**: empty
+**Fixture**: scaffold
 
-**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.setErrorMap\(\s*\{\s*onSubmit:\s*\{\s*form:\s*(?:"[^"]*"|\x27[^\x27]*\x27|\x60[^\x60]*\x60|[\w.]+(?:\([^)]*\))?)\s*,?\s*\})`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bcatch\s*(?:\(\s*\w+\s*\))?\s*\{[^}]*\bset(?:ErrorMap|FieldMeta)\()`
 
-**Right answer**: `fields:\s*\{\s*\}`
+**Right answer**: `form\.Form`
 
 ### Probe 3 - navigation before reset
 
@@ -201,3 +221,53 @@
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bdata:\s*value\s*[,})])`
 
 **Right answer**: `\.\.\.\(\s*(?:\w+\.)?note\s*(?:&&|\?)`
+
+### Probe 12 - text part on a number field
+
+**Prompt**: "Add a required seats input to the scaffold's create event form (useAppForm, CreateEventBody has `seats: z.number().int().min(1)`)."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<form\.AppField\s+name=["\x27]seats["\x27][^>]*>\s*\{\s*\(\s*(\w+)\s*\)\s*=>\s*<\1\.TextField\b)`
+
+**Right answer**: `NumberField`
+
+### Probe 13 - date input through Date
+
+**Prompt**: "Add a 'Starts on' date input to the create event form; the API takes `startsOn` with `format: date`."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:new\s+Date\([^)\n]*startsOn)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:startsOn[^\n]*\.toISOString\(\))`
+
+**Right answer**: `type=["\x27]date["\x27]`
+
+### Probe 14 - success UI on submit flags
+
+**Prompt**: "After the create user form (useAppForm) saves, stay on the page and show a 'User created' message above the form."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\bstate\.isSubmit(?:Successful|ted)\b)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\{\s*isSubmit(?:Successful|ted)\s*&&)`
+
+**Right answer**: `mutateAsync`
+
+### Probe 15 - conflict hard-wired to a field
+
+**Prompt**: "The create user API answers 409 when the email is taken. Make the form tell the user."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.status\s*===\s*409)`
+
+**Right answer**: `details|form\.Form`
+
+### Probe 16 - a number input that rewrites decimals
+
+**Prompt**: "Add a price field to the event form (useAppForm); prices have cents, so people type values like 0.05. The schema has `price: z.number().min(0)`."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:value=\{[^}\n]*String\(\s*(?:field\.state\.)?value\s*\)\s*\})`
+
+**Right answer**: `NumberField`

@@ -41,7 +41,7 @@ that a model gets wrong. In an existing project merge only the entries a change 
 |---|---|
 | one file, `include` with `*.ts` | Type-checks the app, `vite.config.ts`, Playwright, `deploy/` and the plugin test in one `tsc` run. No `tsconfig.app.json`/`tsconfig.node.json` split, no `references`, no `tsc -b`. |
 | `module: "preserve"` | Resolution defaults to `bundler`; leave `moduleResolution` out. |
-| `lib: ["es2024", "dom"]` | Matches the `build.target` floor in `vite.config.ts`. |
+| `lib: ["es2024", "dom"]` | Stops JavaScript built-ins newer than ES2024 (`Promise.try`, iterator helpers, `Temporal`). It cannot stop a newer DOM API: the `dom` lib tracks current Chromium. What the browser floor covers is in the Vite reference. |
 | `types` | TypeScript 7 defaults `types` to `[]`: an ambient package is visible only when listed. Without `vite/client` the CSS import fails with TS2882, because `noUncheckedSideEffectImports` is now on by default. |
 | `strict` | The TypeScript 7 default, kept explicit. |
 | `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noImplicitOverride` | Not in `strict`. What they demand of code is `frontend-code-style`'s. |
@@ -55,8 +55,12 @@ that a model gets wrong. In an existing project merge only the entries a change 
 
 TypeScript 7 is the native compiler. It drops the classic compiler API: `import ts from
 "typescript"` exports only `version` and `versionMajorMinor`, and the new API is unstable, under
-`typescript/unstable/sync` and `typescript/unstable/async`. A tool built on the classic API
-fails; Biome, knip 6, orval, Vite and the router plugin do not need it.
+`typescript/unstable/sync` and `typescript/unstable/async`. A tool that imports the classic API
+from the project's `typescript` fails; Biome, knip 6, Vite and the router plugin do not use it.
+orval does: `@orval/zod` declares its own dependency on TypeScript 6 and calls
+`ts.createSourceFile`. pnpm links that copy into orval's directory only, so the store holds
+TypeScript 6 and 7, nothing is installed by hand, and `tsc` and the editor use the project's
+TypeScript 7. Never add TypeScript 6 to `package.json` for it.
 The VS Code language service comes from the `TypeScriptTeam.native-preview` extension.
 
 ## TypeScript 7 errors on old options
@@ -101,8 +105,9 @@ Delete the option; none of them has a TypeScript 7 replacement other than the on
         "noMisusedPromises": "error",
         "noTailwindArbitraryValue": "error",
         "noTailwindLegacyUtilities": "error",
-        "noTailwindRawColors": "error",
+        "noTailwindRawColors": { "level": "error", "options": { "allowBlackAndWhite": false } },
         "noTailwindRestyledComponents": "error",
+        "useExhaustiveSwitchCases": "error",
         "useReactCompiler": "error",
         "useTailwindShorthandClasses": "error",
         "useTailwindStaticClassStrings": "error",
@@ -126,6 +131,27 @@ Delete the option; none of them has a TypeScript 7 replacement other than the on
     }
   },
   "overrides": [
+    {
+      "includes": ["src/**", "!src/test/**", "!**/*.test.ts", "!**/*.test.tsx"],
+      "linter": {
+        "rules": {
+          "correctness": { "noNodejsModules": "error" },
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "process": "Browser code has no process: read a build-time value from import.meta.env.",
+                  "Buffer": "Browser code has no Buffer: use Uint8Array, TextEncoder or btoa.",
+                  "global": "Browser code has no global: use globalThis.",
+                  "require": "Browser code has no require: use import."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "includes": ["src/routes/**"],
       "linter": { "rules": { "style": { "useFilenamingConvention": "off" } } }
@@ -158,15 +184,18 @@ Delete the option; none of them has a TypeScript 7 replacement other than the on
 | `vcs.useIgnoreFile` | Biome skips what `.gitignore` lists. It errors when no `.gitignore` exists. |
 | `files.includes` | `!` globs exclude the generated route tree and API client. `files.ignore` and `files.include` are Biome 1 keys and abort Biome 2. |
 | `formatter` | Two spaces, 100 columns; the other defaults (double quotes, semicolons, trailing commas) stay. `.editorconfig` is not read by Biome. |
-| `tailwind` | `stylesheet` lets the Tailwind rules know the project's tokens and turns on Tailwind directive parsing in CSS (no `css.parser.tailwindDirectives` key needed); `mergeFunctions` makes them lint the arguments of `cx()`. |
+| `tailwind` | `stylesheet` lets the Tailwind rules know the project's tokens and turns on Tailwind directive parsing in CSS (no `css.parser.tailwindDirectives` key needed); `mergeFunctions` makes them lint the arguments of `cx()`; a class string anywhere else than `className` or `cx()` (a variants object) is not linted, which is why `button.tsx` wraps each one in `cx()`. |
 | `plugins` | The GritQL boundary plugin. Its diagnostics print as `plugin`. |
 | `linter.domains` | `recommended` turns on each domain's stable recommended rules: React hooks and JSX (`react`), import cycles and undeclared dependencies through the module graph (`project`), type-aware rules (`types`), test-file rules (`test`). Never `"all"` for `react`: it adds `noJsxPropsBind`, which forbids the inline handlers the React Compiler makes free. |
 | `nursery` rules | A domain never enables a nursery rule, and a nursery rule defaults to `info`, so each is listed at `error`. `noFloatingPromises` and `noMisusedPromises` need the `types` domain. `useReactCompiler` reports code the compiler skips. The seven Tailwind rules enforce the styling contract (`tailwind-base-ui` owns what they mean). |
+| `noTailwindRawColors` with `allowBlackAndWhite: false` | `--color-*: initial` in `styles.css` removes black and white too, so `bg-black/50` would pass the default rule and generate no CSS. Reported as `This Tailwind CSS class uses a raw palette color.`; use a token. |
+| `useExhaustiveSwitchCases` | A `switch` over a union must name every member: `The switch statement is not exhaustive.` with `These cases are missing:`. Its unsafe fix inserts `throw new Error("TODO: Not implemented yet")`; write the real case instead. |
 | `noExcessiveCognitiveComplexity` | Default severity is `info`; raised to `error` at the default threshold of 15. |
 | `noUndeclaredDependencies` | An import of a package not in `package.json` fails lint. |
 | `noUnresolvedImports: "off"` | `tsc` already reports an unresolved import, with the right paths. |
 | `noBarrelFile`, `noReExportAll`, `noDefaultExport`, `useFilenamingConvention` | House structure rules (`frontend-project-structure` owns them); off by default in Biome. |
 | `noConsole` | No allow list: app code reports through `reportError`. |
+| override browser code (`src/**` minus `src/test/**` and tests) | `tsconfig.json` types Node for the config files, so `process` and `Buffer` type-check in `src/` too. `noNodejsModules` reports `This import references a Node.js builtin module.`; `noRestrictedGlobals` reports `Do not use the global variable process.` (also `Buffer`, `global`, `require`) followed by the replacement its message names. Tests and `src/test/` may use Node. |
 | override `src/routes/**` | TanStack file-route names (`$userId.tsx`) are not kebab-case. |
 | override `src/shared/ui/**` | The wrappers are where the restyled-component and arbitrary-value classes legitimately live. |
 | override `*.config.ts` | Vite, Playwright and orval load a default export. |

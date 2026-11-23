@@ -13,6 +13,8 @@
 7. "the browser blocks wss://rt.example.com with a connect-src violation even though https://rt.example.com is in the CSP"
 8. "write a test for the live user page: simulate a publication from the channel and check the page updates"
 9. "we have our own game server protocol over websockets, how should the client module handle reconnects and close codes"
+10. "show who is typing in the chat room; the backend publishes typing events on the Centrifugo channel rooms:<id>"
+11. "our notification feed over SSE gets 429s with Retry-After when the API restarts and every tab reconnects at once"
 
 **Should not load**
 
@@ -65,7 +67,7 @@
 - a channel the server refuses (the subscription ends `unsubscribed`) shown as not live and passed to `reportError` once
 - `protobufjs: false` under `allowBuilds` for the `ERR_PNPM_IGNORED_BUILDS` that `pnpm add centrifuge` stops on
 - `PUBLIC_REALTIME_ORIGIN` as a `wss://` origin, wired through the new-origin steps
-- the Playwright run kept green: the origin in the `webServer` env, and the socket mocked through a fixture option (`routeWebSocket`) that a spec can switch off to run against a Centrifugo container
+- the Playwright run kept green: the origin in the build's `webServer` env, and the socket mocked through a fixture option (`routeWebSocket`) in the add-on's own `e2e/realtime.ts`, merged into `e2e/fixtures.ts` with `mergeTests`; a spec that switches it off runs against a Centrifugo container started only then, or the server `E2E_REALTIME_ORIGIN` names
 - a route test through `renderRoute` with `centrifuge` replaced by a fake via `vi.mock` in the setup file, emitting a publication and asserting the new name on the page
 
 **Must not produce**:
@@ -77,7 +79,8 @@
 - `onMessage` or the handler in the effect's dependency list
 - a status that reads live from the connection state alone
 - `setQueryData` with a partial user built from the event
-- a Playwright config that picks the Centrifugo container or its connect-proxy host from the `CI` flag
+- a Playwright config that picks the Centrifugo container or its host from the `CI` flag
+- a Centrifugo container started for every end-to-end run, including runs whose specs all mock the socket
 
 ### Eval 3 - a versioned entity pushed into the cache
 
@@ -87,8 +90,9 @@
 
 **Must produce**:
 
-- `await queryClient.cancelQueries({ queryKey, exact: true })` before writing the pushed order
-- `setQueryData` with an updater that keeps the cached order when its `version` is greater than or equal to the pushed one
+- reads the cached order first: a pushed `version` equal to or lower than the cached one changes nothing and cancels nothing
+- otherwise `await queryClient.cancelQueries({ queryKey, exact: true })`, then `setQueryData` with an updater that keeps the cached order when its `version` is greater than or equal to the pushed one
+- a first fetch in flight (no cached order yet) awaited, not cancelled, so a route loader awaiting the same key does not reject with `CancelledError`
 - explains the jump back as an in-flight fetch landing its older snapshot after the push
 - `removeQueries` for the deleted order's detail key and invalidation of the order lists
 - a discriminated-union zod schema on `type`, with unknown types dropped
@@ -97,9 +101,33 @@
 **Must not produce**:
 
 - `setQueryData(key, event.order)` with no cancel and no version check
-- `invalidateQueries` presented as the fix for the in-flight race
+- `invalidateQueries` presented as the fix for the in-flight race, including during a first fetch
+- `cancelQueries` called before the version check
 - splicing the pushed order into a cached list page
 - a separate store or Context holding pushed orders
+
+### Eval 4 - a resumable feed that survives a reconnect storm
+
+**Prompt**: "Our notifications feed is `GET /notifications` as `text/event-stream` with event ids and a `: keepalive` comment every 30 s. Keep it open in the header for the whole session and resume after drops. When the API restarts, every tab reconnects at once and the API answers 429 with `Retry-After`. Last week a bug in our event handler went unnoticed for days."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- reads the stream through the fetcher's seam with a `getReader()` loop, not async iteration of a `ReadableStream`
+- resumes with `Last-Event-ID` after a dropped connection, a read timeout, 408, 429 and 5xx, with full-jitter backoff whose base never drops below one second
+- waits for `Retry-After` (seconds or an HTTP date, capped) before the jittered backoff, and notes the API must send `Access-Control-Expose-Headers: Retry-After` when it is on another origin
+- an error thrown by the event handler goes to `reportError` and does not reconnect
+- any other 4xx ends the feed and reaches `reportError`
+- a silence timeout of twice the keepalive interval
+- writes events into the Query cache, read through a query that never fetches, in a component that does not suspend in the root layout
+
+**Must not produce**:
+
+- the handler called inside the `try` whose `catch` reconnects
+- every `TypeError` or every error treated as a dropped connection
+- a 429 or 408 that ends the feed
+- `yield*` or `for await` over `response.body`
 
 ### Probe 1 - EventSource with a token
 
@@ -198,3 +226,23 @@
 **Wrong answer**: `^(?![\s\S]*(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:#\$\{|#\d|allow_user_limited_channels|subscribe_proxy_enabled))[\s\S]*?(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)"allow_subscribe_for_client"\s*:\s*true`
 
 **Right answer**: `allow_user_limited_channels|subscribe_proxy_enabled`
+
+### Probe 11 - async iteration of a response body
+
+**Prompt**: "Write an async generator `readEvents(response)` that parses a `text/event-stream` fetch response with `eventsource-parser/stream` and yields each event."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:yield\*\s*[\w.]*\.body\b|for\s+await\s*\(\s*const\s+\w+\s+of\s+[\w.]*(?:\.body\b|\.pipeThrough\())`
+
+**Right answer**: `getReader\(`
+
+### Probe 12 - presence in the Query cache
+
+**Prompt**: "Show which users are viewing the document right now. The backend publishes `{\"type\":\"viewing\",\"user\":\"...\"}` on the Centrifugo channel `docs:<id>` every few seconds per viewer; there is no endpoint for it."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:setQueryData\(\s*\[\s*["'](?:viewers|viewing|presence|docs)\b)`
+
+**Right answer**: `useSyncExternalStore`

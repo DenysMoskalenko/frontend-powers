@@ -4,7 +4,7 @@
 
 what Faro adds and costs · the collector URL in five places · the `vite.config.ts` edits · the
 release id · the telemetry module and its test · `main.tsx` and the user id · tracing and backend
-CORS · what never leaves the browser · source maps · CSP rollout reports.
+CORS · what never leaves the browser · source maps · CSP violations and rollout reports.
 
 ## What it adds and what it costs
 
@@ -12,11 +12,13 @@ Faro captures errors, web vitals, sessions and, with the tracing package, a `tra
 requests. The app keeps its one funnel: code calls the platform `reportError`, which dispatches a
 `window` `error` event, and Faro's error instrumentation wraps `window.onerror`, so boundary-caught
 errors, uncaught errors and `reportError` calls all arrive without a Faro import in feature code.
+An unhandled promise rejection raises `unhandledrejection`, not `error`; Faro's error
+instrumentation listens for it too, so a tracker that replaces Faro must listen for both events.
 
 Measured on the scaffold: the two lazy chunks are about 67 KB gzip together, the entry chunk grows
-by about 0.6 KB, and a build without `PUBLIC_FARO_URL` never fetches the chunks. If that growth
-takes the entry over `ENTRY_BUDGET_BYTES`, first check what can leave the entry, then raise the
-budget by the measured amount in the same change and name Faro as the cause.
+by about 0.6 KB, and a build without `PUBLIC_FARO_URL` never fetches the chunks. Raise
+`ENTRY_BUDGET_BYTES` by the measured growth in the same change, over budget or not, and name Faro as
+the cause: every add-on does, so the budget comes out the same in whatever order they arrive.
 
 Packages: `pnpm add @grafana/faro-web-sdk @grafana/faro-web-tracing` (a bare add writes exact pins).
 
@@ -328,7 +330,9 @@ test("an upper-case scheme loses its query too", () => {
 ## `main.tsx` and the user id
 
 `startTelemetry(collectorUrl: string): Promise<Faro>` resolves to the Faro instance once the
-chunks have loaded. In `src/main.tsx`, after `reloadOnStaleChunk()`:
+chunks have loaded. In `src/main.tsx`, before anything that waits: on the bare scaffold after
+`reloadOnStaleChunk(router)`, with a sign-in or i18n add-on above their start-up, as
+`frontend-project-structure`'s app-composition reference shows:
 
 ```ts
 const telemetry = env.faroUrl ? startTelemetry(env.faroUrl) : undefined;
@@ -383,9 +387,27 @@ origins (the default empty list rejects every browser), keep `rate_limiting` on,
 `{{ .Release }}`, which the receiver fills from `app.release`; the default downloads maps from any
 origin, which is an SSRF path and finds nothing, because no map is public.
 
-## CSP rollout reports
+## CSP violations and rollout reports
 
-`enableContentSecurityPolicyInstrumentation: true` sends every `securitypolicyviolation` event to
-the collector, scrubbed like every other item. Before tightening the policy (a removed origin, a
-new directive), ship the new policy as `Content-Security-Policy-Report-Only` beside the enforced
-one for a week, read the reports, then enforce it.
+The shipped CSP has no reporting directive, so without Faro a violation in production is seen only
+in the user's console. `getWebInstrumentations` includes Faro's CSP instrumentation (on unless
+`enableContentSecurityPolicyInstrumentation: false`; the module sets it explicitly): it listens for
+`securitypolicyviolation` on `document` and sends each one as an event of that name, with
+`effectiveDirective`, `blockedURI`, `sourceFile`, `sample` and `disposition`, scrubbed like every
+other item. It sees only violations after its chunks have loaded; the `report-to` header in the
+headers reference also covers the first load and needs no add-on.
+
+Browser extensions inject styles and scripts into the page and raise violations the app did not
+cause. Tell them apart in the query, never in `beforeSend`:
+
+- a `sourceFile` or `blockedURI` with an extension scheme (`chrome-extension:`, `moz-extension:`,
+  `safari-web-extension:`) is an extension;
+- the app's own violation names a `sourceFile` under `/assets/` of the current release, repeats
+  across sessions and browsers, and `pnpm test:e2e` reproduces it, since its browsers run without
+  extensions;
+- an `inline` violation with an empty `sourceFile` in a few sessions only is almost always an
+  extension; one that follows a release is the app's.
+
+Before tightening the policy (a removed origin, a new directive), ship the new policy as
+`Content-Security-Policy-Report-Only` beside the enforced one for a week, read the reports
+(`disposition: "report"`), then enforce it.

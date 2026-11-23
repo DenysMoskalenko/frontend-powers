@@ -16,19 +16,23 @@ has another add-on (`keycloak-spa-auth`, `frontend-realtime`) or its own changes
 additions listed here into the existing file and never replace it; `frontend-project-structure`'s
 app-composition reference shows the combined files. What this add-on adds, per file:
 
-- `src/main.tsx`: `createI18n(pickLanguage(...))`, and the render moved into
-  `ready.then(render, startFailed)` with `i18n` passed to `createAppRouter`.
+- `src/main.tsx`: `createI18n(pickLanguage(...))`, `i18n` passed to `createAppRouter`, the router's
+  first load started at once, and the render moved into `ready.then(render).catch(startFailed)`.
 - `src/app/router.tsx`: an `i18n: I18n` parameter and `<I18nextProvider>` in `Wrap`, inside
   `CSPProvider`, around `QueryClientProvider`.
 - `src/test/render-route.tsx`: the message-file glob, a `language` option, the instance passed to
   `createAppRouter` and returned.
 - `src/routes/__root.tsx`: `<LanguageSelect languages={LANGUAGES} />` in the header.
-- `src/shared/lib/format-date.ts`: a `language` parameter on `formatDateTime`, one formatter per
-  language; each caller (`src/features/users/user-table.tsx`, `user-details.tsx`) passes
-  `i18n.language` from `useTranslation()`.
+- `src/shared/lib/format-date.ts`: a `language` parameter on `formatDateTime` and `formatDate`, one
+  formatter per language; each caller (`src/features/users/user-table.tsx`, `user-details.tsx`)
+  passes `i18n.language` from `useTranslation()`.
+- `src/shared/hooks/use-app-form.tsx`: field errors by `code` or issue kind (messages reference).
+- Text an add-on added before this one: `t()` calls for `keycloak-spa-auth`'s Sign in, Sign out and
+  no-access screen and `frontend-realtime`'s `LiveStatus` labels; the lint baseline would keep the
+  first English, and lint never sees the second, a table outside JSX.
 - `pnpm-workspace.yaml`: `"@swc/core": false` under `allowBuilds`.
-- `package.json`, `biome.json`, `knip.json`, `.pre-commit-config.yaml`, both CI files: the lines in
-  the gates reference.
+- `package.json`, `biome.json`, `knip.json`, `.pre-commit-config.yaml` and the CI file the app has:
+  the lines in the gates reference.
 - `vite.config.ts`: `ENTRY_BUDGET_BYTES` raised by the growth `pnpm build` reports.
 
 ## Steps
@@ -40,14 +44,18 @@ In this order; after the last one `pnpm check`, `pnpm build` and `pnpm test:e2e`
    reference, `src/test/render-route.tsx`: `tsc` fails until all three are in, because the router
    now requires `i18n`.
 3. Replace `src/shared/lib/format-date.ts` and pass `i18n.language` at each caller (messages
-   reference, which shows `user-table.tsx`): `tsc` lists the callers with `TS2554`.
+   reference, which shows `user-table.tsx`): `tsc` lists the callers with `TS2554`. Replace
+   `src/shared/hooks/use-app-form.tsx` from the same reference. A field now shows the app's text,
+   not zod's or the server's: the scaffold's `users/new.test.tsx` asserts `Invalid email address`
+   and `This email is already taken.`, which become the `fieldErrors.email` and
+   `fieldErrors.taken` text written in step 7.
 4. Add the language switcher and mount it in `src/routes/__root.tsx` (messages reference); until
    something imports `LANGUAGES`, knip reports it unused.
-5. Add `src/app/i18n.test.ts` (tests reference), which keeps CI's coverage gate green.
+5. Add `src/app/i18n.dom.test.ts` (tests reference), which keeps CI's coverage gate green.
 6. Add `i18next.config.ts` and the lines the gates reference lists for `package.json`, `biome.json`,
    `knip.json`, the hook and CI.
 7. Run `pnpm i18n:extract`, write the text of the new keys into every
-   `src/app/locales/<language>/common.json` (the switcher's `language` label), run it again, then
+   `src/app/locales/<language>/common.json` (the switcher's `language` label, the field errors), run it again, then
    format `src/app/i18next.d.ts` and add `strictKeyChecks: true` ([Typed keys](#typed-keys)).
 8. Run `pnpm exec i18next-cli lint --update-baseline` once and commit
    `i18next-lint-baseline.json`: it records the English JSX the app already has. After that a new
@@ -86,15 +94,12 @@ through `useTranslation()`, never by importing this file (`features/` and `share
 ```ts,verify
 // file: src/app/i18n.ts
 import { type BackendModule, createInstance, type Resource, type ResourceKey } from "i18next";
-import * as z from "zod";
-import { en, ru } from "zod/locales";
 
 export const LANGUAGES = ["en", "ru"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
 const FALLBACK_LANGUAGE: Language = "en";
 const STORAGE_KEY = "app.language";
-const ZOD_MESSAGES = { en, ru } satisfies Record<Language, unknown>;
 
 // One chunk per language and namespace; none of them is in the entry bundle.
 const messageFiles = import.meta.glob<ResourceKey>("./locales/*/*.json", { import: "default" });
@@ -136,19 +141,33 @@ export function storedLanguage(): unknown {
 
 /**
  * One instance per app or test, like the QueryClient. With `resources` (tests) it is ready on
- * return; without, `ready` resolves once the language's message files have loaded.
+ * return; without, `ready` resolves once the language's message files have loaded, and rejects
+ * when one of them failed.
  */
 export function createI18n(language: Language, resources?: Resource) {
   const i18n = createInstance();
+  // i18next resolves `init` and `changeLanguage` when a file fails and shows the fallback or keys.
+  const failed = new Map<string, Error>();
+  i18n.on("failedLoading", (lng, ns, cause) => {
+    failed.set(lng, new Error(`The ${lng}/${ns} messages did not load`, { cause }));
+  });
+  let current: string = language;
   i18n.on("languageChanged", (lng) => {
+    const error = i18n.isInitialized && lng !== current && failed.get(lng);
+    if (error) {
+      reportError(error);
+      void i18n.changeLanguage(current);
+      return;
+    }
+    // The first language follows the browser; only a later switch is the user's choice.
+    const chosen = i18n.isInitialized && lng !== current;
+    current = lng;
     document.documentElement.lang = lng;
     document.documentElement.dir = i18n.dir(lng);
-    z.config(ZOD_MESSAGES[asLanguage(lng) ?? FALLBACK_LANGUAGE]());
-    // The first language follows the browser; only a later switch is the user's choice.
-    if (i18n.isInitialized) rememberLanguage(lng);
+    if (chosen) rememberLanguage(lng);
   });
   if (!resources) i18n.use(lazyMessages);
-  const ready = i18n.init({
+  const init = i18n.init({
     lng: language,
     supportedLngs: LANGUAGES,
     fallbackLng: FALLBACK_LANGUAGE,
@@ -159,6 +178,10 @@ export function createI18n(language: Language, resources?: Resource) {
     // Every namespace of the language is loaded before the first render and before a switch.
     react: { useSuspense: false },
     ...(resources && { resources, initAsync: false }),
+  });
+  const ready = init.then(() => {
+    const [error] = failed.values();
+    if (error) throw error;
   });
   return { i18n, ready };
 }
@@ -178,13 +201,14 @@ function rememberLanguage(language: string) {
 | `LANGUAGES` / `supportedLngs` | The only languages the app offers. i18next appends `cimode` to `supportedLngs` itself; `changeLanguage("de")` with `de` unlisted resolves to the fallback. |
 | `fallbackLng: FALLBACK_LANGUAGE` | i18next 27 defaults it to `false`: a key missing in `ru` would render as the key instead of English. |
 | `ns: NAMESPACES` from the glob | Every namespace of the active language (and of the fallback) loads before `ready` resolves and before `changeLanguage` emits, so nothing renders as keys. |
-| `callbackApi: false` | `read` returns a promise; leaving the flag out makes i18next guess from the parameter count, which is deprecated. A failed read is not retried (i18next retries only a callback backend that returns an error with data): `ready` still resolves and that namespace renders as keys. |
+| `callbackApi: false` | `read` returns a promise; leaving the flag out makes i18next guess from the parameter count, which is deprecated. |
+| `failedLoading` | A file that does not load (a network error, a chunk a new deploy removed) emits this event and nothing else: `init` and `changeLanguage` still resolve, and the screen shows the English fallback or keys. So `ready` rejects with it (the start-failure screen), and a later switch to that language reports it and switches back. i18next does not read a failed file again in that page; a reload does. |
+| `current`, `chosen` | The switch back emits `languageChanged` for the language already in use: it restores `lang` and `dir` and is not stored as a choice. |
 | `escapeValue: false` | React escapes interpolated values; the default `true` shows `&amp;`. A value with markup (`& <b>Jerry</b>`) still renders as text. On i18next 27.2.2 it also lets a value rewrite the options of a `$t(key, {...})` nested in a message, so messages never nest one (tests reference guard). |
-| `react: { useSuspense: false }` | Nothing suspends, since all namespaces are loaded first; a namespace missing from the files renders its keys, which a route test shows at once, instead of an endless Suspense fallback. react-i18next 18 keeps `react` options per instance. |
-| `pickLanguage([stored, ...navigator.languages])` | The stored value is untrusted input: only an exact member of `LANGUAGES` passes. Browser tags match by their primary subtag (`ru-RU` -> `ru`). |
+| `react: { useSuspense: false }` | Nothing suspends, since all namespaces are loaded first; a namespace missing from the files renders its keys, which a route test shows at once, instead of an endless Suspense fallback. The root layout is the router's `shellComponent`, outside every Suspense boundary while the first page loads: a suspending `useTranslation` there would blank the page. react-i18next 18 keeps `react` options per instance. |
+| `pickLanguage([stored, ...navigator.languages])` | The stored value is untrusted input, matched like a browser tag: a string whose primary subtag is in `LANGUAGES` passes (`ru-RU` -> `ru`), anything else is skipped. |
 | `isInitialized` guard | The first `languageChanged` fires during `init`, before `isInitialized` is set, so only a later switch is stored and the first visit keeps following the browser. |
 | `document.documentElement.lang` and `dir` | Screen readers, hyphenation and `:lang()` read `lang`; `i18n.dir(lng)` gives `rtl` for Arabic or Hebrew. |
-| `z.config(ZOD_MESSAGES[...]())` | zod's messages for schema issues follow the language. `z.config` merges, so `jitless: true` from `zod-config.ts` stays. Import each locale by name from `zod/locales`; about 1.3 KB gzip for both. A `customError` there (`frontend-forms`) wins over the locale, so it must return the active language's copy: set it in this listener too. |
 
 `load` is left at its default `"all"`: languages are always bare (`en`, `ru`), so there is no
 `en-US` to look up. With `ru` active the browser loads `ru` and the `en` fallback files.
@@ -204,10 +228,13 @@ import { createI18n, pickLanguage, storedLanguage } from "@/app/i18n";
 import { createAppRouter } from "@/app/router";
 import "@/styles.css";
 
-reloadOnStaleChunk();
 configureApi({ baseUrl: env.apiOrigin });
-
 const { i18n, ready } = createI18n(pickLanguage([storedLanguage(), ...navigator.languages]));
+const router = createAppRouter({ i18n });
+reloadOnStaleChunk(router);
+// The first page's requests start now, beside the message files, not after them.
+router.load().catch(reportError);
+
 const container = document.getElementById("root");
 if (!container) throw new Error("index.html has no #root");
 const root = createRoot(container, rootErrorHandlers);
@@ -215,7 +242,7 @@ const root = createRoot(container, rootErrorHandlers);
 function render() {
   root.render(
     <StrictMode>
-      <RouterProvider router={createAppRouter({ i18n })} />
+      <RouterProvider router={router} />
     </StrictMode>,
   );
 }
@@ -227,16 +254,27 @@ function startFailed(error: unknown) {
   root.render(<p role="alert">The app could not start. Reload the page to try again.</p>);
 }
 
-// The first screen renders in its language, never as keys.
-ready.then(render, startFailed);
+// The first screen renders in its language, never as keys. `catch` also catches a throw in render.
+ready.then(render).catch(startFailed);
 ```
 
-`ready` resolves even when a message file fails to load (that namespace renders as keys), so
-`startFailed` catches a start that rejects: with a session (`keycloak-spa-auth`) both join one
-promise, `Promise.all([..., ready]).then(render, startFailed)`, and every add-on uses the same
-function and message. `reloadOnStaleChunk()` already covers a message chunk that a new deploy
-removed. The `i18next-instrument-ignore-next-line` directive keeps the lint gate from reporting the
-one English message.
+`ready` rejects when a message file fails to load, and `startFailed` reports it and renders the
+one static message. With a session (`keycloak-spa-auth`) both join one promise,
+`Promise.all([..., ready])` before `.catch(startFailed)`, every add-on uses the same function and
+message, and the router is built once the session exists. Its first load then starts at once only
+for a signed-in user: signed out, a guarded page leaves for sign-in, and leaving while the message
+files load aborts them (WebKit rejects the imports), so `ready` rejects and the start fails
+(`frontend-project-structure` shows the combined file). The
+`i18next-instrument-ignore-next-line` directive keeps the lint gate from reporting the English text.
+
+`router.load()` runs the first page's loaders while the message files load, so the first API
+request no longer waits for them; `RouterProvider` sees a load that is running or finished and does
+not start another (tests reference). On a production build in Chromium with 150 ms of added latency
+per request, the first API request started about 300 ms earlier (about 420 ms at 400 ms latency).
+
+A message file that fails on a later language switch no longer reloads the page: the scaffold's
+`reloadOnStaleChunk` reloads only for a navigation, so `createI18n` reports the failure and keeps the
+current language; the next navigation that misses a route chunk reloads.
 
 ## `src/app/router.tsx`
 
@@ -281,8 +319,13 @@ export function createAppRouter({ history, i18n }: { history?: RouterHistory; i1
   const toastManager = Toast.createToastManager();
   const queryClient = createQueryClient((reason, error) =>
     toastManager.add({
+      // One toast per reason: a repeated failure updates it, with its latest request id.
+      id: reason,
       title: NOTICES[reason],
       description: error instanceof ApiError && error.requestId && `Request id: ${error.requestId}`,
+      // A failure is announced at once and stays until dismissed: a 5 s polite toast is easy to miss.
+      priority: "high",
+      timeout: 0,
     }),
   );
   const router = createRouter({
@@ -292,8 +335,9 @@ export function createAppRouter({ history, i18n }: { history?: RouterHistory; i1
     parseSearch: parseSearchWith(exactJson),
     stringifySearch: stringifySearchWith(JSON.stringify, exactJson),
     defaultPreload: "intent",
-    // Query owns freshness: the router always runs loaders, and they read the cache.
+    // Query owns freshness: the router always runs loaders and waits for them; they read the cache.
     defaultPreloadStaleTime: 0,
+    defaultStaleReloadMode: "blocking",
     scrollRestoration: true,
     // Each route catches its own error, so the root layout and its navigation stay on screen.
     defaultErrorComponent: RouteError,
@@ -328,10 +372,12 @@ declare module "@tanstack/react-router" {
 }
 ```
 
-The notices stay English until `common.json` has their keys (lint cannot see them: they are not
-JSX). Then `NOTICES` goes, and each reason becomes a literal call, read when the toast shows:
+The toast text is the next thing to translate (lint cannot see it: it is not JSX). `NOTICES` goes,
+and each reason becomes a literal call, read when the toast shows; the router's tests keep passing
+once `en/common.json` holds the same English words:
 
 ```tsx
+id: reason,
 title: reason === "refresh" ? i18n.t("notices.refresh") : i18n.t("notices.mutation"),
 description:
   error instanceof ApiError &&
@@ -440,7 +486,7 @@ the lint and every example read.
 
 | In the entry chunk | Loaded before the first render | Loaded on a switch |
 | --- | --- | --- |
-| i18next, react-i18next, `src/app/i18n.ts`, zod's `en` and `ru` messages | one chunk per namespace of the chosen language, plus the `en` fallback chunks | the new language's namespace chunks |
+| i18next, react-i18next, `src/app/i18n.ts` | one chunk per namespace of the chosen language, plus the `en` fallback chunks | the new language's namespace chunks |
 
 `vite build` emits each JSON file as its own hashed chunk (`common-<hash>.js`, `users-<hash>.js`
 per language), served from `/assets/` with the immutable cache policy. i18next and react-i18next

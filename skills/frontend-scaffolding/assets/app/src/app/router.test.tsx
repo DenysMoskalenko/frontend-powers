@@ -1,8 +1,11 @@
-import { screen, waitFor } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { MutationObserver } from "@tanstack/react-query";
+import { act, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { HttpResponse, http } from "msw";
+import { expect, test, vi } from "vitest";
 import { getListUsersMockHandler } from "@/api/generated/api.msw";
 import { buildUser } from "@/test/factories/user";
-import { renderRoute } from "@/test/render-route";
+import { renderRoute, TEST_API_ORIGIN } from "@/test/render-route";
 import { server } from "@/test/server";
 
 const listUsers = () =>
@@ -57,3 +60,72 @@ test("the first render focuses nothing", async () => {
   expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
   expect(document.body).toHaveFocus();
 });
+
+test("a failure toast is announced at once and stays until dismissed", async () => {
+  vi.useFakeTimers();
+  // Testing Library advances fake timers only through a global `jest`.
+  vi.stubGlobal("jest", { advanceTimersByTime: vi.advanceTimersByTime });
+  // renderRoute's `user` waits on real timers and would hang here.
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  server.use(getListUsersMockHandler({ items: [buildUser()], total: 1, limit: 20, offset: 0 }));
+  renderRoute("/users");
+  await screen.findByText("Page 1 of 1");
+  failListUsers();
+
+  // The list went stale and the user comes back to the tab.
+  returnToTab();
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Could not refresh the data");
+  expect(alert).toHaveTextContent("Request id: req-1");
+  await act(() => vi.advanceTimersByTimeAsync(60_000));
+  expect(alert).toBeInTheDocument();
+
+  // F6 moves focus into the toasts, which un-hides their Dismiss button.
+  await user.keyboard("{F6}");
+  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  await act(() => vi.advanceTimersByTimeAsync(1_000));
+  expect(alert).not.toBeInTheDocument();
+});
+
+test("a repeated failure updates its toast with the latest request id; another reason adds one", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("jest", { advanceTimersByTime: vi.advanceTimersByTime });
+  server.use(getListUsersMockHandler({ items: [buildUser()], total: 1, limit: 20, offset: 0 }));
+  const { router } = renderRoute("/users");
+  await screen.findByText("Page 1 of 1");
+  failListUsers();
+
+  returnToTab();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Request id: req-1");
+  returnToTab();
+  await waitFor(() => expect(alert).toHaveTextContent("Request id: req-2"));
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+
+  const failing = new MutationObserver(router.options.context.queryClient, {
+    mutationFn: () => Promise.reject(new Error("not saved")),
+  });
+  await act(() => failing.mutate().catch(() => undefined));
+  await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+  expect(screen.getAllByRole("alert")[0]).toHaveTextContent("The change was not saved");
+});
+
+function failListUsers() {
+  let failures = 0;
+  server.use(
+    http.get(`${TEST_API_ORIGIN}/users`, () => {
+      failures += 1;
+      return HttpResponse.json(
+        { error: "internal server error", request_id: `req-${failures}` },
+        { status: 500 },
+      );
+    }),
+  );
+}
+
+/** Makes the cached list stale and fires the focus refetch. */
+function returnToTab() {
+  vi.setSystemTime(Date.now() + 60_000);
+  window.dispatchEvent(new Event("visibilitychange"));
+}

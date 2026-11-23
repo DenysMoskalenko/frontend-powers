@@ -101,13 +101,13 @@ git mv apps/web/src/shared/ui/button.tsx apps/web/src/shared/ui/text-field.tsx \
 ```
 
 Write the kit's `package.json`, `tsconfig.json`, `biome.json`, `vitest.config.ts`,
-`src/test/setup.ts`, `src/styles.css` (tokens, `@theme`, base layer, scrollbar rules,
+`src/test/setup-dom.ts`, `src/styles.css` (tokens, `@theme`, base layer, scrollbar rules,
 `@source "./"`) and the first kit test. Cut the same blocks from the app's `src/styles.css`, which
 becomes the two `@import` lines plus app-only scales and `#root`. In the app add
 `"@org/ui": "workspace:*"` and rewrite `@/shared/ui/button`, `text-field` and `toast` to
 `@org/ui/...`. Wrappers that know the router or `ApiError` (`route-error.tsx`) stay in
 `apps/web/src/shared/ui/`, with their `./button` import rewritten to `@org/ui/button`;
-`src/test/setup.ts` stays as it is.
+the app's `src/test/setup.ts` and `src/test/setup-dom.ts` stay as they are.
 
 Check: `pnpm check`; `PUBLIC_API_ORIGIN=https://api.example.com pnpm --filter web build`, and
 the built CSS contains a class used only inside the kit (`data-disabled\:opacity-50`);

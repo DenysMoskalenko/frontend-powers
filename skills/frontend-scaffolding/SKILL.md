@@ -36,8 +36,8 @@ Assumes pnpm 12.22, Node 26.13, Vite 8.3, TypeScript 7.0, orval 8.48, Playwright
 | --- | --- |
 | A new client-rendered app, empty directory or a fresh `git init` | this one |
 | A new app in a subdirectory of an existing repository (`web/` beside a backend) | this one, with "In an existing repository" below |
-| Bringing an existing app onto this stack | not a scaffold: `frontend-project-structure` (its adoption reference gives the order of single-concern changes) |
-| A server-rendered or static content site | out of scope: this stack is client-rendered only; say so |
+| Bringing an existing app onto this stack | not a scaffold: `frontend-project-structure` (its adoption reference) |
+| A server-rendered or static content site | out of scope (client-rendered only); say so |
 
 ## 1. Prerequisites
 
@@ -64,30 +64,43 @@ cd <dest> && rm -rf node_modules dist coverage test-results playwright-report .t
 
 `grep -rn frontend-app --exclude=pnpm-lock.yaml .` then prints nothing.
 
+Then keep one forge and the deploy targets the app will use. Take the forge from the request, or
+from `git remote -v` when every remote names the same host; take the target from the request.
+Otherwise ask, once, for both. Delete the files of the others:
+
+| Not used | Delete | Also |
+| --- | --- | --- |
+| GitHub | `.github/` | |
+| GitLab | `.gitlab-ci.yml` | |
+| Cloudflare | `wrangler.jsonc` | after step 4: `pnpm remove wrangler`, drop `"ignoreDependencies": ["wrangler"]` from `knip.json`, the Cloudflare line in `README.md` and the `wrangler` line in `AGENTS.md` |
+| Container | `Dockerfile`, `.dockerignore`, `deploy/Caddyfile` | the Container line in `README.md` |
+
+`deploy/` keeps `headers.ts` and its test for every target.
+When nobody can be asked, keep everything and report which files belong to which forge
+and target. In a subdirectory of an existing repository the forge files go too (below).
+
 ## 3. Initialise git
 
 ```bash
 git init -b main
 ```
 
-prek installs its hook into `.git/hooks`; without a repository `pnpm hooks` fails with
-`Not in a Git repository`. `-b main`: the GitHub workflow and `biome.json` expect that branch.
-Inside an existing repository, skip this step.
+prek installs its hook into `.git/hooks`. `-b main`: the GitHub workflow and `biome.json` expect
+that branch. Inside an existing repository, skip this step.
 
 ## 4. Install
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm exec playwright install chromium   # once per machine; on Linux add --with-deps
+pnpm exec playwright install chromium webkit   # once per machine; on Linux add --with-deps
 ```
 
 `--with-deps` needs root; without root, ask the user to run
-`sudo pnpm exec playwright install-deps chromium`.
+`sudo pnpm exec playwright install-deps chromium webkit`.
 
-From `devEngines`, pnpm switches to 12.22.0 and installs Node 26.13.1 into the project; `pnpm`
-scripts and `pnpm exec` run on that Node, a bare `node` does not. Green ends with
-`Done in ... using pnpm v12.22.0`. A frozen-lockfile error means `package.json` was edited: revert
-it.
+pnpm switches to 12.22.0 and installs Node 26.13.1 from `devEngines`; `pnpm` scripts and
+`pnpm exec` use that Node, a bare `node` does not. A frozen-lockfile error means `package.json`
+was edited: revert it.
 
 ## 5. Install the hooks
 
@@ -95,15 +108,12 @@ it.
 pnpm hooks
 ```
 
-Each commit then runs Biome with `--write`, `tsc`, knip and, when dependency files change,
-`pnpm audit`.
-
 ## 6. Point it at the backend
 
 `.env.development` holds one line, `PUBLIC_API_ORIGIN=http://localhost:8000`. Set the backend's
 origin: scheme, host and port, no path, no trailing slash (otherwise `PUBLIC_API_ORIGIN is not a
-bare origin`). A developer's own origin goes in the git-ignored `.env.development.local`. The backend must allow `http://localhost:5173` in its CORS origins. With no backend
-yet, run the stub:
+bare origin`); a developer's own goes in the git-ignored `.env.development.local`. The backend
+must allow `http://localhost:5173` in its CORS origins. With no backend yet, run the stub:
 
 ```bash
 pnpm exec node e2e/stub-api.ts                       # port 4010
@@ -118,10 +128,9 @@ PUBLIC_API_ORIGIN=https://api.example.com pnpm build
 pnpm test:e2e
 ```
 
-Green: `pnpm check` prints `No fixes applied.` and passes every Vitest file; the build prints
-`[plugin entry-budget] entry + static imports: ... B gzip (budget 160000 B)`, then `built in`;
-every Playwright test passes. A build reads no `.env.development`, hence the exported origin;
-`pnpm test:e2e` builds against the stub by itself.
+Green: every Vitest file and Playwright test passes and the build prints
+`[plugin entry-budget] entry + static imports: ... B gzip (budget 160000 B)`. A build reads no
+`.env.development`, hence the exported origin; `pnpm test:e2e` builds against the stub itself.
 
 | Red result | Cause |
 | --- | --- |
@@ -137,21 +146,19 @@ every Playwright test passes. A build reads no `.env.development`, hence the exp
 git add -A . && git commit -m "Scaffold <name>"
 ```
 
-Run it in `<dest>`. Every hook passes on the untouched template. `pnpm-lock.yaml`,
+Run it in `<dest>`. `pnpm-lock.yaml`,
 `.env.development`, `src/routeTree.gen.ts` and `src/api/generated/` are committed by design.
 
 ## In an existing repository
 
 When `<dest>` is a subdirectory of a repository:
 
-- Skip step 3. For step 5, `frontend-tooling` says: "If the repository root has its own
-  `.pre-commit-config.yaml` or `prek.toml`, run `prek install` from the root instead". Otherwise,
-  when `git rev-parse --git-path hooks/pre-commit` exists or `core.hooksPath` is set, another tool
-  owns the hook: skip step 5 and say why. Else `pnpm hooks` installs a hook for `<dest>` only.
+- Skip step 3. For step 5 follow `frontend-tooling`'s subdirectory procedure; when
+  `git rev-parse --git-path hooks/pre-commit` exists or `core.hooksPath` is set, another tool
+  owns the hook: skip step 5 and say why.
 - `<dest>/.github/` and `<dest>/.gitlab-ci.yml` do not run: CI reads only the repository root.
-  Merge the file for the forge the repository uses into the root pipeline with
-  `frontend-tooling`, delete the other one and say so; until the merge, tell the user that CI does
-  not cover the app.
+  Merge the repository's forge file into the root pipeline (`frontend-tooling`'s subdirectory
+  procedure), delete both copies in `<dest>` and say so; until the merge, CI does not cover the app.
 - `AGENTS.md`, `CLAUDE.md` and `.editorconfig` stay and apply to `<dest>` only; `.vscode/` applies
   when `<dest>` is opened as the workspace folder.
 - Stage `<dest>` (`git add -A .` from it) and the root CI file you merged, by path; never
@@ -164,10 +171,9 @@ When `<dest>` is a subdirectory of a repository:
 2. `pnpm api:generate` rewrites `src/api/generated/`; never edit it.
 3. `pnpm exec tsc` now fails only in the example files (`references/file-map.md`), unless the
    backend still has `/users`.
-4. `PUBLIC_API_ORIGIN` stays a bare origin, never with a path; a path prefix the document's paths
-   already include needs nothing. A prefix they leave out, or an error body other than axum
-   `ErrorBody`, FastAPI `detail` or RFC 9457, is handled on this side by `tanstack-query-api`,
-   never by asking the backend to change its routes.
+4. `PUBLIC_API_ORIGIN` stays a bare origin. A path prefix the document leaves out, or an
+   unfamiliar error body, is handled on this side by `tanstack-query-api`, never by asking the
+   backend to change.
 5. A backend that requires a token answers 401 until `keycloak-spa-auth` is added.
 
 ## Replace the example domain
@@ -176,8 +182,7 @@ The example is everything named `users` (list in `references/file-map.md`); `/us
 `src/api/*.test.ts`, `deploy/headers.test.ts` and `biome-plugins/boundaries.test.ts` is test data:
 keep it.
 
-Write the first real list, detail and form in the example's shapes; delete the example as soon as
-they compile. Then:
+Write the first real list, detail and form in the example's shapes, then delete the example:
 
 1. Run `pnpm test` once: the router plugin rewrites `src/routeTree.gen.ts` when Vite or Vitest
    runs; until then `tsc` checks the stale tree.
@@ -186,11 +191,10 @@ they compile. Then:
    tests' shape.
 3. `pnpm check` and `pnpm test:e2e` green.
 
-knip reporting `src/shared/ui/text-field.tsx`, `src/shared/lib/format-date.ts`,
-`@tanstack/react-form` or `TEST_API_ORIGIN` unused means the new domain has no form, date or
-error-path test yet; `test` and `expect` in `e2e/fixtures.ts` or `@axe-core/playwright` mean the
-smoke test is not rewritten yet. Write those rather than deleting skeleton files; removing a
-dependency is `frontend-tooling`'s.
+knip reporting a skeleton file or dependency unused (`text-field.tsx`, `use-app-form.tsx`,
+`format-date.ts`, `@tanstack/react-form`, `@axe-core/playwright`, an `e2e/fixtures.ts` export)
+means the new domain lacks that form, date, error-path or smoke test yet: write it rather than
+deleting the file.
 
 ## What the template leaves out
 
@@ -206,5 +210,5 @@ dependency is `frontend-tooling`'s.
 ## After scaffolding
 
 The first feature loads `frontend-project-structure`, `tanstack-query-api`,
-`tanstack-router-spa`, `frontend-forms`, `tailwind-base-ui` and `frontend-testing`, with
-`frontend-code-style` for every file; `frontend-deploy` before the first environment.
+`tanstack-router-spa`, `frontend-forms`, `tailwind-base-ui`, `frontend-testing` and
+`frontend-code-style`; `frontend-deploy` comes before the first environment.

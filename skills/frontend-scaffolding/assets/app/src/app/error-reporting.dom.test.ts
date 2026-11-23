@@ -12,17 +12,23 @@ test("errors React caught in a boundary go to the standard reportError", () => {
   expect(reportError).toHaveBeenCalledWith(error);
 });
 
-test("a stale chunk reloads the page, but not twice within a minute", () => {
+test("a stale chunk reloads during a navigation only, and not twice within a minute", () => {
   const reload = vi.fn();
   vi.stubGlobal("location", { reload });
   vi.useFakeTimers({ toFake: ["Date"] });
-  reloadOnStaleChunk();
+  const router: { state: { status: "idle" | "pending" } } = { state: { status: "idle" } };
+  reloadOnStaleChunk(router);
   const staleChunk = () => {
     const event = new Event("vite:preloadError", { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
   };
 
+  // A hover's preload: the page stays.
+  staleChunk();
+  expect(reload).not.toHaveBeenCalled();
+
+  router.state.status = "pending";
   staleChunk();
   vi.advanceTimersByTime(59_000);
   staleChunk();

@@ -134,7 +134,8 @@ test("a failed background refresh keeps the list and shows a toast", async () =>
   vi.setSystemTime(Date.now() + 60_000);
   window.dispatchEvent(new Event("visibilitychange"));
 
-  expect(await screen.findByText("Could not refresh the data")).toBeInTheDocument();
-  expect(screen.getByText("Request id: req-1")).toBeInTheDocument();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Could not refresh the data");
+  expect(alert).toHaveTextContent("Request id: req-1");
   expect(screen.getByRole("link", { name: "Ada" })).toBeInTheDocument();
 });

@@ -15,13 +15,15 @@ Take the first rung whose test the state passes.
 | Rung | Test | Examples | Mechanics owned by |
 | --- | --- | --- | --- |
 | URL search params | A reload, a shared link or the back button must restore it | page, sort, filters, active tab, selected row id, open dialog that has its own URL | `tanstack-router-spa` (`validateSearch`) |
-| Query cache | It came from the server | lists, details, the current user, feature flags from an endpoint | `tanstack-query-api` |
-| `useState` | One component and its children read it, and losing it on unmount is fine | open/closed, hover, a draft before submit, a local step counter | this table: put it in the lowest component that owns it, lift to the nearest common parent when a sibling needs it |
-| Form state | It is a form's values, errors or submit status | every field of a form | `frontend-forms` (TanStack Form) |
+| Query cache | A request returns it | lists, details, the current user, feature flags from an endpoint | `tanstack-query-api` |
+| A store beside the channel hook | Pushed many times a second and no endpoint returns it | presence, cursors, typing indicators; read with `useSyncExternalStore`, entries expire; on the zustand rung when several routes read it | `frontend-realtime` |
+| `useState` | One component and its children read it, and losing it on unmount is fine | open/closed, hover, a local step counter; a form's values are TanStack Form's (`frontend-forms`) | this table: put it in the lowest component that owns it, lift to the nearest common parent when a sibling needs it |
 | An app-wide Context | Created once in `src/app/`, read by many distant components, not server data, and changes rarely | the realtime client, a user preference such as compact tables | this file |
-| zustand store | Distant components read it, and it changes many times a second or per pointer move | a canvas editor's selection and zoom, drag state, a media player's position | this file |
+| zustand store | One domain's client state that distant components or several routes read, and that changes more than rarely | a cart before checkout, a wizard's draft across its routes, a canvas editor's selection and zoom, drag state | this file |
 
-Never copy a rung's data into a lower one: Query data copied into `useState`, Context or a store goes
+A cart or a wizard draft that must survive a reload belongs to the server (the Query cache) or to
+the store's `persist` middleware, parsed as the gotchas below say. Never copy a rung's data into a
+lower one: Query data copied into `useState`, Context or a store goes
 stale on the next refetch, and search params copied into `useState` stop following the back button.
 Read it where it lives and derive the rest during render.
 
@@ -83,13 +85,14 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
 A value that is fixed for the app's lifetime (a client built in `createAppRouter`) needs no
 component: `Wrap` renders `<XContext value={x}>` itself, as it does for the realtime client.
 
-A value that changes often re-renders every reader; that is the signal to move it to a store. The
+A value that changes often re-renders every reader, and a Context in `src/app/` cannot hold one
+domain's state without the app layer owning it: both are the signal to move it to a store. The
 session is not a Context: it lives in the router context, and features get what they need as props.
 
 ## A zustand store
 
 zustand is an add-on: add it with `pnpm add zustand` when the first state passes the last rung's
-test. One store per feature, in `src/features/<domain>/<domain>-store.ts`. Keep only client state in
+test; it is the only client-state library this stack adds. One store per feature, in `src/features/<domain>/<domain>-store.ts`. Keep only client state in
 it. Actions are plain exported functions over `setState`, so components and tests call them without
 selecting them first.
 

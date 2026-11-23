@@ -62,6 +62,7 @@
 - the registry token written to the user-level `~/.npmrc` in the publish job
 - the consumer's `pnpm-workspace.yaml` with a `registries` entry for the scope and `"@org/*"` (or the project's scope) under `minimumReleaseAgeExclude`
 - consumers pinning exact versions and upgrading all shared packages together
+- the published packages' peers written as `"catalog:peers"`, a named catalog of `^` ranges in `pnpm-workspace.yaml`, while `devDependencies` stay `"catalog:"`
 
 **Must not produce**:
 
@@ -71,6 +72,7 @@
 - `@org:registry=` in an `.npmrc`
 - removing or lowering `minimumReleaseAge` for all packages
 - hand-edited version numbers in package `package.json` files
+- a published package whose `peerDependencies` say `"catalog:"`, which packs as the exact catalog version
 
 ### Eval 3 - sharing Vite config helpers
 
@@ -222,3 +224,13 @@
 **Wrong answer**: `packages/(?:lib|libs|utils?|shared|common|core|helpers)/[\w.-]`
 
 **Right answer**: `packages/ui/src/format-money`
+
+### Probe 13 - exact peers in a published package
+
+**Prompt**: "Our repository is a pnpm workspace with `apps/web`, `apps/admin`, `packages/ui` (`@org/ui`) and `packages/api` (`@org/api`); every version lives in the root `catalog:` with `catalogMode: strict`. `@org/ui` is now published to our registry for apps in other repositories. Write its `peerDependencies` for react, react-dom and @base-ui/react, and any `pnpm-workspace.yaml` change they need."
+
+**Fixture**: empty
+
+**Wrong answer**: `"peerDependencies"\s*:\s*\{[^}]*"react"\s*:\s*"(?:catalog:|\d+\.\d+\.\d+)"`
+
+**Right answer**: `catalog:peers`

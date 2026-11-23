@@ -6,14 +6,11 @@ import { buildUser } from "@/test/factories/user";
 import { renderRoute, TEST_API_ORIGIN } from "@/test/render-route";
 import { server } from "@/test/server";
 
-const id = "0193a1b2-0000-7000-8000-000000000001";
-
 test("shows the user the API returns", async () => {
-  server.use(
-    getGetUserMockHandler(buildUser({ id, name: "Ada Lovelace", email: "ada@example.com" })),
-  );
+  const ada = buildUser({ name: "Ada Lovelace", email: "ada@example.com" });
+  server.use(getGetUserMockHandler(ada));
 
-  renderRoute(`/users/${id}`);
+  renderRoute(`/users/${ada.id}`);
 
   expect(await screen.findByRole("heading", { name: "Ada Lovelace" })).toBeInTheDocument();
   expect(screen.getByText("ada@example.com")).toBeInTheDocument();
@@ -22,6 +19,7 @@ test("shows the user the API returns", async () => {
 });
 
 test("an id the API does not know shows the not-found page", async () => {
+  const { id } = buildUser();
   server.use(
     http.get(`${TEST_API_ORIGIN}/users/:id`, () =>
       HttpResponse.json({ error: `user ${id} not found` }, { status: 404 }),
@@ -35,6 +33,7 @@ test("an id the API does not know shows the not-found page", async () => {
 });
 
 test("a server error shows the request id, and Try again reloads the user", async () => {
+  const ada = buildUser({ name: "Ada Lovelace" });
   server.use(
     http.get(
       `${TEST_API_ORIGIN}/users/:id`,
@@ -42,9 +41,9 @@ test("a server error shows the request id, and Try again reloads the user", asyn
         HttpResponse.json({ error: "internal server error", request_id: "req-7" }, { status: 500 }),
       { once: true },
     ),
-    getGetUserMockHandler(buildUser({ id, name: "Ada Lovelace" })),
+    getGetUserMockHandler(ada),
   );
-  const { user } = renderRoute(`/users/${id}`);
+  const { user } = renderRoute(`/users/${ada.id}`);
 
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("This page could not be loaded");

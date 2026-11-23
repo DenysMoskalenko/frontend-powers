@@ -34,6 +34,7 @@ Everything pinned, and where it lives:
 | GitHub Actions | `.github/workflows/check.yml`, scaffold CI files, `frontend-tooling` references (full SHA plus `# vX.Y.Z` comment) |
 | prek and its hooks | `@j178/prek` in the scaffold `package.json`, the `pnpm dlx @j178/prek@...` line in `.github/workflows/check.yml` |
 | Claude Code for CI | the `pnpm dlx @anthropic-ai/claude-code@...` line in `.github/workflows/check.yml` |
+| browser floor | the `build.target` list in STACK.md (Build) and the scaffold `vite.config.ts`; its copy in `frontend-tooling` references and the floor prose in skills, listed by `make validate` as `stale browser floor` errors |
 | versions quoted in skill bodies | the version-pin line at the top of every SKILL.md; every other exact copy (the `package.json` copy in `frontend-tooling`, the catalog in `frontend-shared-packages`, prose) is listed by `make validate` as a `stale version` error; `grep -rnE '[0-9]+\.[0-9]+\.[0-9]+' skills/ --include='*.md'` for the rest |
 
 Current versions:
@@ -100,6 +101,18 @@ The bump itself is AGENTS.md `## Versions`; the order across a release:
    (top-level `version` and `metadata.version`). An installed plugin sees a change only when it
    changes, and `validate_skills.py --base` fails a pull request that changes `skills/` without it.
    A major bump of React, TypeScript or Vite also edits the manifest descriptions if they name it.
+
+8. The browser floor, at every audit. Set `build.target` to the newest Chrome, Edge, Firefox (never
+   below 128, which Tailwind 4 needs) and Safari released on or before the audit date minus 30
+   months, from the release dates in the current `@mdn/browser-compat-data`, in STACK.md and the
+   scaffold `vite.config.ts`; `make validate` lists every other copy. Then check each browser API,
+   HTML attribute and CSS feature the skills and the template use against that data by its exact
+   compatibility key, not its web-features group (the `url` group is Baseline high while
+   `URL.parse` needs Safari 18), and build a scaffold copy with every Tailwind class from the
+   skills to scan the emitted CSS. Remove workarounds the new floor makes native (as the
+   `light-dark()` rewrite was), fix or feature-detect every use still above it, and check the
+   STACK.md `## Watch` rows that wait for the floor (`Temporal`, `URL.parse`, stream async
+   iteration, `style-src-elem`).
 
 Editing rules: no reflow, no touching the neighbouring sentence, keep every deliberately worded warning.
 Never edit the verify copy; it is regenerated on every `make snippets`.
@@ -171,6 +184,19 @@ For the next audit:
   current `@opentelemetry/api` (`pnpm peers check` without the override).
 - `@tanstack/react-table` now ships agent skills: the install asks for approval; decline it.
 
+## Browser floor of 23 November 2026
+
+First set by this procedure: `chrome125`, `edge125`, `firefox128`, `safari17.5` (was `chrome119`,
+`edge119`, `firefox128`, `safari17.4`), the newest releases on or before 23 May 2024 from
+`@mdn/browser-compat-data` 8.1.10, Firefox raised from 126 to 128. Among the 661 web-features
+entries Baseline low by that date, the highest requirements are Chrome 125, Firefox 126 and
+Safari 17.5. `ios17.5` built byte-identical output and was left out. Consequences: `light-dark()`
+ships natively (the Lightning CSS rewrite and its caveats were removed); `URL.parse` became
+`new URL` in `try`/`catch` in `safe-url.ts` (both copies); the SSE reader became a `getReader()`
+loop, since stream async iteration needs Safari 27. Next floor moves: Chrome 126 (11 June 2024),
+Edge 126, Firefox stays 128, Safari 17.6 (29 July 2024), once the audit date passes 30 months
+after them. Nothing runs on a real floor browser: Playwright's engines are current builds.
+
 ## Red Flags — STOP
 
 | Signal | Instead |
@@ -185,3 +211,4 @@ For the next audit:
 | `pnpm install` run inside `skills/` | Delete the `node_modules/`; install in a copy outside the repository. |
 | An action pinned by tag | Pin the full commit SHA with the tag in a comment. |
 | A container image pinned by tag | Pin the digest with the tag in a comment. |
+| The floor moved in `vite.config.ts` only | STACK.md's `build.target` list first; `make validate` then lists every stale copy. |

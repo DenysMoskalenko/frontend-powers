@@ -34,7 +34,8 @@
 - The name `frontend-app` replaced with `orders-admin` in `package.json` and `wrangler.jsonc`, and the `index.html` title changed.
 - `git init -b main` before `pnpm hooks`, with the reason that prek installs into `.git/hooks`.
 - `pnpm install --frozen-lockfile`.
-- `pnpm exec playwright install chromium` before the E2E run.
+- `pnpm exec playwright install chromium webkit` before the E2E run.
+- One question for the forge and the deploy target (the prompt names neither and the directory has no remote), or, with nobody to ask, every forge and target file kept and listed in the report by forge and target.
 - `PUBLIC_API_ORIGIN=http://localhost:8080` in `.env.development`.
 - `pnpm check`, then `pnpm build` with `PUBLIC_API_ORIGIN` exported, then `pnpm test:e2e`, run before any feature code.
 - A first commit that includes `pnpm-lock.yaml`.
@@ -60,7 +61,7 @@
 - An orders list, detail and create page written in the shapes of the `users` example.
 - Every `users` example file deleted: `src/routes/users/`, `src/features/users/`, `src/test/factories/user.ts`.
 - The `/users` links in `src/routes/__root.tsx`, the redirect in `src/routes/index.tsx` and `src/app/router.test.tsx` pointed at the orders routes.
-- `e2e/stub-api.ts` and `e2e/smoke.spec.ts` rewritten for orders.
+- `e2e/stub-api.ts`, `e2e/smoke.spec.ts`, `e2e/errors.spec.ts` and `e2e/stale-chunk.spec.ts` rewritten for orders, and `src/routes/__root.test.tsx` pointed at the orders list.
 - `pnpm test` or `pnpm dev` run so `src/routeTree.gen.ts` is regenerated, then `pnpm check` and `pnpm test:e2e`.
 - A `<title>` in each new page component.
 
@@ -80,7 +81,7 @@
 **Must produce**:
 
 - The build run with `PUBLIC_API_ORIGIN` set for that build (exported, or in a git-ignored `.env.production.local`), with the reason that the origin is per environment and is not taken from `.env.development`.
-- `pnpm exec playwright install chromium`, named as the skipped install step.
+- `pnpm exec playwright install chromium webkit`, named as the skipped install step.
 - `pnpm check`, the build and `pnpm test:e2e` run again before any feature code.
 
 **Must not produce**:
@@ -101,6 +102,7 @@
 - A check for a root `.pre-commit-config.yaml` or `prek.toml`, an existing pre-commit hook and `core.hooksPath` before `pnpm hooks`.
 - The commit staged from `web/` with `git add -A .` (or `git add web`), plus any root workflow file it merged, by path, so `backend/` stays out of it.
 - The user told that `web/.github/` does not run from the subdirectory, and either the workflow moved to the root `.github/workflows/` with `working-directory: web`, or the user told that CI does not cover the app until it is.
+- `web/.gitlab-ci.yml` deleted: the repository uses GitHub.
 
 **Must not produce**:
 
@@ -108,6 +110,27 @@
 - `git add -A` or `git commit -a` without a path, run in the repository.
 - A deleted or rewritten root `.github/workflows/` file.
 - The template's `AGENTS.md` or `CLAUDE.md` moved to or merged into the repository root.
+
+### Eval 5 - one forge, one deploy target
+
+**Prompt**: Create a new React frontend called `billing-ui` in this empty directory. We use GitLab and deploy it as a container on our Kubernetes cluster.
+
+**Fixture**: empty
+
+**Must produce**:
+
+- The template copied and renamed to `billing-ui`.
+- `.github/` and `wrangler.jsonc` deleted; `.gitlab-ci.yml`, `Dockerfile`, `.dockerignore` and `deploy/Caddyfile` kept.
+- `pnpm remove wrangler`, the `wrangler` entry removed from `knip.json`'s `ignoreDependencies`, and the Cloudflare lines removed from `README.md` and `AGENTS.md`.
+- `deploy/headers.ts` and `deploy/headers.test.ts` kept.
+- The gate (`pnpm check`, the build, `pnpm test:e2e`) green after the deletions.
+
+**Must not produce**:
+
+- `.github/workflows/ci.yml` or `wrangler.jsonc` left in the new app.
+- The `wrangler` dependency kept with its `knip.json` ignore entry.
+- `deploy/headers.ts`, `cloudflareHeaders` or the `_headers` output removed from `vite.config.ts`.
+- A question to the user about the forge or the deploy target, which the prompt already names.
 
 ### Probe 1 - the starting point
 

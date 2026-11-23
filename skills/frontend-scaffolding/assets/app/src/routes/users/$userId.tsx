@@ -4,16 +4,14 @@ import { ApiError } from "@/api/api-error";
 import { getGetUserQueryOptions, getGetUserSuspenseQueryOptions } from "@/api/generated/api";
 import { GetUserParams } from "@/api/generated/api.zod";
 import { UserDetails } from "@/features/users/user-details";
+import { loadQuery } from "@/shared/lib/load-query";
 
 export const Route = createFileRoute("/users/$userId")({
   loader: async ({ context, params }) => {
     // The API rejects a malformed id with 400; to the user it is a user that does not exist.
     if (!GetUserParams.safeParse({ id: params.userId }).success) throw notFound();
     try {
-      await context.queryClient.query({
-        ...getGetUserQueryOptions(params.userId),
-        staleTime: "static",
-      });
+      await loadQuery(context.queryClient, getGetUserQueryOptions(params.userId));
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) throw notFound();
       throw error;
@@ -28,11 +26,11 @@ function UserPage() {
   const { data: user } = useSuspenseQuery(getGetUserSuspenseQueryOptions(userId));
 
   return (
-    <>
+    <div data-testid="users-detail-page" className="flex flex-col gap-4">
       <title>{user.name}</title>
       <h1 className="font-semibold text-2xl">{user.name}</h1>
       <UserDetails user={user} />
-    </>
+    </div>
   );
 }
 

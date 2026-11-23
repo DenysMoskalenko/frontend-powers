@@ -877,6 +877,115 @@ def check_version_copies(report: Report) -> None:
                         report.error(path, idx, f"stale version: {name} {version}, but STACK.md pins {pins[name]}")
 
 
+# --------------------------------------------------------------------------- browser floor
+
+# STACK.md states the floor once as a `build.target` list: `["chrome125", "edge125", "firefox128", "safari17.5"]`.
+FLOOR_LIST_RE = re.compile(r"\[\s*\"(?:chrome|edge|firefox|safari)[\d.]+\"(?:\s*,\s*\"(?:chrome|edge|firefox|safari|ios)[\d.]+\")*\s*\]")
+# A `build.target` token anywhere under skills/; `ios` follows Safari's version.
+FLOOR_TOKEN_RE = re.compile(r"(?<![\w.-])(chrome|edge|firefox|safari|ios)(\d+(?:\.\d+)?)(?![\w]|\.\d)")
+FLOOR_PROSE_RE = re.compile(r"\b(Chrome|Edge|Firefox|Safari) (\d+(?:\.\d+)?)(?![\w]|\.\d)")
+# Before the version in its clause, these words mark a feature's version (`URL.parse` needs Safari 18), not the floor.
+FEATURE_VERSION_RE = re.compile(r"\b(?:needs?|needed|requires?|from|since|first|before|after|until|shipped|reach(?:es|ed)?|added|introduced|supports?|supported|lacks?)\b|\bin\s*$", re.IGNORECASE)
+CLAUSE_START_RE = re.compile(r"[;:()]")
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z`*])")
+
+
+def stack_floor() -> dict[str, str]:
+    """`{"chrome": "125", ...}` from the first `build.target` list in STACK.md; empty when there is none."""
+    text = STACK.read_text(encoding="utf-8") if STACK.is_file() else ""
+    m = FLOOR_LIST_RE.search(text)
+    if not m:
+        return {}
+    floor = {b: v for b, v in FLOOR_TOKEN_RE.findall(m.group(0))}
+    if "safari" in floor:
+        floor.setdefault("ios", floor["safari"])
+    return floor
+
+
+def floor_units(lines: list[str]) -> list[list[tuple[int, str]]]:
+    """Prose units outside fences: a paragraph's lines, or one table cell. Prior-version first cells are left out."""
+    units: list[list[tuple[int, str]]] = []
+    paragraph: list[tuple[int, str]] = []
+    fenced = exempt = False
+    for idx, raw in enumerate(lines, start=1):
+        if raw.startswith("```"):
+            fenced = not fenced
+            units.append(paragraph)
+            paragraph = []
+            continue
+        if fenced:
+            continue
+        if raw.startswith("#"):
+            exempt = bool(re.search(r"prior[- ]version", raw, re.IGNORECASE))
+        if raw.lstrip().startswith("|"):
+            units.append(paragraph)
+            paragraph = []
+            cells = raw.split("|")[2 if exempt else 1 : -1]
+            units += [[(idx, cell)] for cell in cells]
+        elif not raw.strip() or raw.startswith("#"):
+            units.append(paragraph)
+            paragraph = []
+        else:
+            paragraph.append((idx, raw))
+    units.append(paragraph)
+    return [u for u in units if u]
+
+
+def check_browser_floor(report: Report) -> None:
+    """Every `build.target` token and every prose floor version under skills/ equals the floor in STACK.md."""
+    floor = stack_floor()
+    if not floor:
+        report.error(STACK, 1, 'states no browser floor: expected a build.target list such as ["chrome125", "edge125", "firefox128", "safari17.5"]')
+        return
+    want = ", ".join(f"{b}{v}" for b, v in floor.items() if b != "ios")
+    for dirpath, dirnames, filenames in os.walk(SKILLS):
+        dirnames[:] = sorted(d for d in dirnames if d not in BUILD_OUTPUT)
+        for filename in sorted(filenames):
+            path = Path(dirpath) / filename
+            if filename in VERSION_COPY_SKIP_FILES:
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (UnicodeDecodeError, OSError):
+                continue
+            markdown = path.suffix == ".md"
+            exempt = fenced = False
+            for idx, raw in enumerate(lines, start=1):
+                if markdown and raw.startswith("```"):
+                    fenced = not fenced
+                elif markdown and not fenced and raw.startswith("#"):
+                    exempt = bool(re.search(r"prior[- ]version", raw, re.IGNORECASE))
+                text = "|".join(raw.split("|")[2:]) if exempt and raw.lstrip().startswith("|") else raw
+                for browser, version in FLOOR_TOKEN_RE.findall(text):
+                    if browser in floor and version != floor[browser]:
+                        report.error(path, idx, f"stale browser floor: {browser}{version}, but STACK.md states {want}")
+            if markdown:
+                check_floor_prose(path, lines, floor, want, report)
+
+
+def check_floor_prose(path: Path, lines: list[str], floor: dict[str, str], want: str, report: Report) -> None:
+    """`Firefox 128 and Safari 17.5 ignore it` in a sentence about the floor; a feature's own version is skipped."""
+    for unit in floor_units(lines):
+        text, starts = "", []
+        for idx, raw in unit:
+            starts.append((len(text), idx))
+            text += raw.strip() + " "
+        pos = 0
+        for sentence in SENTENCE_SPLIT_RE.split(text):
+            begin = text.index(sentence, pos)
+            pos = begin + len(sentence)
+            if not re.search(r"\bfloor\b", sentence, re.IGNORECASE):
+                continue
+            for m in FLOOR_PROSE_RE.finditer(sentence):
+                clause = CLAUSE_START_RE.split(sentence[: m.start()])[-1]
+                if FEATURE_VERSION_RE.search(clause):
+                    continue
+                browser, version = m.group(1).lower(), m.group(2)
+                if browser in floor and version != floor[browser]:
+                    line = max(i for offset, i in starts if offset <= begin + m.start())
+                    report.error(path, line, f"stale browser floor: {m.group(0)}, but STACK.md states {want}")
+
+
 # --------------------------------------------------------------------------- main
 
 
@@ -904,6 +1013,7 @@ def main() -> int:
     check_addon_block(report)
     check_manifest_versions(report)
     check_version_copies(report)
+    check_browser_floor(report)
     for doc in ("AGENTS.md", "README.md"):  # they ship into every new app
         path = SKILLS / SCAFFOLD_SKILL / "assets" / "app" / doc
         if path.is_file():

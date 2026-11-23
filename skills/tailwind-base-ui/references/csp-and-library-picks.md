@@ -46,10 +46,16 @@ its own `CSPProvider`.
 | `input-otp` 1.5 | appends a `<style>` to `<head>` on mount | Base UI `OTPField` (`@base-ui/react/otp-field`) |
 | `vaul` 1.1 | appends a `<style>` to `<head>` on import | Base UI `Drawer` (`@base-ui/react/drawer`) |
 | `@number-flow/react` 0.6 | its `number-flow` element appends a `<style>` to its shadow root | the number as plain formatted text |
+| `@mui/material` 9 | styles through Emotion by default: a `<style>` at runtime; a second component system beside Base UI | Base UI wrappers in `src/shared/ui` |
+| `antd` 6 | `@ant-design/cssinjs` writes a `<style>` per component at runtime | Base UI wrappers |
+| `@mantine/core` 9 | `MantineProvider` renders `<style>` elements through `dangerouslySetInnerHTML`, which `style-src 'self'` blocks; a second component system | Base UI wrappers |
+| shadcn/ui | no runtime style of its own; its CLI copies in components built on `cn()` (`clsx` + `tailwind-merge`) with their own token names: a second wrapper contract | the wrappers in this skill |
+| Sass, Less, CSS Modules | compile to static CSS at build time and pass the CSP; a second styling language that the role tokens and the Biome Tailwind rules do not reach | Tailwind classes; plain CSS in `styles.css` |
 | Google Fonts `<link>` | needs `fonts.googleapis.com` in `style-src` and a font origin | `@fontsource-variable/*` |
 | a chart library | none measured here | run the proof below; it passes only when the grep finds no `<style>` creation, `adoptedStyleSheets`, `insertRule` or `innerHTML`, and the E2E page with a rendered chart (tooltip and legend shown) reports nothing. A chart drawn as React SVG elements with `style={{}}` passes by mechanism; one that builds SVG markup as a string or styles its tooltip with a `<style>` does not |
 
-`OTPField` and `Drawer` are stable parts of `@base-ui/react` 1.9, with no preview marking.
+The component-library, shadcn/ui and Sass rows come from reading the published packages, not from a
+browser run. `OTPField` and `Drawer` are stable parts of `@base-ui/react` 1.9, with no preview marking.
 
 Sizes measured on a minified lib build, React external, gzip: lucide-react 1.76 1.9 KB for one icon
 and 3.4 KB for twenty; virtua 0.55 `VList` 4.2 KB; Base UI Toast 7.6 KB on top of the other Base UI
@@ -74,12 +80,23 @@ new proof:
    the test on any `securitypolicyviolation`, console error or page error, and runs against
    `pnpm build && pnpm preview`, which serves the real headers. `pnpm dev` and Vitest under jsdom
    enforce no CSP, so a pass there proves nothing. Writing the test is `frontend-testing`'s.
-3. The scaffold's Playwright config runs Chromium only. For a dependency that touches styles, run the
-   test once in Firefox and WebKit too (`devices["Desktop Firefox"]`, `devices["Desktop Safari"]` as
-   extra projects, locally): the picks below were measured in all three.
+3. The scaffold's Playwright config runs Chromium and a phone-sized WebKit project. For a dependency
+   that touches styles, run the test once in Firefox too (`devices["Desktop Firefox"]` as an extra
+   project, locally): the picks below were measured in all three engines.
 
-A dependency that fails is dropped, not accommodated: no `'unsafe-inline'`, no nonce, no
-`style-src-attr`.
+A dependency that fails is dropped by default. When the app cannot do without it, stop and ask
+the user; do not widen the header on your own. Propose the narrowest exception that covers the
+measured failure, checked in all three engines:
+
+| The package writes | Narrowest exception |
+| --- | --- |
+| a `<style>` whose text never changes | that text's hash in `style-src` (`'sha256-…'`); any other `<style>` stays blocked |
+| `style="…"` attributes in markup | `style-src-attr 'unsafe-inline'`; `<style>` elements stay blocked |
+| a `<style>` with changing text, or an inline script | no exception: drop it |
+
+Never `'unsafe-inline'` or a nonce on `style-src`, never anything on `script-src`, never dropping
+Trusted Types, and never `style-src-elem` (Safari before 26.2 ignores it). The user's decision and
+its reason go in the app's architecture document; writing the header is `frontend-deploy`'s.
 
 ## Virtualized lists: virtua
 
@@ -206,30 +223,33 @@ const columns = column.columns([
 export function UsersGrid({ users }: { users: UserResponse[] }) {
   const table = useTable({ features, columns, data: users });
   return (
-    <table className="w-full text-sm">
-      <thead className="text-left text-muted">
-        {table.getHeaderGroups().map((group) => (
-          <tr key={group.id}>
-            {group.headers.map((header) => (
-              <th key={header.id} className="border-line border-b py-2">
-                {header.isPlaceholder ? null : <table.FlexRender header={header} />}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {table.getRowModel().rows.map((row) => (
-          <tr key={row.id}>
-            {row.getAllCells().map((cell) => (
-              <td key={cell.id} className="border-line border-b py-2">
-                <table.FlexRender cell={cell} />
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    // A narrow screen scrolls the table, never the page.
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-muted">
+          {table.getHeaderGroups().map((group) => (
+            <tr key={group.id}>
+              {group.headers.map((header) => (
+                <th key={header.id} className="border-line border-b py-2">
+                  {header.isPlaceholder ? null : <table.FlexRender header={header} />}
+                </th>
+              ))}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id}>
+              {row.getAllCells().map((cell) => (
+                <td key={cell.id} className="border-line border-b py-2">
+                  <table.FlexRender cell={cell} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 ```

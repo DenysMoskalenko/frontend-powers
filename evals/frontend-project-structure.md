@@ -33,7 +33,7 @@
 **Must produce**:
 
 - new files under `src/features/orders/` with kebab-case names
-- route files under `src/routes/orders/` that compose the orders component and the users display component side by side, or pass user data to the orders component as props
+- route files under `src/routes/orders/` that compose the orders component and the users display component side by side, pass user data to the orders component as props, or render the users component into a slot prop of the orders component
 - every import of another folder written with `@/`
 - order and user types imported from `@/api/generated/api`
 
@@ -114,7 +114,7 @@
 
 - `createAppRouter` taking `session` and `i18n` in one object parameter, `history` still optional
 - `I18nextProvider` inside `CSPProvider` and outside `QueryClientProvider` in `Wrap`
-- `main.tsx` rendering after `Promise.all([...])` of the sign-in and the language load, with one failure handler
+- `main.tsx` rendering after `Promise.all([...])` of the sign-in and the language load, with one failure handler chained as `.then(render).catch(startFailed)`
 - the failure handler reporting the error and rendering a static message
 - `renderRoute` keeping its `session` option and adding a `language` option
 
@@ -122,8 +122,9 @@
 
 - a `createAppRouter` or `renderRoute` that drops `session`
 - two separate `.then` chains that each render
-- a failure path that leaves the page blank, such as `.catch(reportError)` alone
+- a failure path that leaves the page blank, such as `.catch(reportError)` alone or `.then(render, startFailed)`, whose second argument misses a throw inside `render`
 - a provider wrapping `<RouterProvider>` in `src/main.tsx`
+- the router built, or its first load started, before the session exists, or the first load started for a signed-out user while the message files still load
 
 ### Eval 6 - adopting the standard in an existing app
 
@@ -223,10 +224,28 @@
 
 ### Probe 10 - a second waiting add-on
 
-**Prompt**: "Our src/main.tsx renders after `startKeycloak(settings).then(render, startFailed)` (the Keycloak add-on). Combine the i18next add-on with it: `createI18n(language)` in src/app/i18n.ts returns `{ i18n, ready }`, and the first screen must render in its language. Show the new src/main.tsx."
+**Prompt**: "Our src/main.tsx renders after `startKeycloak(settings).then(render).catch(startFailed)` (the Keycloak add-on). Combine the i18next add-on with it: `createI18n(language)` in src/app/i18n.ts returns `{ i18n, ready }`, and the first screen must render in its language. Show the new src/main.tsx."
 
 **Fixture**: scaffold
 
-**Wrong answer**: `(?:^|\n)\s*(?:await\s+)?ready\s*\.then\(|\.catch\(\s*reportError\s*\)\s*;?\s*(?:\n|$)`
+**Wrong answer**: `(?:^|\n)\s*(?:await\s+)?ready\s*\.then\(|\.catch\(\s*reportError\s*\)\s*;?\s*(?:\n|$)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.then\(\s*render\s*,)`
 
 **Right answer**: `Promise\.all\(\s*\[`
+
+### Probe 11 - a hand-made SVG as a data URL
+
+**Prompt**: "Add our logo, this SVG: `<svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>`, to the header in __root.tsx. Show the code."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:data:image\/svg)`
+
+### Probe 12 - a cart shared across routes
+
+**Prompt**: "The products list, the product page and the checkout route all show and change the cart (items and quantities) before it is sent to the API at checkout. Where does the cart state live? Write it."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:createContext<\s*\w*Cart)|src\/app\/[\w-]*cart`
+
+**Right answer**: `features\/\w+\/[\w-]*store\.ts`

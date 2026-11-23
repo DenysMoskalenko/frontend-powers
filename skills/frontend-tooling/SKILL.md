@@ -35,10 +35,12 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 - `references/typescript-biome-knip.md` — `tsconfig.json`, `biome.json`, `boundaries.grit` and
   `knip.json` verbatim, key by key, with the TypeScript 7 error codes. Open it before editing one
   of them or when `tsc`, Biome or knip fails on configuration.
-- `references/vite-config.md` — `vite.config.ts` verbatim, plugin order, public variables, the
-  entry budget, `build.*` with zod's chunk, the `test` block. Open it before editing the Vite config.
-- `references/hooks-ci-editor.md` — `.pre-commit-config.yaml`, both CI files job by job, deploy jobs, an app
-  in a subdirectory, editor files. Open it when adding a gate step or a deploy job, or debugging CI.
+- `references/vite-config.md` — `vite.config.ts` verbatim, plugin order, the React Compiler
+  switch for coverage, public variables, the entry budget, `build.*` with the browser floor and
+  zod's chunk, the two Vitest projects. Open it before editing the Vite or Vitest config.
+- `references/hooks-ci-editor.md` — `.pre-commit-config.yaml`, both CI files job by job, the
+  audit split and its schedule, deploy jobs, an app in a subdirectory, editor files. Open it when
+  adding a gate step or a deploy job, or debugging CI.
 
 ## What to run
 
@@ -47,9 +49,9 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 | Any change | `pnpm check` |
 | One test file | `pnpm test <file>`, `-t "<name>"` for one test |
 | Format, sort imports, safe fixes | `pnpm format` |
-| Routes, `vite.config.ts`, `deploy/`, `index.html` changed | also `pnpm test:e2e` (once per machine: `pnpm exec playwright install chromium`) |
+| Routes, `vite.config.ts`, `deploy/`, `index.html` changed | also `pnpm test:e2e` (once per machine: `pnpm exec playwright install chromium webkit`) |
 | Before a pull request | `pnpm test:coverage` (the 80 % gate CI enforces) |
-| Dependencies or lockfile changed | `pnpm dedupe --check` and `pnpm audit --audit-level=high` |
+| Dependencies or lockfile changed | `pnpm dedupe --check` and `pnpm audit --prod --audit-level=high` |
 | Build config or bundle size | `PUBLIC_API_ORIGIN=https://api.example.com pnpm build` |
 | `openapi.json` changed | `pnpm format`, then `pnpm api:generate` (`tanstack-query-api`'s); CI fails on drift |
 | Fresh clone | `pnpm install`, then `pnpm hooks` once |
@@ -80,57 +82,30 @@ to the pin and installs that Node into `node_modules`. Images bootstrap with
 Dockerfile in one commit. `pnpm outdated` never reports these pins: an audit checks them by hand
 (package reference).
 
-## tsconfig.json
+## Configuration files
 
-One file, no project references. `paths` maps `@/*` without `baseUrl`; `types` lists `node` and
-`vite/client` because TypeScript 7 defaults it to `[]` (TS2882 on the CSS import otherwise). A
-removed option is TS5102 or TS5108: delete it. TypeScript 7 has no classic compiler API, so a
-tool built on it fails.
+Each file, key by key, is in its reference; these are the rules agents break:
 
-## biome.json
-
-- A domain never enables a nursery rule and nursery defaults to `info`, so every nursery rule
-  the project uses is listed at `"error"`.
-- `plugins` loads `boundaries.grit` (rules: `frontend-project-structure`).
-- Add a rule under the group `pnpm exec biome explain <rule>` names, at `"error"`; narrow one with
-  an `overrides` entry (extend the one whose `includes` already match), never by weakening the base rule.
-- Suppress one finding with a reason, on the line before it:
+- `tsconfig.json`: one file, `paths` without `baseUrl`. A removed option is TS5102 or TS5108:
+  delete it.
+- `biome.json`: add a rule under the group `pnpm exec biome explain <rule>` names, at `"error"`
+  (a nursery rule is never on by default); narrow one with an `overrides` entry, never by
+  weakening the base rule. Suppress one finding on the line before it, with a reason, or the
+  suppression is a `suppressions/parse` error:
 
 ```ts
 // biome-ignore lint/correctness/noComponentHookFactories: built once per router, which keeps it.
 ```
 
-A suppression without `: <reason>` is a `suppressions/parse` error and suppresses nothing.
-Fixing the finding in code is `frontend-code-style`'s.
+- `vite.config.ts`: a new public variable is one more `PUBLIC_ENV` entry. Over budget the build
+  fails with `RolldownError: entry + static imports: <n> B gzip (budget 160000 B)`: first move
+  what can leave the entry, then raise `ENTRY_BUDGET_BYTES` by the measured growth in the same
+  change. `build.target` is the browser floor, moved only at a version audit.
+- CI: actions pinned by SHA, images by digest with the tag in a comment, the Playwright image's
+  tag equal to `@playwright/test`. The deploy job per target is in the CI reference.
 
-## vite.config.ts
-
-The React Compiler runs through `@rolldown/plugin-babel` with `reactCompilerPreset()`; it and
-route splitting are off under `process.env.VITEST`, where they skew coverage.
-
-- `envPrefix` is the exact list `PUBLIC_ENV`, validated in a `configResolved` hook because knip
-  and Vitest load the file without an environment. A new variable is one more `PUBLIC_ENV`
-  entry here; the other steps are `frontend-deploy`'s.
-- In dev the app calls `PUBLIC_API_ORIGIN` directly, and the backend's CORS allows the dev
-  origin. A team that wants `server.proxy` keeps the variable a bare origin, the dev server's
-  own (`http://localhost:5173`; `/api` fails as `not a bare origin`), and proxies only paths no
-  page route uses.
-- Over budget the build fails with `RolldownError: entry + static imports: <n> B gzip (budget
-  160000 B)`. First check what can leave the entry (behind a route or a dynamic `import()`);
-  then raise `ENTRY_BUDGET_BYTES` by the measured growth, in the same change, naming the cause.
-
-## knip, hooks and CI
-
-`knip.json` ignores the generated client and `wrangler`; add `entry` only for a file no knip
-plugin sees. `pnpm hooks` installs the prek hooks (no `prepare` script). The hooks add
-`pnpm audit` to `pnpm check` and skip Vitest; CI adds `pnpm audit signatures`, dedupe, the
-generator freshness check, coverage and the build. GitHub actions are pinned by SHA, CI images
-by digest with the tag in a comment; the Playwright image's tag equals `@playwright/test`'s
-version. A new script gets a `group:action` name. The scaffold has no deploy job on purpose; the
-reference gives one per target.
-
-Dockerfile, wrangler and headers are `frontend-deploy`'s; workspace configuration is
-`frontend-shared-packages`'s.
+Fixing one finding in code is `frontend-code-style`'s; Dockerfile, wrangler and headers are
+`frontend-deploy`'s; workspace configuration is `frontend-shared-packages`'s.
 
 ## Prior-version names
 
@@ -145,6 +120,8 @@ Dockerfile, wrangler and headers are `frontend-deploy`'s; workspace configuratio
 | `tsconfig.app.json` + `tsconfig.node.json` + `references`, `tsc -b` | one `tsconfig.json`, `tsc` |
 | `build.rollupOptions`, `output.manualChunks`, `advancedChunks` | `build.rolldownOptions.output.codeSplitting` (the scaffold's one group is zod's) |
 | `vite-tsconfig-paths` plugin | `resolve.tsconfigPaths: true` |
+| one `test.environment: "jsdom"` for every file | `test.projects` `node` and `dom`, chosen by file name (`*.test.tsx`, `*.dom.test.ts` get jsdom) |
+| `!process.env.VITEST && babel(...)`: compiler off in tests | compiler on under `pnpm test`, off only in a coverage run (`configResolvedHook`) |
 | `@vitejs/plugin-react-swc` | `@vitejs/plugin-react` 6 (Oxc) |
 | `react({ babel: { plugins: ["babel-plugin-react-compiler"] } })` | `babel({ presets: [reactCompilerPreset()] })` from `@rolldown/plugin-babel` (TS2353 otherwise) |
 | Biome 1 `files.ignore`, `files.include`, top-level `organizeImports` | `files.includes` with `!` globs; `assist.actions.source.organizeImports`, on by default |

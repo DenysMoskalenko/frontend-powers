@@ -84,7 +84,7 @@ export default defineConfig({
 |---|---|---|
 | `client` | `"react-query"` | emits fetch functions, `getXQueryOptions`, `getXQueryKey`, `getXMutationOptions` and hooks |
 | `httpClient` | `"fetch"` | no HTTP library; the mutator below wraps `fetch` |
-| `urlEncodeParameters` | `true` | every path parameter goes through `encodeURIComponent` (`` `/users/${encodeURIComponent(String(id))}` ``), so an id such as `../admin/export` or `1?role=admin#` cannot reach another endpoint with the bearer token |
+| `urlEncodeParameters` | `true` | every path parameter goes through `encodeURIComponent` (`` `/users/${encodeURIComponent(String(id))}` ``), so an id such as `../admin/export` or `1?role=admin#` cannot reach another endpoint with the bearer token; a bare `..` survives encoding, so the route still checks a path id against its schema (`tanstack-router-spa`) |
 | `mode` | `"single"` | one file per output; per-tag splitting pays off only for specs with hundreds of operations, and Vite drops what is not imported either way |
 | `mock.generators` | `[{ type: "msw" }]` | `api.msw.ts` with `getListUsersMockHandler(data)` and friends; their default bodies are faker-random, so tests always pass data (`frontend-testing`) |
 | `override.mutator` | `apiFetch` in `src/api/fetcher.ts` | every request goes through the one function that knows the base URL, the token and the error shape; orval also imports `ErrorType` from that file to type errors, as `'../fetcher.ts'` because the tsconfig allows `.ts` extensions |
@@ -115,7 +115,7 @@ For the scaffold's three operations (`operationId` `list_users`, `get_user`, `cr
 | Generated | Use |
 |---|---|
 | `listUsers(params, init)`, `getUser(id, init)`, `createUser(body, init)` | the plain fetch functions; inside a hand-built `queryFn` such as infinite options |
-| `getListUsersQueryOptions(params, { query })`, `getGetUserQueryOptions(id, { query })` | `queryClient.query` in a loader, `useQuery` in a component |
+| `getListUsersQueryOptions(params, { query })`, `getGetUserQueryOptions(id, { query })` | `loadQuery` in a loader (`tanstack-router-spa`), `useQuery` in a component |
 | `getListUsersSuspenseQueryOptions(...)`, `getGetUserSuspenseQueryOptions(...)` | `useSuspenseQuery` |
 | `getListUsersQueryKey(params?)`, `getGetUserQueryKey(id)` | invalidation, `setQueryData`, `cancelQueries` |
 | `getCreateUserMutationOptions({ mutation, request })`, `getCreateUserMutationKey()` | `useMutation`; the key for `useMutationState` filters |
@@ -129,9 +129,9 @@ The non-suspense getter sets `enabled: id !== null && id !== undefined` for a pa
 suspense getter returns `queryOptions(...)` cast to `UseSuspenseQueryOptions`, which is why the two
 cannot stand in for each other under `exactOptionalPropertyTypes`:
 
-- `queryClient.query({ ...getListUsersSuspenseQueryOptions(p), staleTime: "static" })` fails with
-  TS2379 "... is not assignable to parameter of type 'QueryExecuteOptions<...>' with
-  'exactOptionalPropertyTypes: true'".
+- `loadQuery(context.queryClient, getListUsersSuspenseQueryOptions(p))` (and `queryClient.query`
+  with the same options) fails with TS2379 "... is not assignable to parameter of type
+  'QueryExecuteOptions<...>' with 'exactOptionalPropertyTypes: true'".
 - `useSuspenseQuery(getGetUserQueryOptions(id))` fails with TS2379 "Argument of type
   'UseQueryOptions<...>' is not assignable to parameter of type 'UseSuspenseQueryOptions<...>'".
 

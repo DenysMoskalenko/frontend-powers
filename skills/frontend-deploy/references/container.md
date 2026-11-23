@@ -2,7 +2,7 @@
 
 ## Contents
 
-the files as the scaffold has them · why Caddy on `scratch` · run flags and the
+the files as the scaffold has them · why Caddy on `scratch` · why one image per environment · run flags and the
 Kubernetes security context · the curl checklist · compression · changing the image.
 
 ## `Dockerfile`
@@ -126,9 +126,18 @@ Dockerfile
 
 The runtime image holds one static binary, its MIME table, the Caddyfile, the generated header
 snippets and `dist/`: no shell, no package manager, about 65 MB. A missing hashed asset is a real
-404 with `no-cache`, HEAD works on SPA routes, and the access log is JSON with the status. No
-shell also means no entrypoint script: configuration cannot be injected at start, which is why the
-image is built per environment.
+404 with `no-cache`, HEAD works on SPA routes, and the access log is JSON with the status.
+
+## Why one image per environment
+
+`pnpm build` inlines every `PUBLIC_*` origin into the bundle and into the generated CSP
+(`ARG PUBLIC_API_ORIGIN` above), so the image is built per environment, as the Cloudflare target
+builds per environment. The missing shell is not the reason: Caddy itself substitutes `{$VAR}` in
+the Caddyfile before parsing it. The cost: production runs a bundle staging did not run, a release
+makes one build per environment, and no image is promoted by digest. The mitigation: every
+environment is built from the same commit in the same pipeline, so the builds differ only in the
+inlined origins. How many builds a pipeline makes and how an artifact is promoted is the platform
+team's decision; this skill gives no runtime-configuration variant.
 
 ## Run flags and the Kubernetes security context
 

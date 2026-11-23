@@ -91,7 +91,91 @@ test("an empty or unparsable error body under a JSON content type still rejects 
 
   await expect(apiFetch("/users/1")).rejects.toMatchObject({ name: "ApiError", status: 503 });
   await expect(apiFetch("/users")).rejects.toMatchObject({ name: "ApiError", status: 502 });
-  await expect(apiFetch("/users/1", { method: "DELETE" })).resolves.toBe("");
+  await expect(apiFetch("/users/1", { method: "DELETE" })).resolves.toBeUndefined();
+});
+
+const binary = { "content-type": "application/octet-stream" };
+const csv = { headers: { "content-type": "text/csv" } };
+
+test("an empty body resolves undefined, whatever the status or content type", async () => {
+  configureApi({ baseUrl: origin });
+  server.use(
+    http.delete(`${origin}/users/1`, () => new HttpResponse(null, { status: 204 })),
+    http.get(`${origin}/users/1`, () => new HttpResponse("", { status: 200 })),
+    http.post(`${origin}/users`, () => new HttpResponse(null, { status: 202, headers: binary })),
+  );
+
+  await expect(apiFetch("/users/1", { method: "DELETE" })).resolves.toBeUndefined();
+  await expect(apiFetch("/users/1")).resolves.toBeUndefined();
+  await expect(apiFetch("/users", { method: "POST" })).resolves.toBeUndefined();
+});
+
+test("a file response is a Blob with its bytes, a text/* response a string", async () => {
+  configureApi({ baseUrl: origin });
+  const bytes = new Uint8Array([0, 159, 255, 10]);
+  server.use(
+    http.get(`${origin}/users/1/avatar`, () => new HttpResponse(bytes, { headers: binary })),
+    http.get(`${origin}/users/1/report`, () => HttpResponse.text("id,name\n1,Ada", csv)),
+  );
+
+  const file = await apiFetch<Blob>("/users/1/avatar");
+
+  expect(file).toBeInstanceOf(Blob);
+  expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
+  await expect(apiFetch("/users/1/report")).resolves.toBe("id,name\n1,Ada");
+});
+
+const never = () => new Promise<never>(() => {});
+
+test("a read without response headers in timeoutMs rejects with a TimeoutError", async () => {
+  configureApi({ baseUrl: origin, timeoutMs: 100 });
+  server.use(http.get(`${origin}/users`, never), http.head(`${origin}/users`, never));
+
+  await expect(apiFetch("/users")).rejects.toMatchObject({ name: "TimeoutError" });
+  await expect(apiFetch("/users", { method: "HEAD" })).rejects.toBeInstanceOf(DOMException);
+});
+
+test("the timeout stops at the response headers, so a slow body is read to the end", async () => {
+  configureApi({ baseUrl: origin, timeoutMs: 100 });
+  const encoder = new TextEncoder();
+  server.use(
+    http.get(`${origin}/users`, () => {
+      const body = new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encoder.encode('["ada",'));
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          controller.enqueue(encoder.encode('"grace"]'));
+          controller.close();
+        },
+      });
+      return new HttpResponse(body, { headers: { "content-type": "application/json" } });
+    }),
+  );
+
+  await expect(apiFetch("/users")).resolves.toEqual(["ada", "grace"]);
+});
+
+test("a write waits past timeoutMs: the server may still apply it", async () => {
+  configureApi({ baseUrl: origin, timeoutMs: 100 });
+  server.use(
+    http.post(`${origin}/users`, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return HttpResponse.json({ id: "1" }, { status: 201 });
+    }),
+  );
+
+  await expect(apiFetch("/users", { method: "POST", body: "{}" })).resolves.toEqual({ id: "1" });
+});
+
+test("the caller's signal still cancels a read before the timeout", async () => {
+  configureApi({ baseUrl: origin, timeoutMs: 10_000 });
+  server.use(http.get(`${origin}/users`, never));
+  const controller = new AbortController();
+
+  const request = apiFetch("/users", { signal: controller.signal });
+  controller.abort();
+
+  await expect(request).rejects.toMatchObject({ name: "AbortError" });
 });
 
 test("a successful response with an unparsable JSON body rejects with the parse error", async () => {

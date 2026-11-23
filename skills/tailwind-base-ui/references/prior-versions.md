@@ -45,7 +45,8 @@ an error, which is why a wrong habit survives review.
 | `start-4`, `end-4` | `inset-s-4`, `inset-e-4` |
 | `w-4 h-4` | `size-4` |
 | `left-*`, `ml-*` with `rtl:` overrides | logical `inset-s-*`, `ms-*`, `ps-*` |
-| a JS autosize hook for a textarea | `field-sizing-content` |
+| a JS autosize hook for a textarea | `field-sizing-content` with a `rows` minimum, where a fixed height is acceptable: Firefox before 152 and Safari before 26.2 ignore it, keep the rows and scroll; keep the hook where growing is required |
+| `h-screen`, `min-h-screen` (`100vh`) | `h-dvh`, `min-h-dvh`: `100vh` is taller than a phone's visible area while its toolbars show |
 | `dark:bg-gray-900` pairs on every element | a `light-dark()` token; `dark:` only for non-colour differences |
 | `hover:` assumed to apply on touch | `hover:` is inside `@media (hover: hover)` |
 
@@ -79,6 +80,11 @@ New in 4.x and worth reaching for: `not-*`, `in-*`, `starting:` (`@starting-styl
 | `@tanstack/react-virtual` `useVirtualizer`, `react-virtuoso` | virtua `VList` |
 | TanStack Table 8 `useReactTable`, `getCoreRowModel` | Table 9 `useTable({ features, columns, data })`, `tableFeatures({})` |
 | Biome `useSortedClasses` | not enabled; the Biome 2.6 `noTailwind*` and `useTailwind*` rules are |
+
+The messages to search for: `noTailwindRawColors` "This Tailwind CSS class uses a raw palette color.",
+`noTailwindRestyledComponents` "This Tailwind utility restyles a component.",
+`useTailwindStaticClassStrings` "This class string is constructed dynamically.",
+`noTailwindArbitraryValue` "Found an arbitrary value in a Tailwind CSS class."
 
 `pnpm format` applies the safe fixes (`noTailwindLegacyUtilities`, `useTailwindVariablesShorthand`).
 The `useTailwindShorthandClasses` fix is unsafe: write `size-4` by hand or run

@@ -16,7 +16,7 @@ including the rejected alternatives.
 | --- | --- | --- |
 | Node, pnpm | 26.13, 12.22 | runtime and package manager, pinned in `devEngines` |
 | TypeScript | 7.0 | the native compiler, one strict `tsconfig.json` |
-| Vite, `@vitejs/plugin-react` | 8.3, 6.3 | build on Rolldown, React Compiler on in dev and build |
+| Vite, `@vitejs/plugin-react` | 8.3, 6.3 | build on Rolldown, React Compiler on in dev, build and tests |
 | React | 19.3 | UI library |
 | TanStack Router, Query | 1.170, 5.108 | file routes and loaders; server state |
 | orval | 8.48 | query hooks, zod schemas and MSW handlers from a committed `openapi.json` |
@@ -35,13 +35,13 @@ react-i18next, `centrifuge` and `eventsource-parser`, Grafana Faro, zustand, vir
 
 | Skill | Loads when |
 | --- | --- |
-| [`frontend-code-style`](skills/frontend-code-style/SKILL.md) | Writing or reviewing TypeScript and React: strictness flags, error classes and the one reporting funnel, React 19 APIs, the React Compiler policy, naming, dates and money. |
+| [`frontend-code-style`](skills/frontend-code-style/SKILL.md) | Writing or reviewing TypeScript and React: strictness flags, error classes and the one reporting funnel, React 19 APIs, the React Compiler policy, naming, dates and money, browser APIs above the browser floor. |
 | [`frontend-project-structure`](skills/frontend-project-structure/SKILL.md) | Deciding where code lives: the `routes -> features -> shared` layers, import rules, feature anatomy, file naming, where state lives. |
 | [`tanstack-router-spa`](skills/tanstack-router-spa/SKILL.md) | Adding or changing a route: file-route conventions, loaders, `validateSearch`, navigation, guards, pending and error components, code splitting, blockers. |
-| [`tanstack-query-api`](skills/tanstack-query-api/SKILL.md) | Anything between a component and the backend: `openapi.json`, orval regeneration, `apiFetch`, `ApiError`, queries, mutations, invalidation, optimistic UI, pagination. |
-| [`frontend-forms`](skills/frontend-forms/SKILL.md) | Building a form: TanStack Form with zod and Base UI `Field`, submitting through a mutation, server field errors, the leave guard. |
-| [`tailwind-base-ui`](skills/tailwind-base-ui/SKILL.md) | Styling mechanics: Tailwind 4 tokens, Base UI wrappers in `shared/ui`, the no-runtime-style rule and the library picks that survive the CSP. |
-| [`frontend-testing`](skills/frontend-testing/SKILL.md) | Writing tests: `renderRoute`, MSW handlers, user-event, factories, time, jsdom gaps, coverage, flaky tests, Playwright. |
+| [`tanstack-query-api`](skills/tanstack-query-api/SKILL.md) | Anything between a component and the backend: `openapi.json`, orval regeneration, `apiFetch`, `ApiError`, queries, mutations, invalidation, optimistic UI, pagination, polling, files. |
+| [`frontend-forms`](skills/frontend-forms/SKILL.md) | Building a form: TanStack Form through `useAppForm` with zod and Base UI `Field`, submitting through a mutation, server field errors, the leave guard. |
+| [`tailwind-base-ui`](skills/tailwind-base-ui/SKILL.md) | Styling mechanics: Tailwind 4 tokens, responsive layout, Base UI wrappers in `shared/ui`, the no-runtime-style rule and the library picks that survive the CSP. |
+| [`frontend-testing`](skills/frontend-testing/SKILL.md) | Writing tests: `renderRoute`, the Node and jsdom Vitest projects, MSW handlers, user-event, factories, time, coverage, flaky tests, `data-testid`, Playwright. |
 | [`frontend-tooling`](skills/frontend-tooling/SKILL.md) | Changing configuration: `package.json` scripts, `pnpm-workspace.yaml`, `tsconfig.json`, `biome.json`, `vite.config.ts`, knip, prek, CI, dependency upgrades. |
 | [`frontend-deploy`](skills/frontend-deploy/SKILL.md) | Per-environment builds, the generated security headers and CSP, Cloudflare static assets, the Caddy container, cache policy, source maps, stale-chunk recovery, telemetry. |
 
@@ -69,6 +69,9 @@ all of it. Three contracts hold across every skill: `apiFetch` throws exactly on
 unexpected errors go only to the platform `reportError`, and nothing injects styles or scripts at
 runtime. To edit one of this repository's skills, read [`AGENTS.md`](AGENTS.md) first.
 
+Some topics are left out on purpose (backends without OpenAPI, framework migrations, print styles,
+server rendering and others): see "Not covered" in [`STACK.md`](STACK.md#not-covered).
+
 ## The Scaffold
 
 Ask the agent to create a new frontend app; `frontend-scaffolding` copies its template into an empty
@@ -79,11 +82,13 @@ directory and runs the gate before any feature code. A new app starts with:
 - the `src/routes`, `src/features`, `src/shared`, `src/api` and `src/app` layers, with boundaries
   enforced by a Biome GritQL plugin;
 - route integration tests through `renderRoute` with MSW, 80 % coverage gates, and Playwright
-  end-to-end tests against the production build with an axe scan and a CSP-violation guard;
+  end-to-end tests against the production build, in Desktop Chrome and a WebKit phone, with an
+  axe scan and a CSP-violation guard;
 - `pnpm check` (Biome, `tsc`, knip, Vitest), prek hooks, and the same CI jobs for GitHub Actions and
   GitLab CI;
 - generated security headers with a strict CSP and Trusted Types, Cloudflare static-assets config,
-  a Caddy container image on `scratch`, and a gzip bundle budget enforced in the build.
+  a Caddy container image on `scratch`, a gzip bundle budget enforced in the build, and a browser
+  floor (Baseline Widely Available on the last audit) in `build.target`.
 
 ## Companion Skills
 
@@ -196,7 +201,7 @@ document, and the scaffold's `openapi.json` mirrors the `users` API of the rust-
 
 ```bash
 make check            # everything CI's check job runs; green here predicts a green pull request
-make validate         # validate_skills.py --strict --base $(BASE): house rules, STACK.md parity, stale version copies, version bumps
+make validate         # validate_skills.py --strict --base $(BASE): house rules, STACK.md parity, stale version and browser-floor copies, version bumps
 make test-scripts     # seeds a violation per validator check into a temporary copy and asserts the error
 make lint             # prek whitespace, JSON and YAML hooks
 make plugin-validate  # claude plugin validate --strict . (skipped with a notice when claude is not installed)

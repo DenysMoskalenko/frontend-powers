@@ -133,8 +133,14 @@ permissions:
 | `allowBuilds` | One line per package with a lifecycle script: `true` runs it, `false` skips it. Each entry carries a comment with the reason. An undecided package fails the install. |
 | `permissions` | pnpm 12 records what a dependency may do. `skills: false` declines the agent skills a package ships. Its `build` capability does what `allowBuilds` does and takes precedence over it. |
 
-pnpm 12 reads project settings only from this file: `.npmrc` settings and `npm_config_*`
-variables no longer configure the project (`PNPM_CONFIG_STORE_DIR` is the CI store variable).
+pnpm 12 reads the project's install behaviour from this file; `npm_config_*` variables no longer
+configure it (`PNPM_CONFIG_STORE_DIR` is the CI store variable). `.npmrc` still carries how to
+reach and trust a registry: `registry` and `@scope:registry` URLs, `//host/:_authToken` tokens,
+and the `ca`, `cafile`, `cert` and `key` settings. The project's `.npmrc` is read first, then
+pnpm's `auth.ini`, then `~/.npmrc`. Never delete or empty a `.npmrc` that holds one of those:
+move only a behaviour setting (`save-exact`, `store-dir`, `strict-peer-dependencies`, a proxy)
+into `pnpm-workspace.yaml`, where pnpm 12 reads it, and keep a token out of git (an environment
+variable in `${NPM_TOKEN}` form, or `auth.ini`).
 An unknown or misspelled key fails every command with `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS`;
 the removed build lists (`onlyBuiltDependencies` and its siblings) are accepted and silently
 ignored, which is worse.
@@ -164,7 +170,7 @@ imports, and Biome `noUndeclaredDependencies` reports an import of a package `pa
 does not list. `@types/*` packages for a runtime dependency go in `devDependencies`, and an
 ambient one (`@types/node`) also goes in tsconfig `types`.
 
-After any of these: `pnpm check`, then `pnpm dedupe --check` and `pnpm audit --audit-level=high`
+After any of these: `pnpm check`, then `pnpm dedupe --check` and `pnpm audit --prod --audit-level=high`
 (both run in CI), and `pnpm build` with `PUBLIC_API_ORIGIN` set when the package reaches the
 bundle (the entry budget). Read the changelog for every version crossed.
 
@@ -277,7 +283,9 @@ interactive terminal`.
   which rewrites the lockfile from the merged manifest.
 - CI installs with `--frozen-lockfile` and runs `pnpm dedupe --check`; when that fails, run
   `pnpm dedupe` and commit the lockfile.
-- `pnpm audit --audit-level=high` runs in CI, in the `pnpm-audit` hook and needs no install.
+- `pnpm audit --prod --audit-level=high` runs in CI and in the `pnpm-audit` hook and needs no
+  install; the scheduled `audit-full` job runs `pnpm audit --audit-level=moderate` over every
+  dependency (the reason is in the CI reference).
   Fix with `pnpm audit --fix` (an override in `pnpm-workspace.yaml`) or `pnpm audit --fix update`
   (re-resolves inside existing ranges). An advisory that does not apply is ignored with
   `pnpm audit --ignore GHSA-...`, which writes it under `auditConfig.ignoreGhsas` in

@@ -18,20 +18,20 @@ sibling by name in one sentence instead of restating the rule.
 
 | Skill | What it is | Owner boundary |
 | --- | --- | --- |
-| `frontend-code-style` | TypeScript 7 strictness and what it forbids, type conventions, error classes and the one reporting funnel, exports and dependency injection, React 19 API facts, the React Compiler policy, naming, dates and money. Carries the precedence note for third-party React skills. | Language and React API only; never lint configuration, file placement, or query code. |
-| `frontend-project-structure` | The `src/` tree, the `routes -> features -> shared` layers and their import rules, feature anatomy, file naming, no barrels, where state lives, app composition, growth rules, bringing an existing app onto the standard, in order. | Where code lives and who may import whom; what goes inside a route file is `tanstack-router-spa`'s, the Biome config that enforces boundaries is `frontend-tooling`'s. |
-| `tanstack-router-spa` | File-route conventions, route options, the loader shape, search params, navigation, guard mechanics, pending, error and not-found components, code-splitting rules, navigation blockers, router creation and context. | The URL layer; query options and mutations are `tanstack-query-api`'s, the session is `keycloak-spa-auth`'s. |
-| `tanstack-query-api` | `openapi.json`, the orval config and regeneration, `apiFetch`, `ApiError`, QueryClient defaults, queries, mutations, invalidation, optimistic UI, pagination, wire formats, where zod validates. | Everything between a component and the backend; forms are `frontend-forms`'s, route files are `tanstack-router-spa`'s. |
-| `frontend-forms` | TanStack Form with zod schemas and Base UI Field parts, submitting through a mutation, mapping server field errors, the leave guard, one-field `FormData` forms. | Form state and submission; form UX, input types and autofill tokens belong to third-party skills. |
-| `tailwind-base-ui` | Tailwind 4 CSS-first mechanics, design-token plumbing, Base UI wrappers in `shared/ui`, the styling contract, the no-runtime-style rule and the CSP-safe library picks. | Styling mechanics and UI-library picks only; never visual direction, motion, or component API design. |
-| `frontend-testing` | Route integration tests through `renderRoute`, MSW handlers, user-event, factories, time, jsdom gaps, coverage, the flaky-test table, Playwright end-to-end tests. | Test authoring; test-quality principles belong to `writing-good-tests`, config keys and CI to `frontend-tooling`. |
-| `frontend-tooling` | `package.json` scripts, `pnpm-workspace.yaml`, `devEngines`, `tsconfig.json`, `biome.json`, `vite.config.ts`, knip, prek, both CI files, adding and upgrading dependencies. | Configuration files and their contents; fixing one lint finding is `frontend-code-style`'s, deploy files are `frontend-deploy`'s. |
-| `frontend-deploy` | Per-environment build configuration, the generated security headers and the CSP, Cloudflare static assets, the Caddy container, cache policy, source maps, stale-chunk recovery, client-side security rules, optional Faro telemetry. | How the built app is configured, served, secured and observed; CI job wiring is `frontend-tooling`'s. |
+| `frontend-code-style` | TypeScript 7 strictness and what it forbids, type conventions, error classes and the one reporting funnel, exports and dependency injection, React 19 API facts, the React Compiler policy, naming, instants, calendar dates (`formatDate`) and money, the browser-floor rule for browser code. Carries the precedence note for third-party React skills. | Language and React API only; never lint configuration, file placement, or query code. The floor's value in `build.target` is `frontend-tooling`'s; the language-aware date variant is `frontend-i18n`'s. |
+| `frontend-project-structure` | The `src/` tree, the `routes -> features -> shared` layers and their import rules, feature anatomy, file naming (`*.dom.test.ts` included), no barrels, where state lives, where images go, app composition and the start-up order, growth rules, bringing an existing app onto the standard, in order. | Where code lives and who may import whom; what goes inside a route file is `tanstack-router-spa`'s, the Biome config that enforces boundaries is `frontend-tooling`'s. |
+| `tanstack-router-spa` | File-route conventions, route options, the loader shape and why loaders read through `loadQuery`, search params, navigation, guard mechanics, the first-load shell, the progress bar, pending, error and not-found components, code-splitting rules, navigation blockers, router creation and context (`defaultStaleReloadMode`). | The URL layer; query options and mutations are `tanstack-query-api`'s, the session is `keycloak-spa-auth`'s. |
+| `tanstack-query-api` | `openapi.json`, the orval config and regeneration, `apiFetch` (the read timeout, empty and binary bodies), `ApiError` and `FieldError`, QueryClient defaults and the retry rule, queries, mutations, invalidation, the delete recipe, optimistic UI, pagination, polling, file downloads and uploads, wire formats, where zod validates. | Everything between a component and the backend; forms are `frontend-forms`'s, route files are `tanstack-router-spa`'s. |
+| `frontend-forms` | TanStack Form through `useAppForm` (`createFormHook`) with zod schemas and Base UI Field parts, validation timing, submitting through a mutation, mapping server field errors by field and `code`, date and file fields, forms in steps, the leave guard, one-field `FormData` forms. | Form state and submission; translating a field error by `code` is `frontend-i18n`'s; form UX, input types and autofill tokens belong to third-party skills. |
+| `tailwind-base-ui` | Tailwind 4 CSS-first mechanics, design-token plumbing, responsive rules (breakpoints, `@container`, `dvh`), Base UI wrappers in `shared/ui` and the `data-testid` they forward, toast options, the styling contract, the no-runtime-style rule, the CSP-safe library picks and the narrowest exception a user approves. | Styling mechanics and UI-library picks only; never visual direction, motion, or component API design. Touch targets, hover and safe areas belong to third-party skills; how a header exception is written is `frontend-deploy`'s. |
+| `frontend-testing` | Route integration tests through `renderRoute`, the two Vitest projects and which file runs where, MSW handlers, user-event, factories, time and other time zones, jsdom gaps, coverage, the flaky-test table, the `data-testid` convention, Playwright end-to-end tests in the `chromium` and `phone` projects. | Test authoring; test-quality principles belong to `writing-good-tests`, config keys and CI to `frontend-tooling`. |
+| `frontend-tooling` | `package.json` scripts, `pnpm-workspace.yaml`, `devEngines`, `tsconfig.json`, `biome.json`, `vite.config.ts` (the browser floor in `build.target`, the Vitest projects, the coverage-only compiler switch), knip, prek, both CI files and the audit policy, adding and upgrading dependencies. | Configuration files and their contents; fixing one lint finding is `frontend-code-style`'s, deploy files are `frontend-deploy`'s. |
+| `frontend-deploy` | Per-environment build configuration and why it is build-time, the generated security headers and the CSP, a header exception the user approved, violation reports, Cloudflare static assets, the Caddy container, cache policy, source maps, stale-chunk recovery, client-side security rules (`safe-url.ts`), optional Faro telemetry. | How the built app is configured, served, secured and observed; CI job wiring is `frontend-tooling`'s. |
 | `frontend-scaffolding` | Creating a brand-new app from the buildable template in `assets/app/`. | Greenfield only; changing an existing app is every other skill's. It is the only place the initial file set lives. |
-| `keycloak-spa-auth` | The session module over keycloak-js, the token for `apiFetch`, the 401 and 403 policy, route guard policy, logout, multi-tab behaviour, auth tests. | Authentication only; guard mechanics are `tanstack-router-spa`'s. |
-| `frontend-i18n` | i18next setup, keys, plurals, `<Trans>`, the CLI gates, typed keys, lazy loading, tests with real resources. | Translation mechanics only; date and money formatting is `frontend-code-style`'s, wording belongs to a third-party skill. |
-| `frontend-realtime` | SSE over fetch, the Centrifugo client module, raw WebSocket rules, the push-to-cache bridge, realtime tests. | Streaming and push only; cache API details are `tanstack-query-api`'s. |
-| `frontend-shared-packages` | A pnpm workspace of source-only packages: catalogs, lockstep versioning and release, UI-kit and API-client packaging. | More than one deployable; single-app configuration is `frontend-tooling`'s. |
+| `keycloak-spa-auth` | The session module over keycloak-js (oidc-client-ts for another provider), the token for `apiFetch`, the 401 and 403 policy, route guard policy, keeping a long form alive, logout, multi-tab behaviour, auth tests and the composable `e2e/auth.ts`. | Authentication only; guard mechanics are `tanstack-router-spa`'s. |
+| `frontend-i18n` | i18next setup, keys, plurals, `<Trans>`, the CLI gates and the release-time `status` check, typed keys, lazy loading and a failed message file, field errors translated by `code`, tests with real resources. | Translation mechanics only; date and money formatting is `frontend-code-style`'s, wording belongs to a third-party skill. |
+| `frontend-realtime` | SSE over fetch, the Centrifugo client module, raw WebSocket rules, the push-to-cache bridge, signals no endpoint returns, realtime tests and the composable `e2e/realtime.ts`. | Streaming and push only; cache API details are `tanstack-query-api`'s. |
+| `frontend-shared-packages` | A pnpm workspace of source-only packages: catalogs, peer ranges of a published package, lockstep versioning and release, UI-kit and API-client packaging. | More than one deployable; single-app configuration is `frontend-tooling`'s. |
 
 Three contracts every skill follows instead of restating:
 
@@ -143,7 +143,11 @@ inside a skill.
   at that path in the copy, replacing the scaffold's file if one exists, so `@/` imports and
   file routes resolve as they do in a real app.
 - ` ```ts,verify,test ` and ` ```tsx,verify,test ` - a complete test file. Extracted the same
-  way and run by Vitest with the scaffold's setup (MSW server, jest-dom, `renderRoute`).
+  way and run by Vitest with the scaffold's setup. The file name picks the project: a
+  `ts,verify,test` block becomes a `*.test.ts` and runs in Node with no DOM (MSW server,
+  `reportError` check, faker seed); a `tsx,verify,test` block, or a `// file: ….dom.test.ts`
+  path, runs in jsdom with jest-dom, `renderRoute` and storage clearing as well. A `ts` test
+  that needs `window`, `document` or storage takes the `.dom.test.ts` path.
 - ` ```ts,ignore ` and ` ```tsx,ignore ` - deliberately wrong: bad examples and
   counter-examples.
 - ` ```ts ` and ` ```tsx ` - a fragment. Not extracted and not verified, so keep fragments
@@ -233,7 +237,15 @@ same sentence; and the image tags on STACK.md's container-images line (Playwrigh
 `@playwright/test`, Caddy, and the add-ons' Keycloak and Centrifugo services), as `<image>:<tag>`
 or a digest pin with the tag in a comment. It skips `pnpm-lock.yaml` and the first cell of a
 row under a `Prior-version` heading, and reports `file:line`, the name, the version found and
-the pin. A malformed JSON block in STACK.md is reported as such and skips this check. Warnings do not fail; errors exit 1. `--strict` promotes a missing eval file to an
+the pin. A malformed JSON block in STACK.md is reported as such and skips this check. It also
+checks the browser floor: STACK.md states it as one `build.target` list
+(`["chrome125", "edge125", "firefox128", "safari17.5"]`), and every `chrome<N>`, `edge<N>`,
+`firefox<N>`, `safari<N.N>` or `ios<N.N>` token in any file under `skills/` (the template's
+`vite.config.ts` included) must equal it, as must a prose version (`Firefox 128 and Safari 17.5`)
+in a markdown sentence or table cell that contains the word floor. A version the clause before it
+marks as a feature's (`needs`, `from`, `since`, `first`, `before`, `until`, `in`, `lacks` and
+similar: "`URL.parse` needs Safari 18") is skipped, and so is the first cell of a row under a
+`Prior-version` heading; a STACK.md without the list is an error. Warnings do not fail; errors exit 1. `--strict` promotes a missing eval file to an
 error, `--json` emits findings as JSON, and `--base <ref>` fails when a skill changed since
 that ref without a `metadata.version` bump, when `skills/` changed without a plugin version
 bump, and when a skill or plugin version moved backwards.
@@ -270,7 +282,9 @@ The scaffold has its own gate, which the CI `scaffold` job runs from a copy outs
 repository and `make check` does not: `pnpm install --frozen-lockfile`, `pnpm dedupe --check`,
 `pnpm check`, `pnpm test:coverage`, `pnpm api:generate` followed by a comparison that shows
 the committed client unchanged, `pnpm build` with `PUBLIC_API_ORIGIN=https://api.example.com`
-exported, `pnpm test:e2e`, and `docker build`. Run it by hand from a copy outside the
+exported, `pnpm test:e2e` (the `chromium` and `phone` projects; install their browsers once
+with `pnpm exec playwright install chromium webkit`, adding `--with-deps` on a bare Linux
+runner), and `docker build`. Run it by hand from a copy outside the
 repository after any change to the template. Never leave `node_modules/`, `dist/`,
 `coverage/`, `test-results/` or `playwright-report/` inside `skills/`.
 
@@ -350,6 +364,14 @@ dependency, a runtime or an image:
    Adding or Changing a Skill). `make validate` fails a pull request that skips either.
 8. **Re-run the gates.** The template gate from the outside copy (see Verification), then
    `make check`.
+9. **Move the browser floor.** At every version audit, set `build.target` to the newest Chrome,
+   Edge, Firefox (never below 128) and Safari released on or before the audit date minus 30
+   months, from the current `@mdn/browser-compat-data` release dates, in the template's
+   `vite.config.ts` and in `STACK.md`; the validator then lists every stale copy under `skills/`.
+   Check each browser API and CSS feature the skills and the template use by its exact
+   compatibility key (`api.URL.parse_static`, not the `url` web-features group), remove
+   workarounds the new floor makes native, and fix or feature-detect every use still above it.
+   `maintenance/release-audit.md` has the full step.
 
 Never bump a version only in a skill body. `maintenance/` holds the release procedure and
 the research sources; it is repository documentation that no skill reads, though every install

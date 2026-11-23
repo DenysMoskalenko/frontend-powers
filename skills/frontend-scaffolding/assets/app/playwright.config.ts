@@ -13,7 +13,11 @@ export default defineConfig({
   failOnFlakyTests: isCI,
   reporter: isCI ? [["list"], ["junit", { outputFile: "test-results/junit.xml" }]] : "list",
   use: { baseURL: APP_ORIGIN, trace: "on-first-retry" },
-  projects: [{ name: "chromium", use: devices["Desktop Chrome"] }],
+  projects: [
+    { name: "chromium", use: devices["Desktop Chrome"] },
+    // Safari's engine on a phone-sized touch screen: the narrow layout and WebKit-only bugs.
+    { name: "phone", use: devices["iPhone 17e"] },
+  ],
   webServer: [
     {
       command: "node e2e/stub-api.ts",

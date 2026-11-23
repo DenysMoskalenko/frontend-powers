@@ -23,29 +23,32 @@ import { reloadOnStaleChunk, rootErrorHandlers } from "@/app/error-reporting";
 import { createAppRouter } from "@/app/router";
 import "@/styles.css";
 
-reloadOnStaleChunk();
 configureApi({ baseUrl: env.apiOrigin });
+const router = createAppRouter();
+reloadOnStaleChunk(router);
 
 const container = document.getElementById("root");
 if (!container) throw new Error("index.html has no #root");
 createRoot(container, rootErrorHandlers).render(
   <StrictMode>
-    <RouterProvider router={createAppRouter()} />
+    <RouterProvider router={router} />
   </StrictMode>,
 );
 ```
 
 | Line | Why it is there, in this order |
 | --- | --- |
-| `import "@/app/zod-config"` first | It runs `z.config({ jitless: true })`: without it every object schema probes `new Function` as it is built, which the CSP's Trusted Types policy reports on every page. The build bundles the module into zod's own chunk (`vite.config.ts`), so it runs before any schema whatever the chunking; the dev server runs modules in source order, so it stays the first import. A side-effect import is a group boundary for Biome's import sorter; never move an import above it. |
-| `reloadOnStaleChunk()` | Registers the `vite:preloadError` handler before any route chunk can load. |
+| `import "@/app/zod-config"` first | It runs `z.config({ jitless: true })`: without it zod probes `new Function` once per page load, when the first object schema is built, and the CSP's Trusted Types policy reports the probe. The build bundles the module into zod's own chunk (`vite.config.ts`), so it runs before any schema whatever the chunking; the dev server runs modules in source order, so it stays the first import. A side-effect import is a group boundary for Biome's import sorter; never move an import above it. |
 | `configureApi({ baseUrl })` | Sets the API origin before the first loader runs. The auth add-on extends this call with `getToken` and `retryToken` (`keycloak-spa-auth`). |
+| `createAppRouter()` | One router for the page, built before anything needs it. |
+| `reloadOnStaleChunk(router)` | Registers the `vite:preloadError` handler before the first render. It reloads only while a navigation is pending, so it reads the router; a failed import outside a navigation rejects to its importer. |
 | `createRoot(container, rootErrorHandlers)` | Routes React's caught, uncaught and recoverable errors to `reportError` (`frontend-code-style` owns the funnel). |
-| `<RouterProvider router={createAppRouter()} />` | The only thing rendered. No provider wraps it here: providers go in `Wrap`. |
+| `<RouterProvider router={router} />` | The only thing rendered. No provider wraps it here: providers go in `Wrap`. |
 
 An add-on that must finish before the first render (signing in, the first language) renders in
-`ready.then(render, startFailed)` and passes its result into `createAppRouter`; each sequence is its
-add-on skill's, and several combine as "Combining add-ons" shows.
+`ready.then(render).catch(startFailed)` and passes its result into `createAppRouter`: a second
+argument to `then` would not catch a throw inside `render`, and the page would stay blank. Each
+sequence is its add-on skill's, and several combine as "Combining add-ons" shows.
 
 ## `createAppRouter` and the provider slot
 
@@ -101,18 +104,15 @@ add-on lists into the existing file; never replace it. The rules that make the f
 | --- | --- |
 | `createAppRouter` | One object parameter, one key per add-on: `createAppRouter({ session, i18n, history })`. `history` stays optional; only tests pass it. |
 | `Wrap` order | `CSPProvider > I18nextProvider > QueryClientProvider > RealtimeContext > ToastProvider`: the CSP provider outermost, the toasts innermost so they render inside every other provider. |
-| Start-up | Each waiting add-on contributes a promise: `ready.then(render, startFailed)` for one, `Promise.all([...]).then(render, startFailed)` for several. `render` receives the results in array order. `startFailed` reports the error and renders `<p role="alert">The app could not start. Reload the page to try again.</p>`, the same name and copy in every add-on, never a blank page. Faro telemetry (`frontend-deploy`) never waits: it starts before the others, its failure is reported, and `render` hands it the session's opaque user id once both exist. |
+| Start-up | Each waiting add-on contributes a promise: `ready.then(render).catch(startFailed)` for one, `Promise.all([...]).then(...).catch(startFailed)` for several. The router is built once the session exists (`startKeycloak(...).then(start)`), and its first load starts there only when the user is signed in: signed out, a guarded page leaves for sign-in, and leaving while the message files load aborts them (WebKit rejects the imports, so `ready` fails). `startFailed` reports the error and renders `<p role="alert">The app could not start. Reload the page to try again.</p>`, the same name and copy in every add-on, never a blank page. Faro telemetry (`frontend-deploy`) never waits: it starts before the others, its failure is reported, and `start` hands it the session's opaque user id. |
 | `renderRoute` | `renderRoute(path, { session, language })`, each option defaulted (a signed-in fake identity, `"en"`), returns `{ user, router, i18n }`. Existing `renderRoute("/users")` calls keep working. |
 | `env.ts`, `src/vite-env.d.ts`, `src/test/setup.ts` | Each add-on's lines side by side. A request the root layout makes on every page gets its one neutral handler in the setup's `beforeEach` (`frontend-testing`). |
-| `src/routes/__root.tsx` | Each add-on's context key and header control. In the nav (`items-center`), the links come first, then the controls in this order: language select, theme toggle, any other control, sign-in or sign-out button last. Only the first control carries `ms-auto`, whichever add-ons are present; a strip that is not a control (a notification feed) goes after the `nav`, inside the `header`. |
-| `e2e/fixtures.ts`, `playwright.config.ts` | One `test.extend` with every add-on's fixtures and options, one `webServer` array with every add-on's container; each server chosen by its own `E2E_<NAME>_ORIGIN`, never by `CI`. `frontend-testing`'s Playwright reference has both files for sign-in plus realtime. |
+| Order | Every list the add-ons extend names them in one order, whichever arrived first: the API, then auth, then realtime, then Faro. That is `PUBLIC_ENV`, `ImportMetaEnv`, `env`, `.env.development`, the CI placeholders and services, the `Dockerfile` `ARG`s and the end-to-end files. |
+| `src/routes/__root.tsx` | Each add-on's context key and header control. In the nav (`items-center`), the links come first, then the controls in this order: language select, theme toggle, any other control, sign-in or sign-out button last. Only the first control carries `ms-auto`, whichever add-ons are present; a strip that is not a control (a notification feed) goes after the `nav`, inside the `header`. The layout is the root's `shellComponent`: it reads the session from `useRouter().options.context` and must not suspend. With `frontend-i18n`, the text another add-on brings (Sign in, Sign out, the no-access screen, the live status) goes through `t()`, since the lint baseline records only text that was there when i18n arrived. |
+| `e2e/fixtures.ts`, `playwright.config.ts` | `mergeTests` of the template's fixtures and each add-on's own `e2e/<add-on>.ts`; the config imports and lists each add-on's setup, teardown, servers and build env; each server chosen by its own `E2E_<NAME>_ORIGIN`, never by `CI`. `frontend-testing`'s Playwright reference has both files for sign-in plus realtime. |
 | the CI `e2e` job | One job with every add-on's service, on one network with the job; the same reference has it for GitHub and GitLab. |
 
-With all three add-ons and Faro, the three composed files are below (checked with `tsc`, Biome and
-every add-on's tests). With fewer, leave out the missing add-ons' lines. `createAppRouter` keeps the
-template's search parser and focus subscription whatever the add-ons. The toast titles are the
-`i18n.t` calls `frontend-i18n` gives, once `common.json` has `notices.*`; without i18n they stay
-the template's `NOTICES`.
+With all three add-ons and Faro, the four composed files are below: two apps that added the add-ons in opposite orders ended with these files, `tsc`, Biome, every test and the end-to-end suite green in both browsers. With fewer, leave out the missing add-ons' lines; without the session, `main.tsx` builds the router at the top and starts its first load at once (`frontend-i18n`). `createAppRouter` keeps the template's search parser and focus subscription whatever the add-ons. The toast titles are the `i18n.t` calls `frontend-i18n` gives, once `common.json` has `notices.*`; without i18n they stay the template's `NOTICES`. Each add-on raises `ENTRY_BUDGET_BYTES` by the growth `pnpm build` reports when it arrives, over budget or not, so the sum is the same in any order: with all four the entry measured 180,559 B gzip against the template's 149,474.
 
 ```tsx
 // src/main.tsx
@@ -130,7 +130,6 @@ import { createSession, type IdentityProvider } from "@/app/session";
 import { startTelemetry } from "@/app/telemetry";
 import "@/styles.css";
 
-reloadOnStaleChunk();
 const telemetry = env.faroUrl ? startTelemetry(env.faroUrl) : undefined;
 telemetry?.catch(reportError);
 
@@ -139,7 +138,8 @@ const container = document.getElementById("root");
 if (!container) throw new Error("index.html has no #root");
 const root = createRoot(container, rootErrorHandlers);
 
-function render([provider]: [IdentityProvider, unknown]) {
+/** Once the session exists: the router, and its first load beside the message files. */
+function start(provider: IdentityProvider) {
   const session = createSession(provider);
   const userId = session.userId();
   // The opaque subject id only, never a name or an email; a failed start was reported above.
@@ -149,9 +149,18 @@ function render([provider]: [IdentityProvider, unknown]) {
       () => {},
     );
   configureApi({ baseUrl: env.apiOrigin, getToken: session.token, retryToken: session.retryToken });
+  const router = createAppRouter({ session, i18n });
+  reloadOnStaleChunk(router);
+  // Signed in, the first page's requests start now, beside the message files. Signed out, a guarded
+  // page leaves for sign-in, and leaving aborts the message files (WebKit rejects their imports).
+  if (userId) router.load().catch(reportError);
+  return router;
+}
+
+function render(router: ReturnType<typeof createAppRouter>) {
   root.render(
     <StrictMode>
-      <RouterProvider router={createAppRouter({ session, i18n })} />
+      <RouterProvider router={router} />
     </StrictMode>,
   );
 }
@@ -164,10 +173,13 @@ function startFailed(error: unknown) {
   root.render(<p role="alert">The app could not start. Reload the page to try again.</p>);
 }
 
+// The first screen renders in its language, never as keys. `catch` also catches a throw in render.
 Promise.all([
-  startKeycloak({ url: env.authOrigin, realm: "app", clientId: "app-spa" }),
+  startKeycloak({ url: env.authOrigin, realm: "app", clientId: "app-spa" }).then(start),
   ready,
-]).then(render, startFailed);
+])
+  .then(([router]) => render(router))
+  .catch(startFailed);
 ```
 
 ```tsx
@@ -215,11 +227,16 @@ export function createAppRouter({
   const toastManager = Toast.createToastManager();
   const queryClient = createQueryClient((reason, error) =>
     toastManager.add({
+      // One toast per reason: a repeated failure updates it, with its latest request id.
+      id: reason,
       title: reason === "refresh" ? i18n.t("notices.refresh") : i18n.t("notices.mutation"),
       description:
         error instanceof ApiError &&
         error.requestId &&
         i18n.t("notices.requestId", { requestId: error.requestId }),
+      // A failure is announced at once and stays until dismissed: a 5 s polite toast is easy to miss.
+      priority: "high",
+      timeout: 0,
     }),
   );
   // The token goes in connect data, which a Centrifugo connect proxy checks; never in the URL.
@@ -234,8 +251,9 @@ export function createAppRouter({
     parseSearch: parseSearchWith(exactJson),
     stringifySearch: stringifySearchWith(JSON.stringify, exactJson),
     defaultPreload: "intent",
-    // Query owns freshness: the router always runs loaders, and they read the cache.
+    // Query owns freshness: the router always runs loaders and waits for them; they read the cache.
     defaultPreloadStaleTime: 0,
+    defaultStaleReloadMode: "blocking",
     scrollRestoration: true,
     // Each route catches its own error, so the root layout and its navigation stay on screen.
     defaultErrorComponent: RouteError,
@@ -269,6 +287,82 @@ declare module "@tanstack/react-router" {
   interface Register {
     router: ReturnType<typeof createAppRouter>;
   }
+}
+```
+
+```tsx
+// src/routes/__root.tsx
+import type { QueryClient } from "@tanstack/react-query";
+import {
+  createRootRouteWithContext,
+  Link,
+  useLocation,
+  useRouter,
+  useRouterState,
+} from "@tanstack/react-router";
+import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { LANGUAGES } from "@/app/i18n";
+import type { Session } from "@/app/session";
+import { Button } from "@/shared/ui/button";
+import { LanguageSelect } from "@/shared/ui/language-select";
+
+export const Route = createRootRouteWithContext<{ queryClient: QueryClient; session: Session }>()({
+  // The shell stays mounted around the root's content, pending or not. The router renders nothing
+  // until a match is pending or ready: the empty `beforeLoad` makes the root pending on a first load
+  // only, so the layout and the bar show at once while the page loads, and a later navigation keeps
+  // the previous page under the bar. `pendingMinMs` would hold a fast first load back.
+  shellComponent: RootLayout,
+  beforeLoad: () => {},
+  pendingComponent: () => null,
+  pendingMs: 0,
+  pendingMinMs: 0,
+  notFoundComponent: PageNotFound,
+});
+
+function RootLayout({ children }: { children: ReactNode }) {
+  // The shell renders before the root match has its context; the router's own context is set.
+  const { session } = useRouter().options.context;
+  const href = useLocation({ select: (location) => location.href });
+  const { t } = useTranslation();
+  return (
+    <>
+      <NavigationProgress />
+      <header className="border-line border-b">
+        <nav aria-label="Main" className="mx-auto flex max-w-3xl items-center gap-4 p-4">
+          <Link to="/users" activeOptions={{ exact: true }}>
+            Users
+          </Link>
+          <Link to="/users/new">New user</Link>
+          <LanguageSelect languages={LANGUAGES} className="ms-auto" />
+          {session.userId() ? (
+            <Button onClick={() => void session.signOut()}>{t("auth.signOut")}</Button>
+          ) : (
+            <Button onClick={() => void session.signIn(href)}>{t("auth.signIn")}</Button>
+          )}
+        </nav>
+      </header>
+      <main className="mx-auto flex max-w-3xl flex-col gap-4 p-4">{children}</main>
+    </>
+  );
+}
+
+/** While a navigation waits for its loaders; `.navigation-progress` stays invisible for the first 200 ms. */
+function NavigationProgress() {
+  const pending = useRouterState({ select: (state) => state.status === "pending" });
+  return pending ? (
+    <div role="progressbar" aria-label="Loading page" className="navigation-progress" />
+  ) : null;
+}
+
+function PageNotFound() {
+  return (
+    <>
+      <title>Page not found</title>
+      <h1 className="font-semibold text-2xl">Page not found</h1>
+      <Link to="/users">Back to users</Link>
+    </>
+  );
 }
 ```
 
@@ -339,8 +433,8 @@ export function renderRoute(
 | --- | --- | --- |
 | `router.tsx` | `createAppRouter` (with the search parser and the focus move after a navigation), the `Register` declaration | `main.tsx`, `src/test/render-route.tsx` |
 | `query-client.ts` | `createQueryClient(notify)`, Query's `Register` | `router.tsx` |
-| `error-reporting.ts` | `rootErrorHandlers`, `reloadOnStaleChunk` | `main.tsx` |
-| `env.ts` | `env`, the only reader of `import.meta.env` | `main.tsx`; pass values down, since `features/` and `shared/` cannot import it |
+| `error-reporting.ts` | `rootErrorHandlers`, `reloadOnStaleChunk(router)` | `main.tsx` |
+| `env.ts` | `env`, the only reader of `import.meta.env` (`process.env` is a lint error in browser code) | `main.tsx`; pass values down, since `features/` and `shared/` cannot import it |
 | `zod-config.ts` | `z.config({ jitless: true })` | `main.tsx`, first import |
 
 Add-on setup modules (`i18n.ts`, the session, `telemetry.ts`) also live here; their contents belong

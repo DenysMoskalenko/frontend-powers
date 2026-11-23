@@ -45,6 +45,8 @@ The scaffold turns it on for `vite` and `vite build` (`autoCodeSplitting: !proce
 
 A module-level value that both the loader and the component use (a schema, a constant) is moved into a shared module by the plugin; that is fine.
 
+A split chunk that a new deploy removed fails to load in an open tab. A real navigation to that route then reloads the page once onto the new build; a failed hover preload does not reload. That recovery is `frontend-deploy`'s.
+
 ## What defeats it
 
 Measured on the scaffold with `pnpm build` (entry plus its static imports, gzip; budget 160 KB, scaffold about 148 KB):

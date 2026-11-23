@@ -12,17 +12,24 @@ Contents
 
 ## The seam in `src/api/fetcher.ts`
 
-The base URL and the token are private to `src/api/fetcher.ts`. A stream needs the `Response`
-before its body is read, so the fetcher exports three more functions and `apiFetch` becomes a
-caller of the first. Its behaviour is unchanged: the scaffold's `fetcher.test.ts` passes against
-this file. The block is the complete file for the bare scaffold; in a file that already has other
-changes, add the three exports and move the body parsing into `readBody` without replacing it.
+The base URL, the token and the timeout are private to `src/api/fetcher.ts`. A stream needs the
+`Response` before its body is read, so the fetcher exports four more functions and `apiFetch`
+becomes a caller of the first. Its behaviour is unchanged: the scaffold's `fetcher.test.ts` passes
+against this file. The block is the complete file for the bare scaffold; in a file that already has
+other changes, add the exports and move the send and 401 retry into `apiResponse` without replacing
+the rest.
 
 | Export | For |
 | --- | --- |
-| `apiResponse(path, init)` | a 2xx `Response` with the body unread; base URL, bearer token, one retry after a 401, `ApiError` on any other status |
+| `apiResponse(path, init)` | a 2xx `Response` with the body unread; base URL, bearer token, read timeout, one retry after a 401, `ApiError` on any other status |
+| `apiRetryAfter(error)` | the wait in milliseconds an `ApiError`'s `Retry-After` header asked for (seconds or an HTTP date), if any |
 | `apiToken()` | the session's current token, for a transport that sends it itself (Centrifugo connect data, a socket's first frame) |
 | `apiRetryToken(rejected)` | a fresh token after a socket's server rejected `rejected` (close code 4401), as `apiFetch` gets one after a 401 |
+
+The read timeout covers a stream too: a GET that gets no response headers within `timeoutMs`
+rejects with a `TimeoutError`, and the timer stops once the headers arrive, so an open stream is
+never cut. A browser hides `Retry-After` from a cross-origin read unless the API sends
+`Access-Control-Expose-Headers: Retry-After`; without it `apiRetryAfter` returns `undefined`.
 
 ```ts,verify
 // file: src/api/fetcher.ts
@@ -33,17 +40,20 @@ interface ApiConfig {
   getToken: () => Promise<string | undefined>;
   /** After a 401 to `rejected`: a fresh token for one retry, or `undefined` to fail. */
   retryToken: (rejected: string | undefined) => Promise<string | undefined>;
+  /** How long a GET or HEAD waits for response headers before it rejects with a `TimeoutError`. */
+  timeoutMs: number;
 }
 
 const defaults: ApiConfig = {
   baseUrl: "",
   getToken: async () => undefined,
   retryToken: async () => undefined,
+  timeoutMs: 30_000,
 };
 
 let config = defaults;
 
-/** Sets what every API call needs; each call starts again from the defaults. */
+/** Sets what every API call needs, once at startup; a second call replaces the first, unset keys back to the defaults. */
 export function configureApi(options: Partial<ApiConfig>) {
   config = { ...defaults, ...options };
 }
@@ -58,12 +68,66 @@ export function apiRetryToken(rejected: string | undefined) {
   return config.retryToken(rejected);
 }
 
+// A write gets no client timeout: the server may still apply a write the client gave up on.
+const isRead = (method: string | undefined) => /^(GET|HEAD)$/i.test(method ?? "GET");
+
+async function fetchWithin(url: string, init: RequestInit, timeoutMs: number) {
+  const timeout = new AbortController();
+  // Cleared once headers arrive, so a slow body is never cut.
+  const timer = setTimeout(
+    () => timeout.abort(new DOMException("No response in time", "TimeoutError")),
+    timeoutMs,
+  );
+  const signal = init.signal ? AbortSignal.any([init.signal, timeout.signal]) : timeout.signal;
+  try {
+    return await fetch(url, { ...init, signal });
+  } catch (error) {
+    throw timeout.signal.aborted ? timeout.signal.reason : error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** JSON parsed, `text/*` and untyped bodies as text, anything else a `Blob`; an empty body is `undefined`. */
+async function readBody(response: Response): Promise<unknown> {
+  const type = response.headers.get("content-type") ?? "";
+  if (type && !/\bjson\b|^text\//i.test(type)) {
+    const blob = await response.blob();
+    return blob.size > 0 ? blob : undefined;
+  }
+  const text = await response.text();
+  if (!text) return undefined;
+  if (!/\bjson\b/i.test(type)) return text;
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    // A proxy's error page under a JSON content type is still the response's ApiError.
+    if (response.ok) throw error;
+    return text;
+  }
+}
+
+const retryAfter = new WeakMap<ApiError, number>();
+
+/** The wait a refused answer asked for in `Retry-After`, in milliseconds; `undefined` without one. */
+export function apiRetryAfter(error: ApiError) {
+  return retryAfter.get(error);
+}
+
+function parseRetryAfter(value: string | null) {
+  if (!value) return undefined;
+  const ms = /^\d+$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isNaN(ms) ? undefined : Math.max(0, ms);
+}
+
 /** A 2xx response with its body unread, for a stream; anything else throws `ApiError`. */
 export async function apiResponse(path: string, init: RequestInit = {}): Promise<Response> {
   const send = (token: string | undefined) => {
     const headers = new Headers(init.headers);
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    return fetch(config.baseUrl + path, { ...init, headers });
+    const request = { ...init, headers };
+    const url = config.baseUrl + path;
+    return isRead(init.method) ? fetchWithin(url, request, config.timeoutMs) : fetch(url, request);
   };
   const token = await config.getToken();
   let response = await send(token);
@@ -72,24 +136,13 @@ export async function apiResponse(path: string, init: RequestInit = {}): Promise
     if (fresh) response = await send(fresh);
   }
   if (response.ok) return response;
-  throw toApiError(response, await readBody(response));
+  const error = toApiError(response, await readBody(response));
+  const wait = parseRetryAfter(response.headers.get("retry-after"));
+  if (wait !== undefined) retryAfter.set(error, wait);
+  throw error;
 }
 
-async function readBody(response: Response): Promise<unknown> {
-  const text = await response.text();
-  let body: unknown = text;
-  if (text && /\bjson\b/.test(response.headers.get("content-type") ?? "")) {
-    try {
-      body = JSON.parse(text);
-    } catch (error) {
-      // A proxy's error page under a JSON content type is still the response's ApiError.
-      if (response.ok) throw error;
-    }
-  }
-  return body;
-}
-
-/** The orval mutator: the only place that knows the base URL, the token and the error shape. */
+/** The orval mutator: the only place that knows the base URL, the token, the timeout and the error shape. */
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await readBody(await apiResponse(path, init))) as T;
 }
@@ -113,7 +166,7 @@ import {
   type StreamOptions,
 } from "eventsource-parser/stream";
 import { ApiError } from "./api-error";
-import { apiResponse } from "./fetcher";
+import { apiResponse, apiRetryAfter } from "./fetcher";
 
 /** Unbounded by default; one event larger than this errors the stream with a `ParseError`. */
 const MAX_EVENT_CHARS = 1024 * 1024;
@@ -133,17 +186,43 @@ export async function* apiEvents(
   if (!response.body || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
     throw new Error(`${path} did not answer with an event stream`);
   }
-  yield* response.body
+  // A reader loop, not `for await` over the stream: Safari before 27 cannot iterate a ReadableStream.
+  const reader = response.body
     .pipeThrough(new TextDecoderStream())
-    .pipeThrough(new EventSourceParserStream({ maxBufferSize: MAX_EVENT_CHARS, ...parser }));
+    .pipeThrough(new EventSourceParserStream({ maxBufferSize: MAX_EVENT_CHARS, ...parser }))
+    .getReader();
+  let done = false;
+  try {
+    while (!done) {
+      const next = await reader.read();
+      done = next.done;
+      if (!next.done) yield next.value;
+    }
+  } finally {
+    // Stopping early (break, return, abort) cancels the response body.
+    if (!done) await reader.cancel();
+  }
 }
 
 const MIN_RETRY_DELAY = 1_000;
 const MAX_RETRY_DELAY = 30_000;
+/** A `Retry-After` longer than this is cut, so one wrong header cannot stop the feed for the session. */
+const MAX_RETRY_AFTER = 300_000;
 
-/** A dropped connection or a server error may heal; a 4xx, a bad stream or a parse error will not. */
+/**
+ * Failures of the connection or of reading it may heal: a network error, a read timeout, 408, 429,
+ * a 5xx. Any other 4xx, a stream of another content type or a parse error will not.
+ */
 const isTransient = (error: unknown) =>
-  error instanceof TypeError || (error instanceof ApiError && error.status >= 500);
+  error instanceof TypeError ||
+  (error instanceof DOMException && error.name === "TimeoutError") ||
+  (error instanceof ApiError && (error.status >= 500 || [408, 429].includes(error.status)));
+
+/** The wait `Retry-After` asks for before the next attempt; throws an error that will not heal. */
+function waitAfter(error: unknown, silent: boolean) {
+  if (!(silent || isTransient(error))) throw error;
+  return error instanceof ApiError ? Math.min(MAX_RETRY_AFTER, apiRetryAfter(error) ?? 0) : 0;
+}
 
 function sleep(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
@@ -170,10 +249,11 @@ function watchdog(ms: number | undefined) {
 }
 
 /**
- * A resumable GET feed: after a dropped connection or a 5xx it reconnects with `Last-Event-ID` and
- * full-jitter backoff. `idleMs` (twice the heartbeat interval the server promises) also treats a
- * silent connection as dropped. Returns on an `end` event or when `signal` aborts; any other error
- * throws.
+ * A resumable GET feed: after a dropped connection, a read timeout, 408, 429 or a 5xx it reconnects
+ * with `Last-Event-ID`, after any `Retry-After` plus full-jitter backoff. `idleMs` (twice the
+ * heartbeat interval the server promises) also treats a silent connection as dropped. An error
+ * thrown by `onEvent` is reported and the feed goes on with the next event. Returns on an `end`
+ * event or when `signal` aborts; any other error throws.
  */
 export async function followEvents(
   path: string,
@@ -183,6 +263,14 @@ export async function followEvents(
 ) {
   let lastEventId: string | undefined;
   let retry = MIN_RETRY_DELAY;
+  // A bug in the handler is not a dropped connection: reconnecting would replay nothing and hide it.
+  const deliver = (event: EventSourceMessage) => {
+    try {
+      onEvent(event);
+    } catch (error) {
+      reportError(error);
+    }
+  };
   /** One connection: true once the server sent `end`. */
   const connect = async (silence: ReturnType<typeof watchdog>) => {
     const headers = lastEventId === undefined ? {} : { "Last-Event-ID": lastEventId };
@@ -195,31 +283,43 @@ export async function followEvents(
       silence.alive();
       if (event.event === "end") return true;
       lastEventId = event.id ?? lastEventId;
-      onEvent(event);
+      deliver(event);
     }
     return false;
   };
   for (let attempt = 0; !signal.aborted; attempt++) {
     const openedAt = Date.now();
     const silence = watchdog(idleMs);
+    let wait = 0;
     try {
       if (await connect(silence)) return;
     } catch (error) {
       if (signal.aborted) return;
-      if (!(silence.signal.aborted || isTransient(error))) throw error;
+      wait = waitAfter(error, silence.signal.aborted);
     } finally {
       silence.stop();
     }
     // Only a connection that held for a minute starts the backoff again: one that drops after each
     // event would otherwise reconnect at the minimum delay forever.
     if (Date.now() - openedAt >= 60_000) attempt = 0;
-    await sleep(Math.random() * Math.min(MAX_RETRY_DELAY, retry * 2 ** attempt), signal);
+    const backoff = Math.random() * Math.min(MAX_RETRY_DELAY, retry * 2 ** attempt);
+    await sleep(wait + backoff, signal);
   }
 }
 ```
 
 - Every attempt goes through `apiResponse`, so a reconnect sends the session's current token.
-- The server's `retry:` field becomes the base delay through `onRetry`, never below one second: a
+- Only the connection and its reading are retried. An error thrown by `onEvent` is a bug in the
+  app: it goes to `reportError` and the feed goes on with the next event. Each event stands alone
+  and `Last-Event-ID` is already past it, so a reconnect would not replay it; it would only hide
+  the bug behind an endless silent reconnect, and stopping would leave the screen frozen for the
+  session.
+- 408 and 429 come exactly when many tabs reconnect at once, so they are retried like a 5xx; a
+  `Retry-After` on any of them (at most five minutes) comes before the jittered backoff, so the
+  tabs do not all return at the same instant. Any other 4xx ends the feed.
+- The server's `retry:` field becomes the backoff's base through `onRetry`, never below one second.
+  Full jitter draws each wait between zero and the bound, so a single wait may be near zero; the
+  clamp keeps the bound at one second or more, so it still doubles per attempt. Unclamped, a
   `retry: 0` from a proxy or a bug made every open tab reconnect hundreds of times a second.
 - The backoff starts again only after a connection held for 60 s. Resetting it on an event made a
   server that sends one event and drops get reconnects at the minimum delay forever.
@@ -356,9 +456,11 @@ export function NotificationFeed() {
 }
 ```
 
-In the root layout, the feed's request runs in every route test: answer it once in the test
-setup, as `frontend-testing`'s rule for a request every page makes says, and let the feed's own
-test declare its own.
+The root layout is the root route's `shellComponent`, rendered on a first load before the root is
+ready, so nothing in it may suspend: the feed reads with `useQuery`, never `useSuspenseQuery`, and
+takes the QueryClient from `useQueryClient`, never from the route context. There its request runs in
+every route test: answer it once in the test setup, as `frontend-testing`'s rule for a request every
+page makes says, and let the feed's own test declare its own.
 
 Mounted in the root layout, the feed with `followEvents` added 5.0 KB gzip to the entry, measured
 on an app that already had Centrifugo (eventsource-parser and the stream module): raise
@@ -366,7 +468,7 @@ on an app that already had Centrifugo (eventsource-parser and the stream module)
 
 ## Tests
 
-Tests run in jsdom, which has no `EventSource`, and MSW's `sse()` handler needs one: it throws on
+Neither Node nor jsdom has `EventSource`, and MSW's `sse()` handler needs one: it throws on
 creation without it, and it matches only `GET` with `Accept: text/event-stream` exactly. Mock a
 stream with `http.get` or `http.post` returning a `ReadableStream` with the `text/event-stream`
 content type; split chunks mid-event to prove the parser joins them.
@@ -374,7 +476,7 @@ content type; split chunks mid-event to prove the parser joins them.
 ```ts,verify,test
 // file: src/api/event-stream.test.ts
 import { HttpResponse, http } from "msw";
-import { expect, test, vi } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 import { server } from "@/test/server";
 import { ApiError } from "./api-error";
 import { apiEvents, followEvents } from "./event-stream";
@@ -456,7 +558,7 @@ test("a dropped feed reconnects after the backoff and resumes from Last-Event-ID
   expect(sentIds).toEqual([null, "2"]);
 });
 
-test("a server retry of 0 still waits at least a second between connections", async () => {
+test("a server retry of 0 still backs off instead of reconnecting in a loop", async () => {
   vi.useFakeTimers();
   vi.spyOn(Math, "random").mockReturnValue(0.5);
   configureApi({ baseUrl: origin });
@@ -471,6 +573,7 @@ test("a server retry of 0 still waits at least a second between connections", as
   const stop = new AbortController();
   const done = followEvents("/feed", () => {}, stop.signal);
 
+  // Waits of 500 and 1000 ms: the clamped base is one second, halved by the jitter.
   await vi.advanceTimersByTimeAsync(1_000);
   stop.abort();
   await done;
@@ -527,6 +630,115 @@ test("a stream silent for longer than the promised heartbeat reconnects from the
   await done;
 
   expect(sentIds).toEqual([null, "7"]);
+});
+
+test("an error thrown by the handler is reported, and the feed goes on without reconnecting", async () => {
+  const reportError = vi.fn();
+  vi.stubGlobal("reportError", reportError);
+  configureApi({ baseUrl: origin });
+  let connections = 0;
+  server.use(
+    http.get(`${origin}/feed`, () => {
+      connections++;
+      return eventStream("id: 1\ndata: a\n\n", "id: 2\ndata: b\n\n", "event: end\ndata:\n\n");
+    }),
+  );
+  const seen: string[] = [];
+  const bug = new TypeError("Cannot read properties of undefined (reading 'text')");
+
+  await followEvents(
+    "/feed",
+    (event) => {
+      seen.push(event.data);
+      if (event.data === "a") throw bug;
+    },
+    new AbortController().signal,
+  );
+
+  expect(seen).toEqual(["a", "b"]);
+  expect(reportError).toHaveBeenCalledExactlyOnceWith(bug);
+  expect(connections).toBe(1);
+});
+
+test.each([
+  ["seconds", "5", 5_000],
+  ["an HTTP date", "Mon, 23 Nov 2026 12:00:05 GMT", 5_000],
+  ["a wait past the five-minute cap", "86400", 300_000],
+])(
+  "a 429 with Retry-After in %s waits that long before reconnecting",
+  async (_form, header, ms) => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 10, 23, 12, 0, 0) });
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    configureApi({ baseUrl: origin });
+    let connections = 0;
+    server.use(
+      http.get(`${origin}/feed`, () => {
+        connections++;
+        if (connections > 1) return eventStream("event: end\ndata:\n\n");
+        const headers = { "Retry-After": header };
+        return HttpResponse.json({ error: "too many requests" }, { status: 429, headers });
+      }),
+    );
+    const done = followEvents("/feed", () => {}, new AbortController().signal);
+
+    await vi.advanceTimersByTimeAsync(ms - 1);
+    expect(connections).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await done;
+
+    expect(connections).toBe(2);
+  },
+);
+
+test("any other 4xx ends the feed with its ApiError", async () => {
+  configureApi({ baseUrl: origin });
+  server.use(
+    http.get(`${origin}/feed`, () => HttpResponse.json({ error: "forbidden" }, { status: 403 })),
+  );
+
+  const feed = followEvents("/feed", () => {}, new AbortController().signal);
+
+  await expect(feed).rejects.toMatchObject({ status: 403 });
+});
+
+test("the stream is read without async iteration, which Safari before 27 lacks", async () => {
+  const proto = ReadableStream.prototype;
+  const saved = [Symbol.asyncIterator, "values"].map(
+    (key) => [key, Object.getOwnPropertyDescriptor(proto, key)] as const,
+  );
+  for (const [key] of saved) Reflect.deleteProperty(proto, key);
+  onTestFinished(() => {
+    for (const [key, descriptor] of saved)
+      if (descriptor) Object.defineProperty(proto, key, descriptor);
+  });
+  configureApi({ baseUrl: origin });
+  server.use(http.get(`${origin}/feed`, () => eventStream("data: a\n\n", "data: b\n\n")));
+
+  const seen: string[] = [];
+  for await (const event of apiEvents("/feed")) seen.push(event.data);
+
+  expect(seen).toEqual(["a", "b"]);
+});
+
+test("a reader that stops early cancels the response body", async () => {
+  configureApi({ baseUrl: origin });
+  let cancelled = false;
+  server.use(
+    http.get(`${origin}/feed`, () => {
+      const body = new ReadableStream({
+        start: (controller) => controller.enqueue(new TextEncoder().encode("data: a\n\n")),
+        cancel: () => {
+          cancelled = true;
+        },
+      });
+      const headers = { "Content-Type": "text/event-stream", "Transfer-Encoding": "chunked" };
+      return new HttpResponse(body, { headers });
+    }),
+  );
+
+  for await (const _event of apiEvents("/feed")) break;
+
+  await vi.waitFor(() => expect(cancelled).toBe(true));
 });
 ```
 

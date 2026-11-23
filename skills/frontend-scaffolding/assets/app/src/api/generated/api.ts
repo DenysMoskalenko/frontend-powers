@@ -42,7 +42,7 @@ export interface CreateUser {
  * The wire shape of every error response, fallbacks included.
  */
 export interface ErrorBody {
-  /** Field to messages for 422, absent otherwise. */
+  /** Field to errors for 422, and for a 409 that is about one field; absent otherwise. */
   details?: unknown;
   error: string;
   /**

@@ -1,6 +1,6 @@
 ---
 name: tanstack-query-api
-description: "Use when calling the backend: openapi.json, orval.config.ts, pnpm api:generate, generated getXQueryOptions, getXSuspenseQueryOptions, getXQueryKey or getXMutationOptions, apiFetch, configureApi, ApiError, the error toast, createQueryClient, useSuspenseQuery, useMutation, invalidateQueries, optimistic updates, paginated or infinite lists, polling, ensureQueryData deprecated, TS2379 on queryClient.query, decimal and date wire formats, where zod validates. Not for route files and loaders (tanstack-router-spa), form fields (frontend-forms), MSW handlers in tests (frontend-testing), tokens and 401 (keycloak-spa-auth)."
+description: "Use when calling the backend: openapi.json, orval.config.ts, pnpm api:generate, generated getXQueryOptions, getXSuspenseQueryOptions, getXQueryKey or getXMutationOptions, apiFetch, configureApi, ApiError, TimeoutError, createQueryClient, useSuspenseQuery, useMutation, invalidateQueries, optimistic updates, infinite lists, refetchInterval polling, file download or upload progress, ensureQueryData deprecated, TS2379, decimal and date wire formats. Not for route files and loaders (tanstack-router-spa), form fields (frontend-forms), MSW handlers (frontend-testing), tokens and 401 (keycloak-spa-auth)."
 metadata:
   version: "0.1.0"
 ---
@@ -15,78 +15,61 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 
 - Every request goes through the generated client, which calls `apiFetch`. Never `fetch` in a
   component, never edit `src/api/generated/`: copy the backend's document over `openapi.json`, run
-  `pnpm format` and `pnpm api:generate`, commit both; CI fails on drift.
+  `pnpm format` and `pnpm api:generate`, commit both; CI fails on drift. The exceptions are a
+  signed storage URL and upload progress (`references/files.md`).
 - Keys and fetch functions come from the generated getters, never hand-written arrays. Loaders call
-  `queryClient.query({ ...getXQueryOptions(p), staleTime: "static" })`, awaited or not; components call
-  `useSuspenseQuery(getXSuspenseQueryOptions(p))`. Swapping the two is TS2379.
-- `ensureQueryData`, `prefetchQuery` and `fetchQuery` are deprecated; use `queryClient.query`.
+  `loadQuery(context.queryClient, getXQueryOptions(p))` (`tanstack-router-spa`); components call
+  `useSuspenseQuery(getXSuspenseQueryOptions(p))`. Swapping the two is TS2379. `ensureQueryData`,
+  `prefetchQuery` and `fetchQuery` are deprecated.
 - `onSuccess` returns `client.invalidateQueries({ queryKey: getListUsersQueryKey() })`, `client`
-  from its fourth argument. A delete started on the entity's own page first `await`s `navigate`, then
-  `client.removeQueries({ queryKey: getGetUserQueryKey(id), exact: true })`: invalidated while
-  mounted, the detail refetches, gets a 404 and toasts "Could not refresh the data".
+  from its fourth argument. A delete from the entity's own page passes `refetchType: "none"` there
+  and navigates in `mutate`'s own `onSuccess`, after the mutation settled; no mutation callback
+  awaits `navigate`.
 - Errors are `ApiError`, branched on `status`, `code` and `fieldErrors`. Show users `requestId`,
-  never `message`. No second HTTP error class, no generated error types, no zod on own-backend
-  responses.
+  never `message`. A read with no response headers in `timeoutMs` rejects with a `TimeoutError`;
+  a write has no client timeout. No second HTTP error class, no generated error types, no zod on
+  own-backend responses.
 
 ## References
 
-- `references/orval.md` — changing `orval.config.ts` or `openapi.json`: every key, the generated
-  names, `operationId`s, parameters and headers, keys that stay off.
-- `references/client-and-errors.md` — touching `apiFetch`, `ApiError` or `createQueryClient`, or
-  deciding who shows an error: the files quoted, the error mapping, retry and toast policy; wire
-  formats: decimal, date-time, int64, nullable.
-- `references/queries-and-mutations.md` — writing a query or mutation: `select`, polling, dependent
-  and parallel reads, invalidation, a delete and its test, optimistic UI, pagination, infinite lists,
-  older v5 and v4 names.
+- `references/orval.md` — changing `orval.config.ts` or `openapi.json`: the regeneration loop,
+  every key, the generated names, `operationId`s, parameters and headers, a path prefix, keys that
+  stay off.
+- `references/client-and-errors.md` — touching `apiFetch`, `configureApi`, `ApiError` or
+  `createQueryClient`, or deciding who shows an error: the files quoted, the error mapping, the
+  timeout, retry and toast policy; wire formats: decimal, date-time, int64, nullable.
+- `references/queries-and-mutations.md` — writing a query or mutation: `select`, dependent and
+  parallel reads, invalidation, a delete from the detail page and its route test, optimistic UI,
+  pagination, infinite lists, older v5 and v4 names.
+- `references/polling.md` — a screen that refetches on an interval: what stops it, offline and
+  `networkMode`, a failed poll, a shorter timeout, showing how old the data is.
+- `references/files.md` — downloading a protected file, uploading through the generated client or
+  to a signed storage URL, upload progress, a failed upload.
 
 ## Ownership
 
-The loader and route file shape are `tanstack-router-spa`'s, form state and on-screen field errors
-`frontend-forms`'s, MSW handlers and factories `frontend-testing`'s, the token and the 401/403 policy
-`keycloak-spa-auth`'s, pushed cache updates `frontend-realtime`'s.
+The loader, `loadQuery` and the route file shape are `tanstack-router-spa`'s, form state and
+on-screen field errors `frontend-forms`'s, MSW handlers and factories `frontend-testing`'s, the
+token and the 401/403 policy `keycloak-spa-auth`'s, pushed cache updates `frontend-realtime`'s.
 
-## openapi.json and the generated client
+## The client
 
-`openapi.json` is a committed copy of the backend's document, never edited by hand; a wrong endpoint
-is fixed in the backend and copied again. `pnpm format` lays it out as Biome formats every file, so
-diffs stay readable however the backend serialises it. `PUBLIC_API_ORIGIN` stays a bare origin: a
-path prefix the document's paths already include needs nothing, one they leave out (`/api/v1`) goes
-in orval's `output.baseUrl`. `pnpm api:generate` writes `api.ts` (functions,
-getters, key getters, types), `api.zod.ts` (request and response schemas) and `api.msw.ts` (test
-handlers) under `src/api/generated/`.
-
-Names come from the camel-cased `operationId` (`list_users` gives `listUsers`; FastAPI's default ids
-give `listUsersUsersGet`, so ask the backend for stable ids). `shouldSplitQueryKey: true` makes keys
-`['users', params]` and `['users', id]` share a prefix, so one getter invalidates both;
-`includeHttpResponseReturnType: false` types results as the body `apiFetch` returns. Every other key
-is in `references/orval.md`.
-
-## apiFetch and ApiError
-
-`apiFetch(path, init)` is the mutator: base URL, bearer token, one retry after a 401, `ApiError` on
-any non-2xx whatever its body, `""` for an empty 2xx body. `configureApi({ baseUrl, getToken, retryToken })` replaces the whole configuration;
-`main.tsx` sets `baseUrl`, the auth add-on the rest. Call `apiFetch` directly only for an endpoint
-the document lacks; writes go through the generated `getXMutationOptions` once it is documented.
-`urlEncodeParameters: true` in `orval.config.ts` encodes every path parameter of the generated
-client; a hand-written path encodes each dynamic segment with `encodeURIComponent` itself. A bare
-`..` survives encoding, so a path id is still checked against its schema (`tanstack-router-spa`).
-
-`ApiError` carries `status`, `code` (RFC 9457 `type`), `requestId` (body `request_id`, else the
-`x-request-id` header, which a cross-origin backend must expose), `fieldErrors` (field path as
-TanStack Form names it, `items[0].name`, to message; `{}` when none) and `body`. A network failure stays a `TypeError`, an abort an `AbortError`.
+orval names functions after the camel-cased `operationId` (`list_users` gives `listUsers`), and
+`shouldSplitQueryKey: true` makes `['users', params]` and `['users', id]` share a prefix, so one
+getter invalidates both; the rest of the config is in `references/orval.md`. `apiFetch` adds the
+base URL and the bearer token, retries a 401 once, throws `ApiError` on any non-2xx, resolves
+`undefined` for an empty body and a `Blob` for a file. `configureApi` is one call at startup; a
+second call replaces the first. A hand-written path encodes each dynamic segment with
+`encodeURIComponent`.
 
 ## QueryClient defaults
 
-`createQueryClient(notify)` in `src/app/query-client.ts`:
-
-- `staleTime: 30_000`; loaders pass `"static"` so they never wait on a refetch.
-- Queries retry twice, only on network errors and 408, 429, 502, 503, 504. Mutations never retry.
-- A failed first load renders the router's `defaultErrorComponent` (`RouteError`). A failed
-  background refetch calls `notify("refresh", error)`, a failed mutation `notify("mutation", error)`
-  unless it sets `meta: { silent: true }` (forms do); the toast titles live in `NOTICES` in
-  `src/app/router.tsx`.
-- `Register` types `defaultError` as `ApiError | Error` and `mutationMeta` as `{ silent?: boolean }`;
-  `silent` does nothing on a query.
+`createQueryClient(notify)` in `src/app/query-client.ts`: `staleTime: 30_000`; queries retry twice,
+only a network `TypeError` and 408, 429, 502, 503, 504, never a `TimeoutError` (the server already
+had the whole timeout). Mutations never retry and use `networkMode: "always"`: offline, a submit
+fails at once instead of pausing and going out on reconnect. A failed first load is the route's
+`RouteError`, a failed background refetch or mutation an assertive toast that stays until
+dismissed, unless the query or mutation sets `meta: { silent: true }` (forms and polled screens do).
 
 ## Queries
 
@@ -94,17 +77,20 @@ TanStack Form names it, `items[0].name`, to message; `{}` when none) and `body`.
 |---|---|
 | route data, filled by the loader | `useSuspenseQuery(getXSuspenseQueryOptions(p))` |
 | part of an entity | the getter's `query: { select: (user) => user.name }` |
-| keep fresh while visible | `query: { refetchInterval: 30_000 }`; a function may return `false` |
+| keep fresh while visible | `query: { refetchInterval: 30_000, retry: false }` (`references/polling.md`) |
 | a widget no loader owns, or dependent on a pick | `useQuery(getXQueryOptions(id ?? "", { query: { enabled: id !== undefined } }))` |
 | several reads the page shows on arrival (a section under the details included) | in parallel in the loader, one `Promise.all`; one child component per id with `useSuspenseQuery` |
-| data from another read | `await` the first in the loader, then `query` the second |
-| data the page can render without (behind a tab or toggle) | `useQuery(getXQueryOptions(p))` with its own pending and error state; the loader starts it before its first `await`, as `tanstack-router-spa` states |
+| data from another read | `await` the first in the loader, then load the second |
+| data the page can render without (behind a tab or toggle) | `useQuery(getXQueryOptions(p))` with its own pending and error state; the loader starts it before its first `await` (`tanstack-router-spa`) |
 
 Pass options through the getter's `query` argument so `select` infers its types.
 `useSuspenseQueries` over the suspense getters fails with TS2769 for a fixed list and types `data`
-as `unknown` for a mapped one. The unawaited prefetch may swallow its error because the component
-reading the entry shows it; with `useSuspenseQuery` there, a failure becomes the whole route's
-`RouteError`.
+as `unknown` for a mapped one.
+
+A polled query sets `retry: false`, so a failed poll waits for the next tick, and
+`meta: { silent: true }`, because the screen shows the time of `dataUpdatedAt` and says the data is
+old while `isRefetchError || isPaused`. There is no
+offline screen: a lost connection is a `TypeError` the retry rule and the error screens handle.
 
 ## Mutations
 
@@ -120,23 +106,16 @@ const createUser = useMutation(
 createUser.mutate({ data: { name, email } });
 ```
 
-- Callbacks are `(data, variables, onMutateResult, { client, meta, mutationKey })`; the returned
-  invalidation keeps `isPending` true until the refetch lands.
-- `setQueryData(getGetUserQueryKey(user.id), user)` before the list invalidation shows the server's
-  answer at once; the list key also covers that detail, so it is refetched once while on screen. A
-  list off screen is served from the cache when the user returns (`"static"` ignores invalidation),
-  then refetched. Where the old row misleads (a status just changed), call
-  `client.removeQueries({ queryKey: getListUsersQueryKey(), type: "inactive" })` before invalidating,
-  so the list loader waits for fresh data.
+- The returned invalidation keeps `isPending` true until the active queries are refetched. An
+  inactive list is only marked, and its loader's `loadQuery` awaits the fresh list on the next
+  visit, so the list never paints the old rows.
 - `mutateAsync` rejects with the `ApiError`, for a caller that continues and catches; `mutate` never
-  rejects: the error lands in `mutation.error` and, where `createQueryClient` has the `MutationCache`
-  notice, the toast; without one, render `mutation.error`.
+  rejects: the error lands in `mutation.error` and the MutationCache toast.
 
 ## Infinite lists
 
 `infiniteQueryOptions` around `listUsers`, keyed `[...getListUsersQueryKey({ limit }), "infinite"]`.
 orval's `useInfinite` keys it `['infinite', 'users', ...]`, which the list invalidation misses.
-Optimistic UI and pagination are in `references/queries-and-mutations.md`.
 
 ## Wire formats
 
@@ -159,14 +138,17 @@ each object schema's `new Function` probe is a Trusted Types violation.
 
 | Older examples write | Correct now |
 |---|---|
-| `queryClient.ensureQueryData(opts)` in a loader | `queryClient.query({ ...opts, staleTime: "static" })` |
-| `prefetchQuery(opts)` / `fetchQuery(opts)` | `void context.queryClient.query({ ...opts, staleTime: "static" }).catch(() => undefined)` / `await queryClient.query(opts)` |
-| `fetchInfiniteQuery` / `ensureInfiniteQueryData` | `queryClient.infiniteQuery(opts)` / `queryClient.infiniteQuery({ ...opts, staleTime: "static" })` |
+| `queryClient.ensureQueryData(opts)` in a loader | `loadQuery(context.queryClient, opts)` |
+| `queryClient.query({ ...opts, staleTime: "static" })` in a loader | `loadQuery(context.queryClient, opts)`: `"static"` also returns an invalidated entry |
+| `prefetchQuery(opts)` / `fetchQuery(opts)` | `void queryClient.query(opts).catch(() => undefined)` / `await queryClient.query(opts)`; in a loader, `loadQuery` |
+| `fetchInfiniteQuery` / `ensureInfiniteQueryData` | `queryClient.infiniteQuery(opts)` |
+| `queryClient.query()` or `infiniteQuery()` in a project below TanStack Query 5.102 | they do not exist there: keep `fetchQuery` and `fetchInfiniteQuery`, and say which rules do not apply |
 | `onSuccess(data, variables, context)` with `onMutate`'s return as `context` | `(data, variables, onMutateResult, { client, meta, mutationKey })` |
 | `useQueryClient()` only to invalidate in a callback | `context.client` |
 | `isLoading` meaning "no data yet" | `isPending`; `isLoading` is `isPending && isFetching` |
 | hand-written `queryKey: ["users", id]` | `getGetUserQueryKey(id)` |
 | an `axios` instance with interceptors | `apiFetch` with `configureApi` |
+| `apiFetch` resolving `""` for a 204, a file as text | `undefined` for any empty body, a `Blob` for a binary content type |
 | orval `shouldExportQueryKey` | `shouldExportKeys` |
 
 ## Red Flags — STOP
@@ -175,7 +157,11 @@ each object schema's `new Function` probe is a Trusted Types violation.
 |---|---|
 | Check `error.response?.status` or a generated `ErrorBody` | `error instanceof ApiError && error.status` |
 | Add `retry` to a mutation | `retry: false` stays; the user retries |
+| `await navigate(...)` inside a mutation's `onSuccess` | Navigate after the mutation settled: a blocked navigation never resolves and leaves it pending |
 | Pass `{ q: null }` or `{ q: undefined }` as a query param | Omit the key: `null` is sent as the string `"null"` |
 | `parseFloat` a decimal field, or `new Date()` it into the cache | Keep the string, convert at render: a float loses digits, a `Date` is not what the cache holds |
 | Set `useQuery: true` or `mutationInvalidates` in orval | Defaults plus explicit invalidation in `onSuccess`: `mutationInvalidates` does not return the promise |
 | `` `/users/${id}` `` in a hand-written path | `` `/users/${encodeURIComponent(id)}` ``: a raw `../admin` or `?x=y` reaches another endpoint with the token |
+| Retry a `TimeoutError` like a network failure | Leave it unretried: the server already had the whole `timeoutMs`; lower `timeoutMs` instead |
+| Hide a polled screen's refresh toast in the QueryCache handler | `meta: { silent: true }` on the polled query, whose screen says its data is old |
+| Pass a timeout as the getter's `request: { signal }` | Override `queryFn` and combine the query's `signal` with `AbortSignal.any` (`references/polling.md`) |

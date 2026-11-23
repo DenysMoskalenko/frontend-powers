@@ -6,6 +6,7 @@
 - [The guard fixture](#the-guard-fixture)
 - [The scaffold's suite](#the-scaffolds-suite)
 - [Rules](#rules)
+- [Test ids](#test-ids)
 - [An app with add-ons](#an-app-with-add-ons)
 
 ## What belongs in E2E
@@ -28,25 +29,34 @@ A screen with tens of routes still has tens of E2E tests, not hundreds.
 `e2e/fixtures.ts`, as the scaffold ships it. Every spec imports `test` and `expect` from here, never from `@playwright/test`, or the guard does not run:
 
 ```ts
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 
 /** Where the stub API listens; a real backend's origin works the same way. */
 export const API_ORIGIN = "http://127.0.0.1:4010";
+
+interface Options {
+  /** Errors a spec provokes on purpose (the route error screen reports one); others still fail it. */
+  expectedErrors: RegExp[];
+}
 
 /**
  * Every test fails on a console error, an uncaught page error or a CSP / Trusted Types violation.
  * "Failed to load resource" is the browser logging an HTTP error status a test asked for.
  */
-export const test = base.extend<{ guard: undefined }>({
+export const test = base.extend<Options & { guard: undefined }>({
+  expectedErrors: [[], { option: true }],
   guard: [
-    async ({ page }, use) => {
+    async ({ page, expectedErrors }, use) => {
       const problems: string[] = [];
+      const record = (text: string) => {
+        if (!expectedErrors.some((expected) => expected.test(text))) problems.push(text);
+      };
       page.on("console", (message) => {
         if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
-          problems.push(message.text());
+          record(message.text());
         }
       });
-      page.on("pageerror", (error) => problems.push(error.message));
+      page.on("pageerror", (error) => record(error.message));
       await page.addInitScript(() => {
         document.addEventListener("securitypolicyviolation", (event) => {
           console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
@@ -59,19 +69,42 @@ export const test = base.extend<{ guard: undefined }>({
   ],
 });
 
+/** The page never scrolls sideways (a wide table scrolls inside its own container). */
+export async function expectNoSidewaysScroll(page: Page) {
+  const { scrollWidth, clientWidth } = await page.evaluate(() => {
+    const root = document.documentElement;
+    return { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth };
+  });
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+}
+
 export { expect };
 ```
 
 A test that provokes an HTTP error status still passes: the browser's "Failed to load resource" line is filtered. Any other console error, an uncaught exception or a `securitypolicyviolation` fails the test after its body. The CSP itself is `frontend-deploy`'s; when the guard reports a violation, fix the code that caused it, never the filter.
 
+- `expectedErrors` is the one way out: a spec that provokes an error on purpose lists it with `test.use({ expectedErrors: [/e2e: the user is unavailable/] })` at the top of its file. Match the error text the spec itself sends (a unique `error` string in the faked body), never a broad pattern such as `/500/` or `/.*/`, which would also let a CSP violation through.
+- `expectNoSidewaysScroll(page)` runs after every page a spec visits, once its heading is visible: the page never scrolls sideways at any width; a wide table scrolls inside its own container (the rule is `tailwind-base-ui`'s).
+
 ## The scaffold's suite
+
+`playwright.config.ts` runs every spec in two projects:
+
+| Project | Device | For |
+|---|---|---|
+| `chromium` | `devices["Desktop Chrome"]` | the desktop layout in the engine most users run |
+| `phone` | `devices["iPhone 17e"]`: WebKit, 390 × 664, touch | the narrow layout (with `expectNoSidewaysScroll`) and bugs only Safari's engine has |
+
+The `phone` project runs the WebKit that ships with `@playwright/test`, which is newer than the oldest browsers the app supports, so neither project catches an API or CSS feature missing on the floor; that rule is `frontend-code-style`'s, and the floor `frontend-tooling`'s. Locally, install both engines once with `pnpm exec playwright install chromium webkit`; the CI image carries them. `--project=chromium` runs one.
+
+Three specs ship: `smoke.spec.ts` (below), `errors.spec.ts` (the route error screen and "Try again", below), and `stale-chunk.spec.ts` (a deploy under an open tab: a hover over a link whose chunk is gone keeps the page, a click reloads onto the new build; the reload policy is `frontend-deploy`'s).
 
 `e2e/smoke.spec.ts`:
 
 ```ts
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
-import { API_ORIGIN, expect, test } from "./fixtures.ts";
+import { API_ORIGIN, expect, expectNoSidewaysScroll, test } from "./fixtures.ts";
 
 const uniqueEmail = (testId: string, retry: number) => `e2e-${testId}-${retry}@example.com`;
 
@@ -91,15 +124,22 @@ test(
     expect(response?.headers()["content-security-policy"]).toContain("trusted-types 'none'");
 
     await expect(page).toHaveURL("/users");
+    // The page, not the URL: with sign-in the layout shows while the browser leaves for it.
+    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expectNoSidewaysScroll(page);
     await page.getByRole("link", { name: "New user" }).click();
+    await expect(page.getByRole("heading", { name: "New user" })).toBeVisible();
+    await expectNoSidewaysScroll(page);
     await page.getByRole("textbox", { name: "Name" }).fill("Ada Lovelace");
     await page.getByRole("textbox", { name: "Email" }).fill(email);
     await page.getByRole("button", { name: "Create user" }).click();
 
     await expect(page.getByRole("heading", { name: "Ada Lovelace" })).toBeVisible();
     await expect(page.getByText(email)).toBeVisible();
+    await expectNoSidewaysScroll(page);
     await page.getByRole("link", { name: "Users", exact: true }).click();
     await expect(page.getByRole("row", { name: new RegExp(email) })).toBeVisible();
+    await expectNoSidewaysScroll(page);
   },
 );
 
@@ -119,8 +159,27 @@ test("a failed background refresh shows a toast without breaking the CSP", async
   await page.clock.fastForward("01:00");
   await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
 
-  await expect(page.getByText("Could not refresh the data")).toBeVisible();
-  await expect(page.getByText("Request id: e2e-500")).toBeVisible();
+  // A failure toast is assertive: Base UI announces it through a visually hidden alert.
+  await expect(page.getByRole("alert")).toContainText("Could not refresh the data");
+  await expect(page.getByRole("alert")).toContainText("Request id: e2e-500");
+  await expect(page.getByRole("alertdialog", { includeHidden: true })).toBeVisible();
+});
+
+test("a slow first load shows the layout and the progress bar first", async ({ page }) => {
+  const { promise: answered, resolve: answer } = Promise.withResolvers<void>();
+  await page.route(`${API_ORIGIN}/users?*`, async (route) => {
+    await answered;
+    await route.continue();
+  });
+
+  await page.goto("/users");
+
+  await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: "Loading page" })).toHaveCSS("opacity", "1");
+  await expect(page.getByRole("heading", { name: "Users" })).toBeHidden();
+  answer();
+  await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+  await expect(page.getByRole("progressbar")).toBeHidden();
 });
 
 test("the user pages have no detectable accessibility violations in either colour scheme", async ({
@@ -142,19 +201,62 @@ test("the user pages have no detectable accessibility violations in either colou
     for (const [path, heading] of pages) {
       await page.goto(path);
       await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+      await expectNoSidewaysScroll(page);
       await expectNoAxeViolations(page);
     }
   }
 });
 ```
 
+`e2e/errors.spec.ts`, an error screen end to end:
+
+```ts
+import { API_ORIGIN, expect, test } from "./fixtures.ts";
+
+// The router reports the failed load to the error funnel, which the guard would otherwise fail.
+test.use({ expectedErrors: [/e2e: the user is unavailable/] });
+
+test("a page that fails to load shows the error screen, and Try again recovers", async ({
+  page,
+  request,
+}, testInfo) => {
+  const created = await request.post(`${API_ORIGIN}/users`, {
+    data: {
+      name: "Edsger Dijkstra",
+      email: `e2e-${testInfo.testId}-${testInfo.retry}@example.com`,
+    },
+  });
+  const { id } = await created.json();
+  // The stub cannot fail on demand: the first request for this user is answered with a 500 here.
+  let failed = false;
+  await page.route(`${API_ORIGIN}/users/${id}`, async (route) => {
+    if (failed) return route.continue();
+    failed = true;
+    await route.fulfill({
+      status: 500,
+      headers: { "access-control-allow-origin": "*" },
+      json: { error: "e2e: the user is unavailable", request_id: "e2e-500" },
+    });
+  });
+
+  await page.goto(`/users/${id}`);
+
+  await expect(page.getByRole("heading", { name: "This page could not be loaded" })).toBeVisible();
+  await expect(page.getByText("Request id: e2e-500")).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("heading", { name: "Edsger Dijkstra" })).toBeVisible();
+});
+```
+
+The status is 500 because the query client retries a 502, 503 or 504 (`tanstack-query-api`'s rule), which would answer the retry from the stub before the screen shows.
+
 ## Rules
 
-- Locate by role and accessible name (`page.getByRole("textbox", { name: "Email" })`); `exact: true` when another accessible name on the page contains this one.
+- Locate by role and accessible name (`page.getByRole("textbox", { name: "Email" })`); `exact: true` when another accessible name on the page contains this one. `getByTestId` only for an element with no stable accessible name (see [Test ids](#test-ids)).
 - Assert with web-first assertions, which retry: `await expect(locator).toBeVisible()`, `toHaveText`, `toHaveURL`, `toHaveCount(0)`. Never `page.waitForTimeout`, and never `expect(await locator.isVisible()).toBe(true)`, which checks once.
 - Data: the stub keeps its users for the life of the server, across tests, retries and (locally) runs. Create what a test needs with a unique value built from `testInfo.testId` and `testInfo.retry`, through the UI or through the `request` fixture against `API_ORIGIN`, and assert on that item only. Never assume an empty list or a fixed count.
 - `page.route` only for a state the backend cannot produce on demand (a 500, a race, a hang), with a comment saying so. The fulfilled response carries `access-control-allow-origin`, because the API is cross-origin from the app.
-- Never route a failure that a route's error screen shows (a loader's 500): the production build's `rootErrorHandlers` report it, Chromium raises a `pageerror` with the error's message (`internal server error`), and the guard fails the spec by design. Error screens are route tests; a not-found page and a failed background refresh (a toast) pass the guard.
+- A failure that a route's error screen shows (a loader's 500) is reported by the production build's `rootErrorHandlers`, and the browser raises a `pageerror` with the error's message. One spec per error screen proves it renders and recovers in the real build, as `errors.spec.ts` does, with that message in `expectedErrors`; which message each `ApiError` shows stays a route test. A not-found page and a failed background refresh (a toast) pass the guard without the option.
 - `page.clock.install()` before `page.goto`, then `page.clock.fastForward("01:00")` to move the app past a stale time; never wait real time.
 - Accessibility: `AxeBuilder` with the WCAG 2.0, 2.1 and 2.2 A/AA tags, after the page's heading is visible, under `page.emulateMedia({ colorScheme: "light" })` and `"dark"`. `expect(violations).toEqual([])` prints every violation on failure.
 - With `tailwind-base-ui`'s theme add-on (`public/theme.js` copies `localStorage` key `theme` to `<html data-theme>` before first paint), the scan also runs once per explicit choice, under the opposite OS scheme so the choice must win. Init scripts accumulate in order, so the later choice overrides the earlier one on every `goto`:
@@ -175,274 +277,67 @@ for (const choice of ["light", "dark"] as const) {
 - Running: `pnpm test:e2e`; `pnpm exec playwright test --grep @smoke`; `pnpm exec playwright test --last-failed`. The build needs no environment beyond what the config passes.
 - In CI a test that passes only on a retry fails the run (`failOnFlakyTests: isCI`); the retry is kept for its trace. Fix the shared state the trace shows, never raise `retries`. Reporters, browsers and the CI job are `frontend-tooling`'s.
 
+## Test ids
+
+`data-testid` is a house convention for automation outside the repository (a QA team's suite, a monitoring script), which cannot rely on visible text that changes with wording and language:
+
+- On form controls, action buttons, table rows or cards, dialogs and page containers; not on every element.
+- Named `<feature>-<element>` in kebab-case; a row or card adds the entity id. The template's users feature: `users-list-page`, `users-detail-page`, `users-new-page`, `users-create-form`, `users-create-name`, `users-create-email`, `users-create-submit`, `users-row-<id>`.
+- Never derived from visible text, never personal data (an email, a name): the attributes ship in the production build.
+- `src/shared/ui` wrappers forward it to the interactive DOM element (`tailwind-base-ui`'s rule).
+- Another attribute name (`data-qa`) is set once, in `playwright.config.ts` as `use: { testIdAttribute: "data-qa" }` and in `src/test/setup-dom.ts` as `configure({ testIdAttribute: "data-qa" })`, so `getByTestId` reads it in both runners.
+
+Specs and route tests in the repository still query by role and name first, which also checks the accessible name; a test id is their fallback for an element with no stable accessible name, such as a row picked by entity id: ``page.getByTestId(`users-row-${id}`)``.
+
 ## An app with add-ons
 
-`keycloak-spa-auth` and `frontend-realtime` each give `e2e/fixtures.ts`, `playwright.config.ts`
-and the CI `e2e` job for the bare scaffold. Both follow one convention, so their additions combine
-by union:
+An add-on with a server keeps its end-to-end support in one file that exports a `test` built with
+`base.extend`: `e2e/auth.ts` (`keycloak-spa-auth`: the realm import, the Keycloak container, one
+sign-in per worker, `signedIn`) and `e2e/realtime.ts` (`frontend-realtime`: the socket mock,
+Centrifugo started on first use, `mockRealtime`, the teardown). Each reference shows its file, its
+spec and the two shared files with that add-on alone. With both, the shared files only import and
+list, always in the same order (auth, then realtime), so adding the add-ons in either order gives
+the same files:
 
-- One `test.extend` carries every add-on's fixtures and options. An option is a boolean that is
-  `true` by default and that a spec turns off: `test.use({ signedIn: false })`,
-  `test.use({ mockRealtime: false })`. The socket mock overrides `context`, so it exists before the
-  sign-in fixture opens the first page.
-- A server the suite needs has its origin in `e2e/fixtures.ts`, overridable by one variable,
-  `E2E_<NAME>_ORIGIN`. Unset, Playwright starts the server in Docker as a `webServer` entry (bound
-  to `127.0.0.1`, stopped with SIGTERM, ready when its `url` answers); set, a server already runs
-  there and the entry is left out. Never the `CI` flag: `CI=1 pnpm test:e2e` on a workstation runs
-  the containers as usual.
-- One `webServer` array: the containers first, then the stub with every add-on's `env`, then the
-  preview build with every `PUBLIC_*` origin.
-- One CI `e2e` job with every service: on one network with the job (GitHub's job container,
-  GitLab's `FF_NETWORK_PER_BUILD`), reached by name, configured by environment variables, waited
-  for (`--health-cmd` on GitHub, `HEALTHCHECK_TCP_PORT` on GitLab), and named to the run in its
-  `E2E_<NAME>_ORIGIN`.
-
-With both add-ons, `e2e/keycloak-realm.ts`, `e2e/stub-api.ts` and the specs are as the add-ons give
-them; the two files that change are these:
-
-```ts,verify
-// file: e2e/fixtures.ts
-import { test as base, expect } from "@playwright/test";
-
-/** Where the stub API listens; a real backend's origin works the same way. */
-export const API_ORIGIN = "http://127.0.0.1:4010";
-/** Keycloak: a container `playwright.config.ts` starts, unless E2E_AUTH_ORIGIN names one (CI). */
-export const AUTH_ORIGIN = process.env.E2E_AUTH_ORIGIN ?? "http://127.0.0.1:8080";
-/** Centrifugo: a container `playwright.config.ts` starts, unless E2E_REALTIME_ORIGIN names one (CI). */
-export const REALTIME_ORIGIN = process.env.E2E_REALTIME_ORIGIN ?? "http://127.0.0.1:8100";
-/** The password of the users `e2e/keycloak-realm.ts` creates, `e2e-0` to `e2e-<workers - 1>`. */
-export const E2E_PASSWORD = "e2e-password";
-
-/**
- * Every test fails on a console error, an uncaught page error or a CSP / Trusted Types violation.
- * "Failed to load resource" is the browser logging an HTTP error status a test asked for.
- */
-export const test = base.extend<{
-  guard: undefined;
-  mockRealtime: boolean;
-  signedIn: boolean;
-  signIn: undefined;
-}>({
-  guard: [
-    async ({ page }, use) => {
-      const problems: string[] = [];
-      page.on("console", (message) => {
-        if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
-          problems.push(message.text());
-        }
-      });
-      page.on("pageerror", (error) => problems.push(error.message));
-      await page.addInitScript(() => {
-        document.addEventListener("securitypolicyviolation", (event) => {
-          console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
-        });
-      });
-      await use(undefined);
-      expect(problems).toEqual([]);
-    },
-    { auto: true },
-  ],
-  // A spec that needs a push writes `test.use({ mockRealtime: false })` and talks to Centrifugo.
-  mockRealtime: [true, { option: true }],
-  // The socket opens and never answers, so a page that follows a channel stays "Connecting".
-  context: async ({ context, mockRealtime }, use) => {
-    if (mockRealtime) await context.routeWebSocket(/\/connection\/websocket$/, () => {});
-    await use(context);
-  },
-  // A spec that tests the signed-out state writes `test.use({ signedIn: false })`.
-  signedIn: [true, { option: true }],
-  // Tokens live in memory, so every page load runs the code flow again; only this first one shows
-  // Keycloak's form, later ones pass on its SSO cookie.
-  signIn: [
-    async ({ page, signedIn }, use, testInfo) => {
-      if (signedIn) {
-        await page.goto("/users");
-        await page
-          .getByRole("textbox", { name: "Username or email" })
-          .fill(`e2e-${testInfo.parallelIndex}`);
-        await page.getByRole("textbox", { name: "Password" }).fill(E2E_PASSWORD);
-        await page.getByRole("button", { name: "Sign In" }).click();
-        // Signed in once the app shows it: a navigation started earlier races the app's start.
-        await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
-      }
-      await use(undefined);
-    },
-    { auto: true },
-  ],
-});
-
-export { expect };
+```ts
+// e2e/fixtures.ts: the template's `test` is renamed `app`; nothing else changes
+import { test as base, expect, mergeTests, type Page } from "@playwright/test";
+import { test as auth } from "./auth.ts";
+import { test as realtime } from "./realtime.ts";
+// ... `const app = base.extend<Options & { guard: undefined }>({ ... });` as in the template
+export const test = mergeTests(app, auth, realtime);
 ```
 
-```ts,verify
-// file: playwright.config.ts
-import { defineConfig, devices } from "@playwright/test";
-import { API_ORIGIN, AUTH_ORIGIN, REALTIME_ORIGIN } from "./e2e/fixtures.ts";
-
-const isCI = !!process.env.CI;
-const APP_ORIGIN = "http://localhost:4173";
-
-/** Keycloak's settings, test only; both CI files give their service the same. */
-const keycloakEnv = { KC_BOOTSTRAP_ADMIN_USERNAME: "admin", KC_BOOTSTRAP_ADMIN_PASSWORD: "admin" };
-
-/** Centrifugo's settings; both CI files give their service the same, with `build` as the host. */
-const centrifugoEnv = {
-  CENTRIFUGO_HTTP_API_KEY: "e2e-api-key",
-  CENTRIFUGO_HEALTH_ENABLED: "true",
-  CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: APP_ORIGIN,
-  CENTRIFUGO_CLIENT_PROXY_CONNECT_ENABLED: "true",
-  CENTRIFUGO_CLIENT_PROXY_CONNECT_ENDPOINT: `http://host.docker.internal:${new URL(API_ORIGIN).port}/centrifugo/connect`,
-  CENTRIFUGO_CHANNEL_NAMESPACES: JSON.stringify([
-    { name: "users", allow_subscribe_for_client: true },
-  ]),
-};
-
-export default defineConfig({
-  testDir: "e2e",
-  fullyParallel: true,
-  forbidOnly: isCI,
-  retries: isCI ? 2 : 0,
-  // A test that passes only on a retry fails CI; the retry still records its trace.
-  failOnFlakyTests: isCI,
-  reporter: isCI ? [["list"], ["junit", { outputFile: "test-results/junit.xml" }]] : "list",
-  use: { baseURL: APP_ORIGIN, trace: "on-first-retry" },
-  projects: [{ name: "chromium", use: devices["Desktop Chrome"] }],
-  // Creates the realm and its users in whichever Keycloak AUTH_ORIGIN names.
-  globalSetup: "./e2e/keycloak-realm.ts",
+```ts
+// playwright.config.ts: two imports, then below `projects`
+import { authBuildEnv, authServers } from "./e2e/auth.ts";
+import { realtimeBuildEnv } from "./e2e/realtime.ts";
+// ...
+  // Creates the realm and its users in whichever Keycloak `AUTH_ORIGIN` names.
+  globalSetup: "./e2e/auth.ts",
+  // Removes the Centrifugo container a spec started on this machine.
+  globalTeardown: "./e2e/realtime.ts",
   webServer: [
-    // Keycloak in Docker, on this machine only; none where E2E_AUTH_ORIGIN names one (CI).
-    ...(process.env.E2E_AUTH_ORIGIN
-      ? []
-      : [
-          {
-            command: [
-              `docker run --rm --name app-e2e-keycloak -p 127.0.0.1:${new URL(AUTH_ORIGIN).port}:8080`,
-              ...Object.keys(keycloakEnv).map((name) => `-e ${name}`),
-              "quay.io/keycloak/keycloak:26.8.2 start-dev",
-            ].join(" "),
-            env: keycloakEnv,
-            url: `${AUTH_ORIGIN}/realms/master`,
-            // The default SIGKILL ends the docker CLI and leaves the container running.
-            gracefulShutdown: { signal: "SIGTERM" as const, timeout: 10_000 },
-            reuseExistingServer: true,
-            timeout: 180_000,
-          },
-        ]),
-    // Centrifugo in Docker, on this machine only; none where E2E_REALTIME_ORIGIN names one (CI).
-    ...(process.env.E2E_REALTIME_ORIGIN
-      ? []
-      : [
-          {
-            command: [
-              `docker run --rm --name app-e2e-centrifugo -p 127.0.0.1:${new URL(REALTIME_ORIGIN).port}:8000`,
-              "--add-host=host.docker.internal:host-gateway",
-              ...Object.keys(centrifugoEnv).map((name) => `-e ${name}`),
-              "centrifugo/centrifugo:v6.10.3",
-            ].join(" "),
-            env: centrifugoEnv,
-            url: `${REALTIME_ORIGIN}/health`,
-            // The default SIGKILL ends the docker CLI and leaves the container running.
-            gracefulShutdown: { signal: "SIGTERM" as const, timeout: 10_000 },
-            reuseExistingServer: true,
-          },
-        ]),
-    {
-      command: "node e2e/stub-api.ts",
-      url: `${API_ORIGIN}/health/live`,
-      env: {
-        PORT: new URL(API_ORIGIN).port,
-        // Reachable from the Centrifugo container, not only from this machine.
-        HOST: "0.0.0.0",
-        CENTRIFUGO_API_URL: REALTIME_ORIGIN,
-      },
-      reuseExistingServer: !isCI,
-    },
-    {
-      // The production build with the generated security headers, as users get it.
-      command: "pnpm build && pnpm preview",
-      url: APP_ORIGIN,
-      env: {
-        PUBLIC_API_ORIGIN: API_ORIGIN,
-        PUBLIC_AUTH_ORIGIN: AUTH_ORIGIN,
-        PUBLIC_REALTIME_ORIGIN: REALTIME_ORIGIN.replace(/^http/, "ws"),
-      },
-      reuseExistingServer: !isCI,
-      timeout: 120_000,
-    },
+    ...authServers,
+    // the stub, then the preview build, as in the template, with the build's env:
+    // env: { PUBLIC_API_ORIGIN: API_ORIGIN, ...authBuildEnv, ...realtimeBuildEnv },
   ],
-});
 ```
 
-The `e2e` job in `.github/workflows/ci.yml`, both services side by side:
+- Each server is chosen by its own `E2E_<NAME>_ORIGIN`, never by `CI`. Keycloak is a `webServer`
+  entry; Centrifugo has none, because only a spec with `test.use({ mockRealtime: false })` starts
+  it. A second add-on with a global setup or teardown makes the key an array.
+- The fixtures do not meet: the sign-in runs once per worker in its own context, and the socket
+  mock overrides each test's `context`.
+- The template's specs keep passing with sign-in: each `page.goto` of a guarded page goes to
+  Keycloak and back, so a spec waits for something only the signed-in page shows, never the URL,
+  and `e2e/stale-chunk.spec.ts` counts page loads from the moment its link shows.
+- The CI `e2e` job gets both services in the same order, Keycloak first, each as its add-on's
+  reference gives it, and both origins: on GitHub one `services` map and one `env` map
+  (`E2E_AUTH_ORIGIN`, `E2E_REALTIME_ORIGIN`); on GitLab one `services` list and one `variables` map
+  that also keeps Keycloak's `FF_NETWORK_PER_BUILD: "true"`.
+- The preview origin appears once more, in Centrifugo's `CENTRIFUGO_CLIENT_ALLOWED_ORIGINS` in both
+  CI files: another preview port changes it with `APP_ORIGIN` and `preview.port`.
 
-```yaml
-  e2e:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    # Pinned by digest; the tag in the comment equals @playwright/test in package.json. It carries the browsers.
-    container:
-      image: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.65.1-noble
-      # `build`: the name Centrifugo calls the stub's connect proxy by.
-      options: --user 1001 --network-alias build
-    services:
-      keycloak:
-        image: quay.io/keycloak/keycloak@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3 # 26.8.2
-        command: start-dev
-        env:
-          # Test only, like the realm.
-          KC_BOOTSTRAP_ADMIN_USERNAME: admin
-          KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-        options: --health-cmd "exec 3<>/dev/tcp/127.0.0.1/8080" --health-interval 2s --health-retries 90
-      centrifugo:
-        image: centrifugo/centrifugo@sha256:33fdbbce7d195dde316cbde17bc1d2a17b9e345de82799d1ec3c2bb8916e3803 # v6.10.3
-        env:
-          CENTRIFUGO_HTTP_API_KEY: e2e-api-key
-          CENTRIFUGO_HEALTH_ENABLED: "true"
-          CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: http://localhost:4173
-          CENTRIFUGO_CLIENT_PROXY_CONNECT_ENABLED: "true"
-          CENTRIFUGO_CLIENT_PROXY_CONNECT_ENDPOINT: http://build:4010/centrifugo/connect
-          CENTRIFUGO_CHANNEL_NAMESPACES: '[{"name":"users","allow_subscribe_for_client":true}]'
-        options: --health-cmd "wget -qO- http://127.0.0.1:8000/health" --health-interval 2s --health-retries 15
-    env:
-      E2E_AUTH_ORIGIN: http://keycloak:8080
-      E2E_REALTIME_ORIGIN: http://centrifugo:8000
-    steps:
-      # ... as in the scaffold
-```
-
-The `e2e` job in `.gitlab-ci.yml`:
-
-```yaml
-e2e:
-  # ... stage, image, script and artifacts as in the scaffold
-  services:
-    - name: quay.io/keycloak/keycloak@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3 # 26.8.2
-      alias: keycloak
-      command: ["start-dev"]
-      variables:
-        # Test only, like the realm.
-        KC_BOOTSTRAP_ADMIN_USERNAME: admin
-        KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-        HEALTHCHECK_TCP_PORT: "8080"
-    - name: centrifugo/centrifugo@sha256:33fdbbce7d195dde316cbde17bc1d2a17b9e345de82799d1ec3c2bb8916e3803 # v6.10.3
-      alias: centrifugo
-      variables:
-        CENTRIFUGO_HTTP_API_KEY: e2e-api-key
-        CENTRIFUGO_HEALTH_ENABLED: "true"
-        CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: http://localhost:4173
-        CENTRIFUGO_CLIENT_PROXY_CONNECT_ENABLED: "true"
-        CENTRIFUGO_CLIENT_PROXY_CONNECT_ENDPOINT: http://build:4010/centrifugo/connect
-        CENTRIFUGO_CHANNEL_NAMESPACES: '[{"name":"users","allow_subscribe_for_client":true}]'
-        HEALTHCHECK_TCP_PORT: "8000"
-  variables:
-    # The job and its services on one network, each reached by its name.
-    FF_NETWORK_PER_BUILD: "true"
-    E2E_AUTH_ORIGIN: http://keycloak:8080
-    E2E_REALTIME_ORIGIN: http://centrifugo:8000
-```
-
-Each origin and port is written once in these files: the servers' in `e2e/fixtures.ts`, the app's in
-`APP_ORIGIN`. Another preview port also changes `preview.port` in `vite.config.ts`; another preview
-or stub port changes `CENTRIFUGO_CLIENT_ALLOWED_ORIGINS` and the proxy endpoint in both CI files.
-A third add-on with a server follows the same shape: its origin and variable in the fixtures, its
-container entry, its service.
+Run this way with `keycloak-spa-auth`, `frontend-realtime`, `frontend-i18n` and Faro, added in
+both orders: the template's specs and both add-ons' specs passed in `chromium` and `phone`.

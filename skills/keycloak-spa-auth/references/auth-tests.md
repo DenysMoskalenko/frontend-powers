@@ -127,7 +127,8 @@ Beside the protected route `src/routes/_signed-in/account.tsx`.
 
 ```tsx,verify,test
 // file: src/routes/_signed-in/account.test.tsx
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test, vi } from "vitest";
 import { createSession } from "@/app/session";
@@ -148,6 +149,21 @@ function meFor(accepted: string, sent: (string | null)[] = []) {
     }),
   );
   return sent;
+}
+
+/** For the 10 s a page gets to leave for sign-in; `renderRoute`'s own `user` would wait on real timers. */
+function fakeTime() {
+  vi.useFakeTimers();
+  vi.stubGlobal("jest", { advanceTimersByTime: vi.advanceTimersByTime });
+  return userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+}
+
+/** The provider ended the session while the tab slept: the first refresh is refused. */
+function endedSession() {
+  const identity = fakeIdentity("expired");
+  const session = createSession(identity);
+  vi.setSystemTime(Date.now() + 61_000);
+  return { identity, session };
 }
 
 test("a signed-out visitor leaves for the sign-in page, and the page asks the API nothing", async () => {
@@ -199,16 +215,72 @@ test("a refreshed token that is rejected too shows the error page, not another s
   expect(identity.signIns).toEqual([]);
 });
 
-test("a session the provider ended while the tab slept leaves for the sign-in page", async () => {
-  const identity = fakeIdentity("expired");
-  const session = createSession(identity);
-  vi.setSystemTime(Date.now() + 61_000);
-  meFor("token-1");
+test("a session the provider ended while the tab slept leaves for sign-in, sending nothing", async () => {
+  fakeTime();
+  const { identity, session } = endedSession();
+  const sent = meFor("token-1");
 
   renderRoute("/account", { session });
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("This page could not be loaded");
+  // Up to the moment the page gives up on leaving: no request, error screen or toast.
+  await act(() => vi.advanceTimersByTimeAsync(9_999));
   expect(identity.signIns).toHaveLength(1);
+  expect(screen.getByRole("progressbar", { name: "Loading page" })).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(sent).toEqual([]);
+});
+
+test("a loading page that did not leave for sign-in shows its error page, still sending nothing", async () => {
+  fakeTime();
+  const { identity, session } = endedSession();
+  const sent = meFor("token-1");
+
+  renderRoute("/account", { session });
+  await act(() => vi.advanceTimersByTimeAsync(10_000));
+
+  expect(screen.getByRole("alert")).toHaveTextContent("This page could not be loaded");
+  expect(sent).toEqual([]);
+  expect(identity.signIns).toHaveLength(1);
+});
+
+test("a form whose page stayed keeps its input, shows the failure, and the next submit signs in", async () => {
+  const user = fakeTime();
+  const { identity, session } = endedSession();
+  renderRoute("/users/new", { session });
+
+  await user.type(await screen.findByRole("textbox", { name: "Name" }), "Ada");
+  await user.type(screen.getByRole("textbox", { name: "Email" }), "ada@example.com");
+  await user.click(screen.getByRole("button", { name: "Create user" }));
+  await act(() => vi.advanceTimersByTimeAsync(9_999));
+  expect(identity.signIns).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Creating…" })).toBeInTheDocument();
+
+  // The leave guard asked "Leave site?" and the user stayed.
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByRole("alert")).toHaveTextContent("The user was not created. Try again.");
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Ada");
+
+  await user.click(screen.getByRole("button", { name: "Create user" }));
+  expect(identity.signIns).toHaveLength(2);
+  await act(() => vi.advanceTimersByTimeAsync(10_000));
+});
+
+test("a background refresh whose page stayed keeps the data and shows the refresh toast", async () => {
+  fakeTime();
+  const identity = fakeIdentity();
+  meFor("token-1");
+  renderRoute("/account", { session: createSession(identity) });
+  await screen.findByRole("heading", { name: "Ada Lovelace" });
+  // The provider ends the session, as SSO Session Max does.
+  identity.token = async () => undefined;
+
+  vi.setSystemTime(Date.now() + 61_000);
+  window.dispatchEvent(new Event("visibilitychange"));
+  await act(() => vi.advanceTimersByTimeAsync(10_000));
+
+  expect(identity.signIns).toHaveLength(1);
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not refresh the data");
+  expect(screen.getByRole("heading", { name: "Ada Lovelace" })).toBeInTheDocument();
 });
 
 test("a session refused right after signing in shows the error page instead of looping", async () => {
@@ -249,14 +321,20 @@ test("Sign out ends the provider's session", async () => {
 - The signed-out test needs no handler: the setup's unhandled-request check fails it if the guard
   let the loader run.
 - Each test was checked against a broken session: dropping the 60 s grace fails the
-  "right after signing in" test, dropping the `preload` check makes the preload test hang.
+  "right after signing in" test, dropping the `preload` check makes the preload test hang, and a
+  sign-in promise that never settles fails the three tests of a page that stayed.
+- The fake `signIn` never leaves the page, which is what a leave guard's "Stay" does to the real
+  one; the tests of a page that stayed advance fake timers past the 10 s (`frontend-testing`'s
+  rules for fake timers with Testing Library).
 
 ## Session unit tests
 
-The tab broadcast and the refresh rate limit have no screen of their own.
+The tab broadcast, the refresh rate limit, the departure and `activity()` have no screen of their
+own. Each broadcast test stubs its own `BASE_URL`, so it opens a channel that no session from
+another test listens on.
 
 ```ts,verify,test
-// file: src/app/session.test.ts
+// file: src/app/session.dom.test.ts
 import { expect, test, vi } from "vitest";
 import { fakeIdentity } from "@/test/identity";
 import { createSession } from "./session";
@@ -264,52 +342,57 @@ import { createSession } from "./session";
 /** Long enough for a `BroadcastChannel` message to arrive. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 
-test("signed-in tabs leave for sign-in only once the logout has come back", async () => {
+/** What a request waiting on `promise` has seen so far. */
+function seen(promise: Promise<unknown>) {
+  const outcome: { settled: boolean; error?: unknown } = { settled: false };
+  promise.then(
+    () => {
+      outcome.settled = true;
+    },
+    (error: unknown) => {
+      outcome.settled = true;
+      outcome.error = error;
+    },
+  );
+  return outcome;
+}
+
+test("signed-in tabs reload once the logout has come back, a signed-out tab stays", async () => {
+  vi.stubEnv("BASE_URL", "/tabs/");
+  const reload = vi.fn();
+  vi.stubGlobal("location", { reload });
   const tabA = fakeIdentity();
-  const tabB = fakeIdentity();
-  const publicTab = fakeIdentity("signed-out");
   const sessionA = createSession(tabA);
-  createSession(tabB);
-  createSession(publicTab);
+  createSession(fakeIdentity());
+  createSession(fakeIdentity("signed-out"));
 
   void sessionA.signOut();
   await settle();
   expect(tabA.signedOut).toBe(true);
-  expect(tabB.signIns).toEqual([]);
+  expect(reload).not.toHaveBeenCalled();
 
   // Tab A's next page load, which the provider's logout sends back.
   createSession(fakeIdentity("just-signed-out"));
 
-  await expect.poll(() => tabB.signIns).toEqual(["/"]);
+  // Tab A (which a browser has left by now) and tab B; never the signed-out tab.
+  await expect.poll(() => reload.mock.calls.length).toBe(2);
   await settle();
-  expect(publicTab.signIns).toEqual([]);
-});
-
-test("under a Vite base, the path saved for the next sign-in is the router's", async () => {
-  vi.stubEnv("BASE_URL", "/admin/");
-  history.replaceState(null, "", "/admin/orders/7?tab=items");
-  const tab = fakeIdentity();
-  createSession(tab);
-
-  createSession(fakeIdentity("just-signed-out"));
-
-  await expect.poll(() => tab.signIns).toEqual(["/orders/7?tab=items"]);
-  history.replaceState(null, "", "/");
+  expect(reload).toHaveBeenCalledTimes(2);
 });
 
 test("two apps under one origin, at different bases, do not sign each other out", async () => {
+  const reload = vi.fn();
+  vi.stubGlobal("location", { reload });
   vi.stubEnv("BASE_URL", "/admin/");
-  const admin = fakeIdentity();
-  createSession(admin);
+  createSession(fakeIdentity());
   vi.stubEnv("BASE_URL", "/shop/");
-  const shop = fakeIdentity();
-  createSession(shop);
+  createSession(fakeIdentity());
 
   createSession(fakeIdentity("just-signed-out"));
 
-  await expect.poll(() => shop.signIns).toHaveLength(1);
+  await expect.poll(() => reload.mock.calls.length).toBe(1);
   await settle();
-  expect(admin.signIns).toEqual([]);
+  expect(reload).toHaveBeenCalledOnce();
 });
 
 test("a page the back-forward cache restores reloads instead of showing its signed-in state", () => {
@@ -322,6 +405,98 @@ test("a page the back-forward cache restores reloads instead of showing its sign
 
   window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
   expect(reload).toHaveBeenCalled();
+});
+
+test("a refresh refused after a 401 leaves once; requests wait, fail if the page stays, then leave again", async () => {
+  vi.useFakeTimers();
+  const identity = fakeIdentity();
+  // The held token is still valid, and the provider refuses the forced refresh.
+  identity.token = async (minValidity) => (minValidity === -1 ? undefined : "token-1");
+  const session = createSession(identity);
+  vi.setSystemTime(Date.now() + 61_000);
+
+  const retry = seen(session.retryToken("token-1"));
+  await vi.advanceTimersByTimeAsync(0);
+  const next = seen(session.token());
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(identity.signIns).toHaveLength(1);
+  expect([retry.settled, next.settled]).toEqual([false, false]);
+
+  await vi.advanceTimersByTimeAsync(1);
+  expect(retry.error).toMatchObject({ name: "AbortError" });
+  expect(next.error).toMatchObject({ name: "AbortError" });
+
+  const after = seen(session.token());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(identity.signIns).toHaveLength(2);
+  expect(after.settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(10_000);
+});
+
+test("a refusal right after sign-in sends without a token for the grace only, then signs in", async () => {
+  vi.useFakeTimers();
+  const identity = fakeIdentity("expired");
+  const session = createSession(identity);
+
+  expect(await session.token()).toBeUndefined();
+  expect(identity.signIns).toEqual([]);
+
+  vi.setSystemTime(Date.now() + 61_000);
+  const later = seen(session.token());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(identity.signIns).toHaveLength(1);
+  expect(later.settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(10_000);
+});
+
+test("typing that finds the session refused leaves once; after that, typing starts nothing", async () => {
+  vi.useFakeTimers();
+  const identity = fakeIdentity("expired");
+  const session = createSession(identity);
+  vi.setSystemTime(Date.now() + 61_000);
+
+  session.activity();
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(identity.signIns).toHaveLength(1);
+
+  await vi.advanceTimersByTimeAsync(60_000);
+  session.activity();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(identity.signIns).toHaveLength(1);
+});
+
+test("a tab that stays after the sign-out broadcast signs in before its next request", async () => {
+  vi.useFakeTimers();
+  vi.stubEnv("BASE_URL", "/stays/");
+  const reload = vi.fn();
+  vi.stubGlobal("location", { reload, pathname: "/stays/users", search: "", hash: "" });
+  const identity = fakeIdentity();
+  const session = createSession(identity);
+  createSession(fakeIdentity("just-signed-out"));
+  // The reload did not leave: a leave guard's "Stay".
+  await expect.poll(() => reload.mock.calls.length).toBe(1);
+
+  vi.setSystemTime(Date.now() + 61_000);
+  const next = seen(session.token());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(identity.signIns).toEqual(["/users"]);
+  expect(next.settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(10_000);
+});
+
+test("under a Vite base, the path saved for the next sign-in is the router's", async () => {
+  vi.useFakeTimers();
+  vi.stubEnv("BASE_URL", "/back-office/");
+  history.replaceState(null, "", "/back-office/orders/7?tab=items");
+  const identity = fakeIdentity("expired");
+  const session = createSession(identity);
+  vi.setSystemTime(Date.now() + 61_000);
+
+  seen(session.token());
+  await vi.advanceTimersByTimeAsync(10_000);
+
+  expect(identity.signIns).toEqual(["/orders/7?tab=items"]);
+  history.replaceState(null, "", "/");
 });
 
 test("concurrent 401s share one forced refresh", async () => {
@@ -342,11 +517,37 @@ test("a refreshed token the API rejects too is not refreshed again within a minu
   expect(await session.retryToken("token-1")).toBe("token-2");
   expect(await session.retryToken("token-2")).toBeUndefined();
 });
+
+test("typing asks for a fresh token at most once a minute, and never without input", () => {
+  vi.useFakeTimers();
+  const identity = fakeIdentity();
+  const token = vi.spyOn(identity, "token");
+  const session = createSession(identity);
+
+  vi.advanceTimersByTime(10 * 60_000);
+  expect(token).not.toHaveBeenCalled();
+
+  session.activity();
+  session.activity();
+  vi.advanceTimersByTime(59_000);
+  session.activity();
+  expect(token).toHaveBeenCalledExactlyOnceWith(30);
+
+  vi.advanceTimersByTime(1_000);
+  session.activity();
+  expect(token).toHaveBeenCalledTimes(2);
+});
 ```
 
-- Each test was checked against the bug it guards: posting `"signed-out"` from `signOut()` fails
-  the first; dropping the `base` slice in `currentPath` fails the second; a channel named
-  `"session"` for every base fails the third; removing the `pageshow` listener fails the fourth.
+- Each test was checked against the bug it guards: posting `"signed-out"` from `signOut()` or
+  reloading every tab fails the first; a channel named `"session"` for every base fails the second;
+  removing the `pageshow` listener fails the third; a sign-in promise that never settles fails the
+  fourth; a refusal inside the grace that stops every later sign-in fails the fifth; typing that
+  leaves again once the session is lost fails the sixth, and without its `.catch` Vitest reports an
+  unhandled rejection; a broadcast that does not mark the session lost fails the seventh; dropping
+  the `base` slice in `currentPath` fails the eighth.
+- A test that starts the departure uses fake timers and advances past the 10 s, so no rejection
+  outlives it.
 - The reload test asserts `toHaveBeenCalled()`, not once: every session an earlier test created in
   the file also listens for `pageshow`.
 
@@ -358,7 +559,7 @@ replayed by writing Keycloak's callback fragment into the URL before a second `s
 Tokens are unsigned JWTs: keycloak-js only decodes them.
 
 ```ts,verify,test
-// file: src/app/keycloak.test.ts
+// file: src/app/keycloak.dom.test.ts
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test, vi } from "vitest";
 import { server } from "@/test/server";
@@ -373,10 +574,10 @@ const base64url = (value: object) =>
 const jwt = (claims: object) => `${base64url({ alg: "none" })}.${base64url(claims)}.`;
 
 /** A token response whose access token is named `name` (its `jti`) and lives five minutes. */
-function grant(name: string, nonce?: string | null) {
+function grant(name: string, nonce?: string | null, subject: object = { sub: "user-1" }) {
   const iat = Math.floor(Date.now() / 1000);
   return HttpResponse.json({
-    access_token: jwt({ sub: "user-1", iat, exp: iat + 300, jti: name }),
+    access_token: jwt({ ...subject, iat, exp: iat + 300, jti: name }),
     refresh_token: jwt({ iat, exp: iat + 1800 }),
     id_token: jwt({ sub: "user-1", iat, exp: iat + 300, nonce }),
     token_type: "Bearer",
@@ -588,6 +789,15 @@ test("a callback carrying an error rejects instead of signing in again", async (
 
   await expect(startKeycloak(settings)).rejects.toMatchObject({ error: "access_denied" });
 });
+
+test("an access token without sub rejects instead of starting signed out", async () => {
+  const login = await leaveForSignIn("/");
+  history.replaceState(null, "", `/#state=${login.searchParams.get("state")}&code=code-1`);
+  tokenEndpoint(() => grant("a1", login.searchParams.get("nonce"), {}));
+
+  // Started signed out, the guard would send the user to Keycloak and back without end.
+  await expect(startKeycloak(settings)).rejects.toThrow("no sub claim");
+});
 ```
 
 - `vi.setSystemTime` without fake timers moves only `Date`, which is all `isTokenExpired` reads;
@@ -601,88 +811,95 @@ Playwright runs the production build behind the generated CSP against a real Key
 through Keycloak's own form, as users do. Once the guarded pages need a session, the scaffold's
 smoke specs fail without these files (`toHaveURL("/users")` receives `chrome-error://chromewebdata/`:
 nothing answers at `PUBLIC_AUTH_ORIGIN`). The guard fixture and the specs themselves are
-`frontend-testing`'s; its Playwright reference also shows these files merged with
-`frontend-realtime`'s, for an app with both add-ons.
+`frontend-testing`'s, and so is the form of `e2e/fixtures.ts` and `playwright.config.ts` for an
+app with several add-ons.
 
-| File | What the add-on adds to the template's |
+| File | What the add-on adds |
 |---|---|
-| `e2e/fixtures.ts` | `AUTH_ORIGIN` and `E2E_PASSWORD`; the `signedIn` option (`test.use({ signedIn: false })` opts a spec out) and the `signIn` auto fixture that fills Keycloak's form as `e2e-<parallelIndex>` |
-| `e2e/keycloak-realm.ts` | new: `globalSetup` waits for Keycloak, then replaces the test realm `app` (the production client settings in a test-only realm, one user per worker) |
-| `playwright.config.ts` | `keycloakEnv`, the Keycloak container as the first `webServer` entry unless `E2E_AUTH_ORIGIN` is set, `PUBLIC_AUTH_ORIGIN` for the build, the `globalSetup` |
-| `e2e/sign-out.spec.ts` | new: sign-out by form POST in two tabs, and the CSP's `form-action` |
-| both CI files | Keycloak as a service of the `e2e` job, named in `E2E_AUTH_ORIGIN` |
+| `e2e/auth.ts` | new, everything the add-on needs: `AUTH_ORIGIN`, the realm import (`globalSetup`), the Keycloak container (`authServers`), the build's `PUBLIC_AUTH_ORIGIN` (`authBuildEnv`), `signInWithForm`, and a `test` whose worker signs in once and whose tests start with that SSO cookie; `test.use({ signedIn: false })` opts a spec out |
+| `e2e/fixtures.ts` | `mergeTests` of the template's fixtures and `e2e/auth.ts`'s |
+| `playwright.config.ts` | imports and lists: `globalSetup`, `...authServers`, `...authBuildEnv` |
+| `e2e/sign-out.spec.ts` | new: sign-out by form POST in three tabs, and the CSP's `form-action` |
+| `e2e/stale-chunk.spec.ts`, `e2e/smoke.spec.ts` | unchanged: the template's specs already count page loads from the moment the page shows and wait for a heading, not the URL, since with sign-in a page load is two (the app, then the app back from Keycloak) |
+| the CI file the app has | Keycloak as a service of the `e2e` job, named in `E2E_AUTH_ORIGIN` |
 
 ```ts,verify
-// file: e2e/fixtures.ts
-import { test as base, expect } from "@playwright/test";
+// file: e2e/auth.ts
+import {
+  type BrowserContext,
+  test as base,
+  expect,
+  type FullConfig,
+  type Page,
+} from "@playwright/test";
 
-/** Where the stub API listens; a real backend's origin works the same way. */
-export const API_ORIGIN = "http://127.0.0.1:4010";
-/** Keycloak: a container `playwright.config.ts` starts, unless E2E_AUTH_ORIGIN names one (CI). */
+/** Keycloak: the container `authServers` starts, unless E2E_AUTH_ORIGIN names one (CI). */
 export const AUTH_ORIGIN = process.env.E2E_AUTH_ORIGIN ?? "http://127.0.0.1:8080";
-/** The password of the users `e2e/keycloak-realm.ts` creates, `e2e-0` to `e2e-<workers - 1>`. */
-export const E2E_PASSWORD = "e2e-password";
+/** The password of the users the realm import creates, `e2e-0` to `e2e-<workers - 1>`. */
+const E2E_PASSWORD = "e2e-password";
+/** A page under `src/routes/_signed-in/`: its guard leads to Keycloak's form. */
+const GUARDED_PATH = "/users";
+/** Keycloak's settings, test only; the CI service gets the same. */
+const keycloakEnv = { KC_BOOTSTRAP_ADMIN_USERNAME: "admin", KC_BOOTSTRAP_ADMIN_PASSWORD: "admin" };
+
+/** The one place that knows Keycloak's form: its labels come from the login theme. */
+export async function signInWithForm(page: Page, worker: number) {
+  await page.goto(GUARDED_PATH);
+  await page.getByRole("textbox", { name: "Username or email" }).fill(`e2e-${worker}`);
+  await page.getByRole("textbox", { name: "Password" }).fill(E2E_PASSWORD);
+  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+  // Signed in once the app shows it: a navigation started earlier races the app's start.
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+}
 
 /**
- * Every test fails on a console error, an uncaught page error or a CSP / Trusted Types violation.
- * "Failed to load resource" is the browser logging an HTTP error status a test asked for.
+ * Each worker signs in once; its tests start with that Keycloak SSO cookie, so a guarded page runs
+ * the code flow without the form. A spec that tests the signed-out state writes
+ * `test.use({ signedIn: false })`.
  */
-export const test = base.extend<{ guard: undefined; signedIn: boolean; signIn: undefined }>({
-  guard: [
-    async ({ page }, use) => {
-      const problems: string[] = [];
-      page.on("console", (message) => {
-        if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
-          problems.push(message.text());
-        }
-      });
-      page.on("pageerror", (error) => problems.push(error.message));
-      await page.addInitScript(() => {
-        document.addEventListener("securitypolicyviolation", (event) => {
-          console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
-        });
-      });
-      await use(undefined);
-      expect(problems).toEqual([]);
-    },
-    { auto: true },
-  ],
-  // A spec that tests the signed-out state writes `test.use({ signedIn: false })`.
+export const test = base.extend<
+  { signedIn: boolean },
+  { keycloakSession: Awaited<ReturnType<BrowserContext["storageState"]>> }
+>({
   signedIn: [true, { option: true }],
-  // Tokens live in memory, so every page load runs the code flow again; only this first one shows
-  // Keycloak's form, later ones pass on its SSO cookie.
-  signIn: [
-    async ({ page, signedIn }, use, testInfo) => {
-      if (signedIn) {
-        await page.goto("/users");
-        await page
-          .getByRole("textbox", { name: "Username or email" })
-          .fill(`e2e-${testInfo.parallelIndex}`);
-        await page.getByRole("textbox", { name: "Password" }).fill(E2E_PASSWORD);
-        await page.getByRole("button", { name: "Sign In" }).click();
-        // Signed in once the app shows it: a navigation started earlier races the app's start.
-        await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
-      }
-      await use(undefined);
+  keycloakSession: [
+    async ({ browser }, use, workerInfo) => {
+      const { baseURL } = workerInfo.project.use;
+      const context = await browser.newContext(baseURL ? { baseURL } : {});
+      await signInWithForm(await context.newPage(), workerInfo.parallelIndex);
+      // Tokens live in memory: the state holds only Keycloak's cookies.
+      const state = await context.storageState();
+      await context.close();
+      await use(state);
     },
-    { auto: true },
+    { scope: "worker" },
   ],
+  storageState: async ({ signedIn, keycloakSession, storageState }, use) => {
+    await use(signedIn ? keycloakSession : storageState);
+  },
 });
 
-export { expect };
-```
+/** The build's origin for keycloak-js, beside the template's `PUBLIC_API_ORIGIN`. */
+export const authBuildEnv = { PUBLIC_AUTH_ORIGIN: AUTH_ORIGIN };
 
-- Tokens live in memory, so a saved `storageState` holds only Keycloak's SSO cookie: every
-  `page.goto` reloads the app and runs the code flow again, without the form.
-- The fixture waits for the Sign out button, not the URL: the URL is `/users` before the app has
-  started, and in Firefox and WebKit the spec's next `page.goto` then fails with `NS_BINDING_ABORTED`
-  or `is interrupted by another navigation`.
-- One user per worker: sessions of parallel tests never share a refresh-token chain.
-
-```ts,verify
-// file: e2e/keycloak-realm.ts
-import type { FullConfig } from "@playwright/test";
-import { AUTH_ORIGIN, E2E_PASSWORD } from "./fixtures.ts";
+/** Keycloak in Docker, on this machine only; none where E2E_AUTH_ORIGIN names one (CI). */
+export const authServers = process.env.E2E_AUTH_ORIGIN
+  ? []
+  : [
+      {
+        command: [
+          `docker run --rm --name app-e2e-keycloak -p 127.0.0.1:${new URL(AUTH_ORIGIN).port}:8080`,
+          ...Object.keys(keycloakEnv).map((name) => `-e ${name}`),
+          "quay.io/keycloak/keycloak:26.8.2 start-dev",
+        ].join(" "),
+        env: keycloakEnv,
+        url: `${AUTH_ORIGIN}/realms/master`,
+        // The default SIGKILL ends the docker CLI and leaves the container running.
+        gracefulShutdown: { signal: "SIGTERM" as const, timeout: 10_000 },
+        reuseExistingServer: true,
+        timeout: 180_000,
+      },
+    ];
 
 // Test only: the production client's settings (session-module reference) in a realm that serves
 // plain HTTP, with one user per worker and a known password.
@@ -721,7 +938,7 @@ async function adminToken() {
   for (let attempt = 0; attempt < 90; attempt++) {
     const response = await fetch(`${AUTH_ORIGIN}/realms/master/protocol/openid-connect/token`, {
       method: "POST",
-      // The test container's bootstrap admin (`keycloakEnv` in playwright.config.ts, the CI service).
+      // The test container's bootstrap admin (`keycloakEnv`, the CI service).
       body: new URLSearchParams({
         grant_type: "password",
         client_id: "admin-cli",
@@ -752,20 +969,90 @@ export default async function importRealm(config: FullConfig) {
 }
 ```
 
-The import uses the master realm's `admin-cli` with the container's bootstrap admin. The app's own
-client never gets direct access grants: a password grant skips the code flow and PKCE the test is
-there to prove, and OAuth 2.1 removes it.
+- One sign-in per worker, through the form; every test then passes on the SSO cookie, so only
+  `signInWithForm` depends on the login theme's labels. Tokens live in memory, so each `page.goto`
+  still runs the code flow, without the form.
+- Every `page.goto` of a guarded page leaves for Keycloak and comes back, and the layout with its
+  links shows in between. Wait for something only the signed-in page shows (its heading, the Sign
+  out button), never the URL, which is the guarded page before the round trip: a click in between
+  is lost, and WebKit reports `Load failed` or `is interrupted by another navigation`.
+- One user per worker: sessions of parallel workers never share a refresh-token chain. A spec that
+  signs out ends its session, so it opts out and signs in on its own, or the worker's later tests
+  would meet the form.
+- The realm import uses the master realm's `admin-cli` with the container's bootstrap admin. The
+  app's own client never gets direct access grants: a password grant skips the code flow and PKCE
+  the test is there to prove, and OAuth 2.1 removes it.
+
+The template's `e2e/fixtures.ts` with the add-on: its `test` is renamed `app` and merged.
+
+```ts,verify
+// file: e2e/fixtures.ts
+import { test as base, expect, mergeTests, type Page } from "@playwright/test";
+import { test as auth } from "./auth.ts";
+
+/** Where the stub API listens; a real backend's origin works the same way. */
+export const API_ORIGIN = "http://127.0.0.1:4010";
+
+interface Options {
+  /** Errors a spec provokes on purpose (the route error screen reports one); others still fail it. */
+  expectedErrors: RegExp[];
+}
+
+/**
+ * Every test fails on a console error, an uncaught page error or a CSP / Trusted Types violation.
+ * "Failed to load resource" is the browser logging an HTTP error status a test asked for.
+ */
+const app = base.extend<Options & { guard: undefined }>({
+  expectedErrors: [[], { option: true }],
+  guard: [
+    async ({ page, expectedErrors }, use) => {
+      const problems: string[] = [];
+      const record = (text: string) => {
+        if (!expectedErrors.some((expected) => expected.test(text))) problems.push(text);
+      };
+      page.on("console", (message) => {
+        if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
+          record(message.text());
+        }
+      });
+      page.on("pageerror", (error) => record(error.message));
+      await page.addInitScript(() => {
+        document.addEventListener("securitypolicyviolation", (event) => {
+          console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
+        });
+      });
+      await use(undefined);
+      expect(problems).toEqual([]);
+    },
+    { auto: true },
+  ],
+});
+
+export const test = mergeTests(app, auth);
+
+/** The page never scrolls sideways (a wide table scrolls inside its own container). */
+export async function expectNoSidewaysScroll(page: Page) {
+  const { scrollWidth, clientWidth } = await page.evaluate(() => {
+    const root = document.documentElement;
+    return { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth };
+  });
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+}
+
+export { expect };
+```
+
+The template's `playwright.config.ts` with the add-on: one import, `globalSetup`, the container
+first in `webServer`, and the auth origin in the build's environment.
 
 ```ts,verify
 // file: playwright.config.ts
 import { defineConfig, devices } from "@playwright/test";
-import { API_ORIGIN, AUTH_ORIGIN } from "./e2e/fixtures.ts";
+import { authBuildEnv, authServers } from "./e2e/auth.ts";
+import { API_ORIGIN } from "./e2e/fixtures.ts";
 
 const isCI = !!process.env.CI;
 const APP_ORIGIN = "http://localhost:4173";
-
-/** Keycloak's settings, test only; both CI files give their service the same. */
-const keycloakEnv = { KC_BOOTSTRAP_ADMIN_USERNAME: "admin", KC_BOOTSTRAP_ADMIN_PASSWORD: "admin" };
 
 export default defineConfig({
   testDir: "e2e",
@@ -776,28 +1063,15 @@ export default defineConfig({
   failOnFlakyTests: isCI,
   reporter: isCI ? [["list"], ["junit", { outputFile: "test-results/junit.xml" }]] : "list",
   use: { baseURL: APP_ORIGIN, trace: "on-first-retry" },
-  projects: [{ name: "chromium", use: devices["Desktop Chrome"] }],
-  // Creates the realm and its users in whichever Keycloak AUTH_ORIGIN names.
-  globalSetup: "./e2e/keycloak-realm.ts",
+  projects: [
+    { name: "chromium", use: devices["Desktop Chrome"] },
+    // Safari's engine on a phone-sized touch screen: the narrow layout and WebKit-only bugs.
+    { name: "phone", use: devices["iPhone 17e"] },
+  ],
+  // Creates the realm and its users in whichever Keycloak `AUTH_ORIGIN` names.
+  globalSetup: "./e2e/auth.ts",
   webServer: [
-    // Keycloak in Docker, on this machine only; none where E2E_AUTH_ORIGIN names one (CI).
-    ...(process.env.E2E_AUTH_ORIGIN
-      ? []
-      : [
-          {
-            command: [
-              `docker run --rm --name app-e2e-keycloak -p 127.0.0.1:${new URL(AUTH_ORIGIN).port}:8080`,
-              ...Object.keys(keycloakEnv).map((name) => `-e ${name}`),
-              "quay.io/keycloak/keycloak:26.8.2 start-dev",
-            ].join(" "),
-            env: keycloakEnv,
-            url: `${AUTH_ORIGIN}/realms/master`,
-            // The default SIGKILL ends the docker CLI and leaves the container running.
-            gracefulShutdown: { signal: "SIGTERM" as const, timeout: 10_000 },
-            reuseExistingServer: true,
-            timeout: 180_000,
-          },
-        ]),
+    ...authServers,
     {
       command: "node e2e/stub-api.ts",
       url: `${API_ORIGIN}/health/live`,
@@ -808,7 +1082,7 @@ export default defineConfig({
       // The production build with the generated security headers, as users get it.
       command: "pnpm build && pnpm preview",
       url: APP_ORIGIN,
-      env: { PUBLIC_API_ORIGIN: API_ORIGIN, PUBLIC_AUTH_ORIGIN: AUTH_ORIGIN },
+      env: { PUBLIC_API_ORIGIN: API_ORIGIN, ...authBuildEnv },
       reuseExistingServer: !isCI,
       timeout: 120_000,
     },
@@ -820,24 +1094,40 @@ export default defineConfig({
   run never keys on `CI`, so `CI=1 pnpm test:e2e` on a workstation starts the container as usual.
 - The container publishes its port on `127.0.0.1` only: its admin is `admin`/`admin`.
 - Pin the Keycloak image by exact version (`26.8.2`), like every other image; CI pins it by digest.
-- Each origin and port is written once: `AUTH_ORIGIN` in `e2e/fixtures.ts` (the container's `-p`
+- Each origin and port is written once: `AUTH_ORIGIN` in `e2e/auth.ts` (the container's `-p`
   follows it), the app's in `APP_ORIGIN` (the realm's redirect URI follows it). Another preview
   port also changes `preview.port` in `vite.config.ts`.
 
 ```ts,verify
 // file: e2e/sign-out.spec.ts
-import { AUTH_ORIGIN, expect, test } from "./fixtures.ts";
+import { AUTH_ORIGIN, signInWithForm } from "./auth.ts";
+import { expect, test } from "./fixtures.ts";
+
+// Signing out ends the session; the worker's shared one must outlive this spec.
+test.use({ signedIn: false });
+
+const signInPage = new RegExp(`^${AUTH_ORIGIN}/realms/app/protocol/openid-connect/auth\\?`);
 
 test("signing out ends the session in every tab, with no token in any URL", async ({
   page,
   context,
   baseURL,
-}) => {
+}, testInfo) => {
   const urls: string[] = [];
   context.on("request", (request) => urls.push(request.url()));
-  const otherTab = await context.newPage();
-  await otherTab.goto("/users");
-  await expect(otherTab.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await signInWithForm(page, testInfo.parallelIndex);
+  const guardedTab = await context.newPage();
+  await guardedTab.goto("/users");
+  await expect(guardedTab.getByRole("button", { name: "Sign out" })).toBeVisible();
+  const publicTab = await context.newPage();
+  await publicTab.goto("/users");
+  await expect(publicTab.getByRole("button", { name: "Sign out" })).toBeVisible();
+  // A signed-in tab on a public page: only a client-side navigation keeps the session.
+  await publicTab.evaluate(() => {
+    history.pushState(history.state, "", "/no-such-page");
+    dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+  });
+  await expect(publicTab.getByRole("heading", { name: "Page not found" })).toBeVisible();
   const pages: string[] = [];
   page.on("framenavigated", (frame) => {
     if (frame === page.mainFrame()) pages.push(frame.url());
@@ -849,16 +1139,18 @@ test("signing out ends the session in every tab, with no token in any URL", asyn
   expect((await logout).method()).toBe("POST");
   expect((await logout).postData()).toContain("id_token_hint=");
   // Keycloak sent the browser straight back to the app's root, with no confirmation page; the
-  // guard of /users then sent the signed-out visitor to Keycloak's form.
-  await expect(page.getByRole("button", { name: "Sign In" })).toBeVisible();
+  // guard of /users then sent the signed-out visitor to sign in again.
+  await expect(page).toHaveURL(signInPage);
   expect(pages[0]).toBe(`${baseURL}/`);
   expect(
     pages.filter((url) =>
       url.startsWith(`${AUTH_ORIGIN}/realms/app/protocol/openid-connect/logout`),
     ),
   ).toEqual([]);
-  // The broadcast sent the other tab to Keycloak's form too: its session is gone.
-  await expect(otherTab.getByRole("button", { name: "Sign In" })).toBeVisible();
+  // The broadcast reloads the other tabs: the guarded one leaves, the public one stays signed out.
+  await expect(guardedTab).toHaveURL(signInPage);
+  await expect(publicTab.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  expect(publicTab.url()).toBe(`${baseURL}/no-such-page`);
   expect(urls.filter((url) => url.includes("id_token_hint"))).toEqual([]);
 });
 
@@ -871,7 +1163,7 @@ test("the CSP lets a form post to Keycloak and nowhere else", async ({ page }) =
 });
 ```
 
-Without the auth origin in `form-action` the sign-out spec fails in all three engines, with
+Without the auth origin in `form-action` the sign-out spec fails in every engine, with
 Chromium's `Sending form data to '<auth origin>/realms/app/protocol/openid-connect/logout' violates
 the following Content Security Policy directive: "form-action 'self'"`, Firefox's
 `Content-Security-Policy: The page’s settings blocked the loading of a resource (form-action)` and
@@ -879,8 +1171,8 @@ WebKit's `Refused to load … because it does not appear in the form-action dire
 
 The `e2e` jobs run inside the Playwright image, which has no Docker, so Keycloak is a service of the
 job: on one network with the job, reached by its name, its settings as environment variables, and
-the job waits for it (GitHub by its `--health-cmd`, GitLab by `HEALTHCHECK_TCP_PORT`). In
-`.github/workflows/ci.yml`:
+the job waits for it (GitHub by its `--health-cmd`, GitLab by `HEALTHCHECK_TCP_PORT`). Add it to
+the CI file the app has. GitHub, `.github/workflows/ci.yml`:
 
 ```yaml
   e2e:
@@ -898,7 +1190,7 @@ the job waits for it (GitHub by its `--health-cmd`, GitLab by `HEALTHCHECK_TCP_P
       E2E_AUTH_ORIGIN: http://keycloak:8080
 ```
 
-In `.gitlab-ci.yml`:
+GitLab, `.gitlab-ci.yml`:
 
 ```yaml
 e2e:

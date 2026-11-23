@@ -2,13 +2,14 @@
 
 ## Contents
 
-- Edit form: default values from query data, error mapping, leave guard
+- Edit form: default values from query data, server errors, leave guard
 - Edit route and its route test
 - A form schema that is not the request body: extra field, cross-field rule, transform
 - An optional body key
 - Custom schema messages
 - One-field form: `FormData` and a mutation
-- Validation timing: what the user sees, pinned by a test
+- A form in steps: opening the step that holds the error
+- Validation timing: what the user sees, pinned by tests
 
 The scaffold's `src/features/users/create-user-form.tsx` and `src/routes/users/new.test.tsx` are the
 create-form pair; the examples here use the same names and shapes. The scaffold's `openapi.json` has
@@ -25,17 +26,14 @@ edits.
 
 ```tsx,verify
 // file: src/features/users/edit-user-form.tsx
-import { useForm } from "@tanstack/react-form";
+import { revalidateLogic } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
-import { useRef } from "react";
 import type * as z from "zod";
-import { ApiError } from "@/api/api-error";
 import { apiFetch } from "@/api/fetcher";
 import { type CreateUser, getListUsersQueryKey, type UserResponse } from "@/api/generated/api";
 import { CreateUserBody } from "@/api/generated/api.zod";
-import { Button } from "@/shared/ui/button";
-import { TextField } from "@/shared/ui/text-field";
+import { useAppForm } from "@/shared/hooks/use-app-form";
 
 // Stand-in until the spec has `PATCH /users/{id}`; then use `getUpdateUserMutationOptions`.
 const updateUser = (id: string, data: CreateUser) =>
@@ -44,26 +42,6 @@ const updateUser = (id: string, data: CreateUser) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-
-/** `fieldInfo`: the form's rendered fields, keyed by name (`email`, `items[0].name`). */
-function submitErrors(error: unknown, fieldInfo: object) {
-  if (error instanceof ApiError && error.status === 409) {
-    return { form: "Another user already has this email.", fields: {} };
-  }
-  if (error instanceof ApiError && Object.keys(error.fieldErrors).length > 0) {
-    const fields = error.fieldErrors;
-    // setErrorMap drops errors for fields the form does not render.
-    return Object.keys(fields).every((name) => name in fieldInfo)
-      ? { fields }
-      : { form: "The changes were not saved. Check the form and try again.", fields };
-  }
-  const requestId =
-    error instanceof ApiError && error.requestId ? ` Request id: ${error.requestId}` : "";
-  return { form: `The changes were not saved. Try again.${requestId}`, fields: {} };
-}
-
-const firstError = (errors: readonly (string | { message: string } | undefined)[]) =>
-  errors.map((error) => (typeof error === "string" ? error : error?.message)).find(Boolean);
 
 export function EditUserForm({
   user,
@@ -78,28 +56,16 @@ export function EditUserForm({
     onSuccess: (_user, _data, _onMutateResult, { client }) =>
       client.invalidateQueries({ queryKey: getListUsersQueryKey() }),
   });
-  const formRef = useRef<HTMLFormElement>(null);
-  // After a failed submit, focus the first invalid field once it renders, so its error is read out.
-  const focusFirstError = () =>
-    requestAnimationFrame(() =>
-      formRef.current?.querySelector<HTMLElement>("[aria-invalid='true']")?.focus(),
-    );
   const defaultValues: z.input<typeof CreateUserBody> = { name: user.name, email: user.email };
-  const form = useForm({
+  const form = useAppForm({
     defaultValues,
-    validators: { onSubmit: CreateUserBody },
+    validationLogic: revalidateLogic(),
+    validators: { onDynamic: CreateUserBody },
     onSubmit: async ({ value, formApi }) => {
-      try {
-        await saveUser.mutateAsync(value);
-      } catch (error) {
-        formApi.setErrorMap({ onSubmit: submitErrors(error, formApi.fieldInfo) });
-        focusFirstError();
-        return;
-      }
+      await saveUser.mutateAsync(value);
       formApi.reset();
       await onSaved();
     },
-    onSubmitInvalid: focusFirstError,
   });
   useBlocker({
     shouldBlockFn: () => !form.state.isDefaultValue && !window.confirm("Discard your changes?"),
@@ -107,57 +73,24 @@ export function EditUserForm({
   });
 
   return (
-    <form
-      ref={formRef}
-      noValidate
-      className="flex max-w-md flex-col gap-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void form.handleSubmit();
-      }}
-    >
-      <form.Subscribe selector={(state) => state.errorMap.onSubmit}>
-        {(error) =>
-          typeof error === "string" ? (
-            <p role="alert" className="text-danger">
-              {error}
-            </p>
-          ) : null
-        }
-      </form.Subscribe>
-      <form.Field name="name">
-        {(field) => (
-          <TextField
-            label="Name"
-            name={field.name}
-            value={field.state.value}
-            error={firstError(field.state.meta.errors)}
-            onValueChange={field.handleChange}
-            onBlur={field.handleBlur}
-          />
-        )}
-      </form.Field>
-      <form.Field name="email">
-        {(field) => (
-          <TextField
-            label="Email"
-            type="email"
-            name={field.name}
-            value={field.state.value}
-            error={firstError(field.state.meta.errors)}
-            onValueChange={field.handleChange}
-            onBlur={field.handleBlur}
-          />
-        )}
-      </form.Field>
-      <form.Subscribe selector={(state) => state.isSubmitting}>
-        {(submitting) => (
-          <Button type="submit" variant="primary" disabled={submitting}>
-            {submitting ? "Saving…" : "Save"}
-          </Button>
-        )}
-      </form.Subscribe>
-    </form>
+    <form.AppForm>
+      <form.Form
+        failed="The changes were not saved."
+        className="max-w-md"
+        data-testid="users-edit-form"
+      >
+        <form.FormError />
+        <form.AppField name="name">
+          {(field) => <field.TextField label="Name" data-testid="users-edit-name" />}
+        </form.AppField>
+        <form.AppField name="email">
+          {(field) => <field.TextField label="Email" type="email" data-testid="users-edit-email" />}
+        </form.AppField>
+        <form.SubmitButton pending="Saving…" data-testid="users-edit-submit">
+          Save
+        </form.SubmitButton>
+      </form.Form>
+    </form.AppForm>
   );
 }
 ```
@@ -177,8 +110,8 @@ What happens to the values when the user query refetches (invalidation, window f
 ## Edit route and its test
 
 The edit page lives in `users/$userId_/`: the trailing underscore keeps the URL `/users/<id>/edit` and
-keeps the page out of `users/$userId.tsx`, which renders no `<Outlet />`. Its loader treats the id as
-the detail loader does: malformed or unknown is `notFound()`.
+keeps the page out of `users/$userId.tsx`, which renders no `<Outlet />`. Its loader is the detail
+loader's (`tanstack-router-spa`).
 
 ```tsx,verify
 // file: src/routes/users/$userId_/edit.tsx
@@ -188,15 +121,13 @@ import { ApiError } from "@/api/api-error";
 import { getGetUserQueryOptions, getGetUserSuspenseQueryOptions } from "@/api/generated/api";
 import { GetUserParams } from "@/api/generated/api.zod";
 import { EditUserForm } from "@/features/users/edit-user-form";
+import { loadQuery } from "@/shared/lib/load-query";
 
 export const Route = createFileRoute("/users/$userId_/edit")({
   loader: async ({ context, params }) => {
     if (!GetUserParams.safeParse({ id: params.userId }).success) throw notFound();
     try {
-      await context.queryClient.query({
-        ...getGetUserQueryOptions(params.userId),
-        staleTime: "static",
-      });
+      await loadQuery(context.queryClient, getGetUserQueryOptions(params.userId));
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) throw notFound();
       throw error;
@@ -212,7 +143,7 @@ function EditUserPage() {
   const { data: user } = useSuspenseQuery(getGetUserSuspenseQueryOptions(userId));
 
   return (
-    <>
+    <div data-testid="users-edit-page" className="flex flex-col gap-4">
       <title>Edit user</title>
       <h1 className="font-semibold text-2xl">Edit user</h1>
       <EditUserForm
@@ -220,7 +151,7 @@ function EditUserPage() {
         user={user}
         onSaved={() => navigate({ to: "/users/$userId", params: { userId } })}
       />
-    </>
+    </div>
   );
 }
 
@@ -252,13 +183,13 @@ import { buildUser } from "@/test/factories/user";
 import { renderRoute, TEST_API_ORIGIN } from "@/test/render-route";
 import { server } from "@/test/server";
 
-const id = "0193a1b2-0000-7000-8000-000000000002";
+const ada = buildUser({ name: "Ada", email: "ada@example.com" });
 
 const patchAnswer = (status: number, body: object) =>
   http.patch(`${TEST_API_ORIGIN}/users/:id`, () => HttpResponse.json(body, { status }));
 
 test("saving an edited user sends the form and opens the saved user", async () => {
-  let stored: UserResponse = buildUser({ id, name: "Ada", email: "ada@example.com" });
+  let stored: UserResponse = ada;
   const patched: unknown[] = [];
   server.use(
     getGetUserMockHandler(() => stored),
@@ -269,7 +200,7 @@ test("saving an edited user sends the form and opens the saved user", async () =
       return HttpResponse.json(stored);
     }),
   );
-  const { user } = renderRoute(`/users/${id}/edit`);
+  const { user } = renderRoute(`/users/${ada.id}/edit`);
 
   const name = await screen.findByRole("textbox", { name: "Name" });
   expect(name).toHaveValue("Ada");
@@ -289,45 +220,46 @@ test("a malformed id shows the not-found page without a request", async () => {
 
 test("a FastAPI 422 shows its message under the field it names", async () => {
   server.use(
-    getGetUserMockHandler(buildUser({ id, name: "Ada", email: "ada@example.com" })),
+    getGetUserMockHandler(ada),
     patchAnswer(422, {
       detail: [{ loc: ["body", "email"], msg: "domain is not accepted", type: "value_error" }],
     }),
   );
-  const { user } = renderRoute(`/users/${id}/edit`);
+  const { user } = renderRoute(`/users/${ada.id}/edit`);
 
   await user.type(await screen.findByRole("textbox", { name: "Name" }), " Lovelace");
   await user.click(screen.getByRole("button", { name: "Save" }));
 
-  expect(await screen.findByRole("textbox", { name: "Email" })).toHaveAccessibleDescription(
-    "domain is not accepted",
-  );
-  await waitFor(() => expect(screen.getByRole("textbox", { name: "Email" })).toHaveFocus());
+  const email = screen.getByRole("textbox", { name: "Email" });
+  await waitFor(() => expect(email).toHaveAccessibleDescription("domain is not accepted"));
+  await waitFor(() => expect(email).toHaveFocus());
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 test("a field error for a field the form does not render becomes a form error", async () => {
   server.use(
-    getGetUserMockHandler(buildUser({ id, name: "Ada", email: "ada@example.com" })),
+    getGetUserMockHandler(ada),
     patchAnswer(422, {
       error: "validation failed",
       details: { role: [{ code: "required", message: null, params: {} }] },
     }),
   );
-  const { user } = renderRoute(`/users/${id}/edit`);
+  const { user } = renderRoute(`/users/${ada.id}/edit`);
 
   await user.type(await screen.findByRole("textbox", { name: "Name" }), " Lovelace");
   await user.click(screen.getByRole("button", { name: "Save" }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("Check the form and try again.");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The changes were not saved. The server gave a reason this form cannot show.",
+  );
 });
 
 test("an unexpected failure names the request id", async () => {
   server.use(
-    getGetUserMockHandler(buildUser({ id, name: "Ada", email: "ada@example.com" })),
+    getGetUserMockHandler(ada),
     patchAnswer(500, { error: "internal server error", request_id: "req-7" }),
   );
-  const { user } = renderRoute(`/users/${id}/edit`);
+  const { user } = renderRoute(`/users/${ada.id}/edit`);
 
   await user.type(await screen.findByRole("textbox", { name: "Name" }), " Lovelace");
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -348,19 +280,16 @@ not part of the pattern: a form gets only the extra fields its own request asks 
 
 ```tsx,verify
 // file: src/features/users/repeat-email-user-form.tsx
-import { useForm } from "@tanstack/react-form";
+import { revalidateLogic } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
-import { useRef } from "react";
 import * as z from "zod";
-import { ApiError } from "@/api/api-error";
 import {
   getCreateUserMutationOptions,
   getListUsersQueryKey,
   type UserResponse,
 } from "@/api/generated/api";
 import { CreateUserBody, createUserBodyNameMax } from "@/api/generated/api.zod";
-import { Button } from "@/shared/ui/button";
-import { TextField } from "@/shared/ui/text-field";
+import { useAppForm } from "@/shared/hooks/use-app-form";
 
 const RepeatEmailUserInput = CreateUserBody.extend({
   // trim() before min(): a trim after min(1) lets "   " pass and sends "".
@@ -373,25 +302,7 @@ const RepeatEmailUserInput = CreateUserBody.extend({
   })
   .transform((form) => ({ name: form.name, email: form.email }));
 
-/** `fieldInfo`: the form's rendered fields, keyed by name (`email`, `items[0].name`). */
-function submitErrors(error: unknown, fieldInfo: object) {
-  if (error instanceof ApiError && error.status === 409) {
-    return { form: "A user with this email already exists.", fields: {} };
-  }
-  if (error instanceof ApiError && Object.keys(error.fieldErrors).length > 0) {
-    const fields = error.fieldErrors;
-    // setErrorMap drops errors for fields the form does not render.
-    return Object.keys(fields).every((name) => name in fieldInfo)
-      ? { fields }
-      : { form: "The user has an error this form cannot show.", fields };
-  }
-  const requestId =
-    error instanceof ApiError && error.requestId ? ` Request id: ${error.requestId}` : "";
-  return { form: `The user was not created. Try again.${requestId}`, fields: {} };
-}
-
-const firstError = (errors: readonly (string | { message: string } | undefined)[]) =>
-  errors.map((error) => (typeof error === "string" ? error : error?.message)).find(Boolean);
+const emptyInput: z.input<typeof RepeatEmailUserInput> = { name: "", email: "", confirmEmail: "" };
 
 export function RepeatEmailUserForm({
   onCreated,
@@ -407,87 +318,32 @@ export function RepeatEmailUserForm({
       },
     }),
   );
-  const formRef = useRef<HTMLFormElement>(null);
-  // After a failed submit, focus the first invalid field once it renders, so its error is read out.
-  const focusFirstError = () =>
-    requestAnimationFrame(() =>
-      formRef.current?.querySelector<HTMLElement>("[aria-invalid='true']")?.focus(),
-    );
-  const form = useForm({
-    defaultValues: { name: "", email: "", confirmEmail: "" },
-    validators: { onSubmit: RepeatEmailUserInput },
+  const form = useAppForm({
+    defaultValues: emptyInput,
+    validationLogic: revalidateLogic(),
+    validators: { onDynamic: RepeatEmailUserInput },
     onSubmit: async ({ value, formApi }) => {
-      let user: UserResponse;
-      try {
-        // `value` is the raw input; parse again for the transformed request body.
-        user = await createUser.mutateAsync({ data: RepeatEmailUserInput.parse(value) });
-      } catch (error) {
-        formApi.setErrorMap({ onSubmit: submitErrors(error, formApi.fieldInfo) });
-        focusFirstError();
-        return;
-      }
+      // `value` is the raw input; parse again for the transformed request body.
+      const user = await createUser.mutateAsync({ data: RepeatEmailUserInput.parse(value) });
       formApi.reset();
       await onCreated(user);
     },
-    onSubmitInvalid: focusFirstError,
   });
 
   return (
-    <form
-      ref={formRef}
-      noValidate
-      className="flex max-w-md flex-col gap-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void form.handleSubmit();
-      }}
-    >
-      <form.Subscribe selector={(state) => state.errorMap.onSubmit}>
-        {(error) => (typeof error === "string" ? <p role="alert">{error}</p> : null)}
-      </form.Subscribe>
-      <form.Field name="name">
-        {(field) => (
-          <TextField
-            label="Name"
-            value={field.state.value}
-            error={firstError(field.state.meta.errors)}
-            onValueChange={field.handleChange}
-            onBlur={field.handleBlur}
-          />
-        )}
-      </form.Field>
-      <form.Field name="email">
-        {(field) => (
-          <TextField
-            label="Email"
-            type="email"
-            value={field.state.value}
-            error={firstError(field.state.meta.errors)}
-            onValueChange={field.handleChange}
-            onBlur={field.handleBlur}
-          />
-        )}
-      </form.Field>
-      <form.Field name="confirmEmail">
-        {(field) => (
-          <TextField
-            label="Repeat email"
-            type="email"
-            value={field.state.value}
-            error={firstError(field.state.meta.errors)}
-            onValueChange={field.handleChange}
-            onBlur={field.handleBlur}
-          />
-        )}
-      </form.Field>
-      <form.Subscribe selector={(state) => state.isSubmitting}>
-        {(submitting) => (
-          <Button type="submit" variant="primary" disabled={submitting}>
-            Create user
-          </Button>
-        )}
-      </form.Subscribe>
-    </form>
+    <form.AppForm>
+      <form.Form failed="The user was not created." className="max-w-md">
+        <form.FormError />
+        <form.AppField name="name">{(field) => <field.TextField label="Name" />}</form.AppField>
+        <form.AppField name="email">
+          {(field) => <field.TextField label="Email" type="email" />}
+        </form.AppField>
+        <form.AppField name="confirmEmail">
+          {(field) => <field.TextField label="Repeat email" type="email" />}
+        </form.AppField>
+        <form.SubmitButton pending="Creating…">Create user</form.SubmitButton>
+      </form.Form>
+    </form.AppForm>
   );
 }
 ```
@@ -529,7 +385,9 @@ export const toOrderBody = ({
 Schema messages are zod's defaults; the copy is the product's. Its one seam is a `customError` in
 `src/app/zod-config.ts`, `z.config({ jitless: true, customError })`: it wins over a zod locale, gets
 the issue (`code: "too_small"`, `minimum`; `code: "invalid_format"`, `format: "email"`) and returns a
-message, or `undefined` for the default.
+message, or `undefined` for the default. It writes English at validation time, so a translated app
+has none: `frontend-i18n` picks each field error's text in the bound field at render time, by issue
+kind and backend `code`, and an error on screen follows a language switch.
 
 ## One-field form
 
@@ -590,55 +448,236 @@ export function RenameUserForm({ user }: { user: UserResponse }) {
 }
 ```
 
-## Validation timing: what the user sees, pinned by a test
+## A form in steps
 
-The house default, `validators.onSubmit` only, measured at 1.33:
+A step that is not shown renders none of its fields, so their errors have nowhere to appear. Give
+each step's fields to a map keyed by the top-level field name, and let `onFieldErrors` open the
+earliest step with an error; `Form` focuses the field once that step renders. A server error for a
+field the form has never mounted (a step the user has not opened yet) is still a form-level
+"cannot show" message: that only happens when the form can be submitted before every step was seen.
+
+```tsx,verify
+// file: src/features/users/invite-user-form.tsx
+import { revalidateLogic } from "@tanstack/react-form";
+import { useMutation } from "@tanstack/react-query";
+import { useState } from "react";
+import type * as z from "zod";
+import {
+  getCreateUserMutationOptions,
+  getListUsersQueryKey,
+  type UserResponse,
+} from "@/api/generated/api";
+import { CreateUserBody } from "@/api/generated/api.zod";
+import { useAppForm } from "@/shared/hooks/use-app-form";
+import { Button } from "@/shared/ui/button";
+
+const emptyUser: z.input<typeof CreateUserBody> = { email: "", name: "" };
+
+const steps = ["Name", "Email"] as const;
+// Keyed by the top-level name, so `address.city` or `items[0].name` finds its step too.
+const stepOfField: Record<string, number> = { name: 0, email: 1 };
+const stepOf = (field: string) => stepOfField[field.split(/[.[]/, 1)[0] ?? ""] ?? steps.length;
+
+export function InviteUserForm({
+  onCreated,
+}: {
+  onCreated: (user: UserResponse) => Promise<void>;
+}) {
+  const [step, setStep] = useState(0);
+  const createUser = useMutation(
+    getCreateUserMutationOptions({
+      mutation: {
+        meta: { silent: true },
+        onSuccess: (_user, _variables, _onMutateResult, { client }) =>
+          client.invalidateQueries({ queryKey: getListUsersQueryKey() }),
+      },
+    }),
+  );
+  const form = useAppForm({
+    defaultValues: emptyUser,
+    validationLogic: revalidateLogic(),
+    validators: { onDynamic: CreateUserBody },
+    onSubmit: async ({ value, formApi }) => {
+      const user = await createUser.mutateAsync({ data: value });
+      formApi.reset();
+      await onCreated(user);
+    },
+  });
+  const last = step === steps.length - 1;
+
+  return (
+    <form.AppForm>
+      <form.Form
+        failed="The user was not invited."
+        onFieldErrors={(fields) => setStep((current) => Math.min(current, ...fields.map(stepOf)))}
+        className="max-w-md"
+      >
+        <h2 className="font-medium">
+          Step {step + 1} of {steps.length}: {steps[step]}
+        </h2>
+        <form.FormError />
+        {step === 0 && (
+          <form.AppField name="name">{(field) => <field.TextField label="Name" />}</form.AppField>
+        )}
+        {step === 1 && (
+          <form.AppField name="email">
+            {(field) => <field.TextField label="Email" type="email" />}
+          </form.AppField>
+        )}
+        <div className="flex gap-2">
+          {step > 0 && <Button onClick={() => setStep(step - 1)}>Back</Button>}
+          {last ? (
+            <form.SubmitButton pending="Inviting…">Invite user</form.SubmitButton>
+          ) : (
+            <Button onClick={() => setStep(step + 1)}>Next</Button>
+          )}
+        </div>
+      </form.Form>
+    </form.AppForm>
+  );
+}
+```
+
+```tsx,verify
+// file: src/routes/users/invite.tsx
+import { createFileRoute } from "@tanstack/react-router";
+import { InviteUserForm } from "@/features/users/invite-user-form";
+
+export const Route = createFileRoute("/users/invite")({
+  component: InviteUserPage,
+});
+
+function InviteUserPage() {
+  const navigate = Route.useNavigate();
+
+  return (
+    <div className="flex flex-col gap-4">
+      <title>Invite user</title>
+      <h1 className="font-semibold text-2xl">Invite user</h1>
+      <InviteUserForm
+        onCreated={(user) => navigate({ to: "/users/$userId", params: { userId: user.id } })}
+      />
+    </div>
+  );
+}
+```
+
+```tsx,verify,test
+// file: src/routes/users/invite.test.tsx
+import { screen, waitFor } from "@testing-library/react";
+import { HttpResponse, http } from "msw";
+import { expect, test } from "vitest";
+import { renderRoute, TEST_API_ORIGIN } from "@/test/render-route";
+import { server } from "@/test/server";
+
+test("a schema error on an earlier step opens that step and focuses the field", async () => {
+  const { user } = renderRoute("/users/invite");
+  await user.click(await screen.findByRole("button", { name: "Next" }));
+  await user.type(screen.getByRole("textbox", { name: "Email" }), "ada@example.com");
+  await user.click(screen.getByRole("button", { name: "Invite user" }));
+
+  const name = await screen.findByRole("textbox", { name: "Name" });
+  expect(name).toHaveAttribute("aria-invalid", "true");
+  await waitFor(() => expect(name).toHaveFocus());
+});
+
+test("a server error on an earlier step opens that step and shows it", async () => {
+  server.use(
+    http.post(`${TEST_API_ORIGIN}/users`, () =>
+      HttpResponse.json(
+        {
+          error: "validation failed",
+          details: { name: [{ code: "reserved", message: "This name is reserved." }] },
+        },
+        { status: 422 },
+      ),
+    ),
+  );
+  const { user } = renderRoute("/users/invite");
+  await user.type(await screen.findByRole("textbox", { name: "Name" }), "admin");
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.type(screen.getByRole("textbox", { name: "Email" }), "ada@example.com");
+  await user.click(screen.getByRole("button", { name: "Invite user" }));
+
+  const name = await screen.findByRole("textbox", { name: "Name" });
+  expect(name).toHaveAccessibleDescription("This name is reserved.");
+  await waitFor(() => expect(name).toHaveFocus());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+```
+
+## Validation timing
+
+The house default, `revalidateLogic()` with the schema in `validators.onDynamic`, measured at
+1.33.5:
 
 | Moment | What the user sees |
 |---|---|
 | typing before the first submit | nothing |
-| submit | every invalid field marked; nothing is sent |
-| next change or blur of a marked field | that field's error clears, valid or not |
-| next submit while a field still shows an error | stops before the schema runs: fields cleared by editing stay unmarked, nothing is sent |
-| next submit with no error shown | schema runs again, every invalid field marked |
-| any field change after a form-level error | the form-level message clears |
-
-With only `validators.onSubmit`, nothing is checked until the first submit. After it, a field's
-error disappears on that field's next change or blur, whether or not the new value is valid; focus
-moves to the first invalid field, so leaving it clears its error too. A resubmit runs the schema
-again only when no field still shows an error; while one does, the submit stops early, so a field
-cleared by editing stays unmarked even if it is still invalid. Nothing is sent either way: the test
-has no POST handler, and an unhandled request fails it.
+| first submit | every invalid field marked, focus on the first; nothing is sent |
+| any change after that | that field re-checked: its error comes and goes with the value |
+| a failed request | its field errors under their fields, the rest as one form message |
+| another field changes | a server field error stays |
+| its own field changes | that server field error goes, and the schema decides again |
+| any change after a form message | the form message goes |
+| submit again | every server error cleared first, then the schema, then the request again |
 
 ```tsx,verify,test
 import { screen, waitFor } from "@testing-library/react";
+import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
-import { renderRoute } from "@/test/render-route";
+import { renderRoute, TEST_API_ORIGIN } from "@/test/render-route";
+import { server } from "@/test/server";
 
-test("submit-only validation: edits clear errors, a resubmit rechecks once none is shown", async () => {
+test("errors wait for the first submit, then follow every change", async () => {
   const { user } = renderRoute("/users/new");
   const name = await screen.findByRole("textbox", { name: "Name" });
   const email = screen.getByRole("textbox", { name: "Email" });
-  const submit = screen.getByRole("button", { name: "Create user" });
 
-  await user.type(email, "not-an-email");
+  await user.type(email, "ada");
   expect(email).not.toHaveAttribute("aria-invalid");
 
-  await user.click(submit);
+  await user.click(screen.getByRole("button", { name: "Create user" }));
   expect(name).toHaveAttribute("aria-invalid", "true");
   expect(email).toHaveAttribute("aria-invalid", "true");
   await waitFor(() => expect(name).toHaveFocus());
 
-  await user.type(name, "a{Backspace}");
+  await user.type(name, "A");
   expect(name).not.toHaveAttribute("aria-invalid");
-
-  await user.click(submit);
-  expect(name).not.toHaveAttribute("aria-invalid");
-  expect(email).toHaveAttribute("aria-invalid", "true");
-
-  await user.type(email, "x");
-  await user.click(submit);
+  await user.clear(name);
   expect(name).toHaveAttribute("aria-invalid", "true");
   expect(email).toHaveAttribute("aria-invalid", "true");
+});
+
+test("a server error stays until its own field changes; a resubmit asks again", async () => {
+  let posts = 0;
+  server.use(
+    http.post(`${TEST_API_ORIGIN}/users`, () => {
+      posts += 1;
+      return HttpResponse.json(
+        {
+          error: "validation failed",
+          details: { email: [{ code: "email", message: "Not deliverable." }] },
+        },
+        { status: 422 },
+      );
+    }),
+  );
+  const { user } = renderRoute("/users/new");
+  const name = await screen.findByRole("textbox", { name: "Name" });
+  const email = screen.getByRole("textbox", { name: "Email" });
+  const submit = screen.getByRole("button", { name: "Create user" });
+  await user.type(name, "Ada");
+  await user.type(email, "ada@example.com");
+  await user.click(submit);
+  await waitFor(() => expect(email).toHaveAccessibleDescription("Not deliverable."));
+
+  await user.type(name, " Lovelace");
+  expect(email).toHaveAccessibleDescription("Not deliverable.");
+  await user.click(submit);
+  await waitFor(() => expect(posts).toBe(2));
+
+  await user.type(email, "m");
+  expect(email).not.toHaveAttribute("aria-invalid");
 });
 ```

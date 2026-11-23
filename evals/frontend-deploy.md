@@ -13,6 +13,8 @@
 7. "add Grafana Faro so we get frontend errors and traces into Grafana"
 8. "build the Docker image for the frontend and tell me how to check the deployment is right: cache headers, CSP, source maps"
 9. "users can put a link to their website in their profile; render it as a link on the profile page safely"
+10. "how do we find out about CSP violations that happen in production? we have a report collector at reports.example.com"
+11. "ops wants one Docker image promoted from staging to production by digest instead of a build per environment"
 
 **Should not load**
 
@@ -115,6 +117,44 @@
 - `captureConsole: true`
 - `@sentry/react`
 - the release id read from a `PUBLIC_*` variable
+
+### Eval 5 - a deploy under an open tab
+
+**Prompt**: "Since we deployed the new build, users who had the app open report that just hovering a link reloads the page, and on the edit form the browser asks 'Leave site?' while they are typing. Fix how the app recovers from stale chunks."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- `reloadOnStaleChunk` reloads only while `router.state.status === "pending"`, so a preload on hover fails quietly and a click onto a missing route chunk reloads once onto the new build
+- the router created before `reloadOnStaleChunk(router)` in `src/main.tsx`
+- the 60-second guard kept, so a chunk still missing after the reload shows the route error screen
+- a lazy import that is not a route chunk left to reject to its importer
+- `e2e/stale-chunk.spec.ts` (or an equivalent end-to-end test on the built app) as the proof
+
+**Must not produce**:
+
+- `event.preventDefault()` in the `vite:preloadError` handler
+- `defaultPreload` turned off to hide the symptom
+- a reload on every `vite:preloadError`, or a guard kept per session instead of per time window
+
+### Eval 6 - one image for every environment
+
+**Prompt**: "Our platform team wants to build the frontend image once and promote the same digest from staging to production. Change the app so the API origin is read at container start instead of build time."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- explains that the origins are inlined into the bundle and the generated CSP at build time, which is why the image is built per environment, and that the missing shell is not the reason
+- names the cost (production runs a bundle staging did not run, no promotion by digest) and the mitigation (every environment built from the same commit in one pipeline, differing only in the origins)
+- says how the pipeline builds and promotes artifacts is the platform team's decision, and puts the trade-off to the user instead of changing the app
+
+**Must not produce**:
+
+- a runtime `/config.json`, `window.__ENV__` or an inline config script
+- an entrypoint or Caddy rule that rewrites placeholders in built JavaScript
+- the API origin removed from `connect-src`, or `connect-src` widened to `https:` or `*`
 
 ### Probe 1 - VITE prefix
 
@@ -223,3 +263,13 @@
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:import\.meta\.env\.PUBLIC_\w*(?:RELEASE|VERSION|COMMIT|SHA)\b)|(?:^|\n)\s*PUBLIC_\w*(?:RELEASE|VERSION|COMMIT|SHA)\w*\s*[:=]`
 
 **Right answer**: `define\s*:\s*\{`
+
+### Probe 13 - a wildcard image source
+
+**Prompt**: "User avatars are served from our storage host, which differs between staging and production. The CSP blocks them. Update deploy/headers.ts so the images load."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:img-src[^;"\n\x60]*\s(?:\*|https:)(?=[\s;"\x27]))`
+
+**Right answer**: `PUBLIC_\w*ORIGIN`

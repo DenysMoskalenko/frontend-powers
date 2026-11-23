@@ -5,13 +5,13 @@
 - How the router reads and writes search values
 - Schema rules
 - A free-text search box
-- A complete route: ids in the URL, parallel loads, not found, pending
+- A complete route: ids in the URL, parallel and deferred loads, not found
 - What its test proves
 - Loader shapes
 
 ## How the router reads and writes search values
 
-The router's default parser runs `JSON.parse` on every value and keeps the raw string when that fails, so it rewrites `?q=1.50` to `1.5` and an id past 2^53 to another number. `createAppRouter` passes `parseSearch: parseSearchWith(exactJson)` and `stringifySearch: stringifySearchWith(JSON.stringify, exactJson)`, where `exactJson` accepts a parsed number only when `String(parsed)` equals the raw text. Measured with `router.state.location.search` through `createAppRouter`:
+Parsing has two steps. The query-string decoder turns `true` and `false` into booleans and a value into a number when the number prints back exactly as written (`?q=42` is `42`, `?q=1.50` stays text), and a repeated key into an array. Then the router's parser runs on each value that is still text: by default `JSON.parse`, keeping the text when it throws, so `?q=1.50` becomes `1.5`, `?q=1e3` becomes `1000` and an id past 2^53 becomes another number. `createAppRouter` passes `parseSearch: parseSearchWith(exactJson)` and `stringifySearch: stringifySearchWith(JSON.stringify, exactJson)`, where `exactJson` rejects a parsed number that does not print back as the raw text; numbers then come only from the decoder, while quoted strings, `null`, arrays and objects still parse. Measured with `router.state.location.search` through `createAppRouter`:
 
 | URL | `search` |
 |---|---|
@@ -80,6 +80,7 @@ import { getListUsersQueryOptions, getListUsersSuspenseQueryOptions } from "@/ap
 import { pageCount, toListParams } from "@/features/users/pagination";
 import { UserSearch } from "@/features/users/user-search";
 import { UserTable } from "@/features/users/user-table";
+import { loadQuery } from "@/shared/lib/load-query";
 
 // `.catch(undefined)`: a hand-edited URL falls back to the first page instead of failing.
 const searchSchema = z.object({
@@ -93,13 +94,10 @@ export const Route = createFileRoute("/users/")({
     ...toListParams(search.page ?? 1),
     ...(search.q !== undefined && { q: search.q }),
   }),
-  // Same key and fetch as the component's suspense options; `query()` rejects those under
+  // Same key and fetch as the component's suspense options; `loadQuery` rejects those under
   // exactOptionalPropertyTypes.
   loader: async ({ context, deps }) => {
-    const users = await context.queryClient.query({
-      ...getListUsersQueryOptions(deps),
-      staleTime: "static",
-    });
+    const users = await loadQuery(context.queryClient, getListUsersQueryOptions(deps));
     // A page past the end (an edited URL, the last user on it deleted) opens the last page.
     if (users.items.length === 0 && deps.offset > 0) {
       const last = pageCount(users);
@@ -123,7 +121,7 @@ function UsersPage() {
   const pages = pageCount(data);
 
   return (
-    <>
+    <div data-testid="users-list-page" className="flex flex-col gap-4">
       <title>Users</title>
       <h1 className="font-semibold text-2xl">Users</h1>
       <UserSearch
@@ -152,7 +150,7 @@ function UsersPage() {
           Next
         </Link>
       </nav>
-    </>
+    </div>
   );
 }
 ```
@@ -192,20 +190,27 @@ test("a search keeps the typed text, replaces the entry and opens the first page
 });
 ```
 
-## A complete route: ids in the URL, parallel loads, not found, pending
+## A complete route: ids in the URL, parallel and deferred loads, not found
 
-`/users/compare?a=<id>&b=<id>` shows two users side by side.
+`/users/compare?a=<id>&b=<id>` shows two users side by side and, below them, the five newest users, which the page can render without.
 
 ```tsx,verify
 // file: src/routes/users/compare.tsx
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import * as z from "zod";
 import { ApiError } from "@/api/api-error";
-import { getGetUserQueryOptions, getGetUserSuspenseQueryOptions } from "@/api/generated/api";
+import {
+  getGetUserQueryOptions,
+  getGetUserSuspenseQueryOptions,
+  getListUsersQueryOptions,
+} from "@/api/generated/api";
 import { UserDetails } from "@/features/users/user-details";
+import { loadQuery } from "@/shared/lib/load-query";
 
-// The router JSON-parses search values, so `?a=42` arrives as a number: coerce ids to strings.
+const NEWEST = { limit: 5, offset: 0 };
+
+// The router turns `?a=42` into a number, so ids are coerced to strings.
 const searchSchema = z.object({
   a: z.coerce.string().optional().catch(undefined),
   b: z.coerce.string().optional().catch(undefined),
@@ -215,11 +220,11 @@ export const Route = createFileRoute("/users/compare")({
   validateSearch: searchSchema,
   loaderDeps: ({ search }) => ({ ids: [search.a, search.b].filter((id) => id !== undefined) }),
   loader: async ({ context, deps }) => {
+    // Started before the first `await`, so it runs alongside the awaited reads.
+    void loadQuery(context.queryClient, getListUsersQueryOptions(NEWEST)).catch(() => undefined);
     try {
       await Promise.all(
-        deps.ids.map((id) =>
-          context.queryClient.query({ ...getGetUserQueryOptions(id), staleTime: "static" }),
-        ),
+        deps.ids.map((id) => loadQuery(context.queryClient, getGetUserQueryOptions(id))),
       );
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) throw notFound();
@@ -227,7 +232,6 @@ export const Route = createFileRoute("/users/compare")({
     }
   },
   component: ComparePage,
-  pendingComponent: ComparePending,
   notFoundComponent: UserNotFound,
 });
 
@@ -239,7 +243,7 @@ function ComparePage() {
       <title>Compare users</title>
       <h1 className="font-semibold text-2xl">Compare users</h1>
       {ids.length < 2 ? <p>Pick two users to compare.</p> : null}
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid gap-6 sm:grid-cols-2">
         {ids.map((id) => (
           <UserColumn key={id} id={id} />
         ))}
@@ -247,6 +251,7 @@ function ComparePage() {
       <Link from={Route.fullPath} search={(prev) => ({ a: prev.b, b: prev.a })}>
         Swap
       </Link>
+      <NewestUsers />
     </>
   );
 }
@@ -262,8 +267,21 @@ function UserColumn({ id }: { id: string }) {
   );
 }
 
-function ComparePending() {
-  return <p aria-busy="true">Loading users…</p>;
+function NewestUsers() {
+  const { data, isPending, isError } = useQuery(getListUsersQueryOptions(NEWEST));
+  if (isPending) return <p aria-busy="true">Loading the newest users…</p>;
+  if (isError) return <p>The newest users could not be loaded.</p>;
+
+  return (
+    <section aria-label="Newest users">
+      <h2 className="font-semibold text-xl">Newest users</h2>
+      <ul>
+        {data.items.map((user) => (
+          <li key={user.id}>{user.name}</li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 function UserNotFound() {
@@ -280,24 +298,26 @@ function UserNotFound() {
 Points to copy:
 
 - `loaderDeps` returns only what the loader uses; the loader re-runs when the returned value changes, so returning the whole `search` re-runs it for keys it never reads.
-- Both requests start together inside `Promise.all`, and one 404 turns the route into its `notFoundComponent`.
-- No `errorComponent`: any other failure renders the router's default `RouteError` inside the root layout.
-- `UserColumn` is a module-level, unexported component, so it splits with `ComparePage`; a component defined inside another is a Biome error (`noNestedComponentDefinitions`).
+- `UserColumn` and `NewestUsers` are module-level, unexported components, so they split with `ComparePage`; a component defined inside another is a Biome error (`noNestedComponentDefinitions`).
 - The search updater receives the validated search and returns the next one, typed by the schema.
 
 ## What its test proves
 
-How to write route tests belongs to `frontend-testing`; this one is here as evidence for the rules above. Replacing `z.coerce.string()` with `z.string()` makes the second test fail.
+How to write route tests belongs to `frontend-testing`; this one is evidence for the rules above. Replacing `z.coerce.string()` with `z.string()` fails the third test; moving the `void loadQuery(...)` line below the `try` fails the second; reading with `query({ ...options, staleTime: "static" })` or removing `defaultStaleReloadMode: "blocking"` from `createAppRouter` fails the last.
 
 ```tsx,verify,test
 // file: src/routes/users/compare.test.tsx
-import { screen } from "@testing-library/react";
-import { HttpResponse, http } from "msw";
-import { expect, test } from "vitest";
-import { getGetUserMockHandler } from "@/api/generated/api.msw";
+import { act, screen } from "@testing-library/react";
+import { delay, HttpResponse, http } from "msw";
+import { beforeEach, expect, test } from "vitest";
+import { getGetUserMockHandler, getListUsersMockHandler } from "@/api/generated/api.msw";
 import { buildUser } from "@/test/factories/user";
 import { renderRoute, TEST_API_ORIGIN } from "@/test/render-route";
 import { server } from "@/test/server";
+
+beforeEach(() => {
+  server.use(getListUsersMockHandler({ items: [], total: 0, limit: 5, offset: 0 }));
+});
 
 test("loads both users named in the URL", async () => {
   server.use(
@@ -310,6 +330,32 @@ test("loads both users named in the URL", async () => {
 
   expect(await screen.findByRole("heading", { name: "User ada" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "User grace" })).toBeInTheDocument();
+});
+
+test("the page paints before the deferred list, whose request started with the awaited ones", async () => {
+  const { promise: listAnswered, resolve: answerList } = Promise.withResolvers<void>();
+  let listRequested = false;
+  const listSeenByUserAnswers: boolean[] = [];
+  server.use(
+    getListUsersMockHandler(async () => {
+      listRequested = true;
+      await listAnswered;
+      return { items: [buildUser({ name: "Newest Ada" })], total: 1, limit: 5, offset: 0 };
+    }),
+    getGetUserMockHandler(async ({ params }) => {
+      await delay(20);
+      listSeenByUserAnswers.push(listRequested);
+      return buildUser({ id: String(params.id), name: `User ${params.id}` });
+    }),
+  );
+
+  renderRoute("/users/compare?a=ada&b=grace");
+
+  expect(await screen.findByRole("heading", { name: "User ada" })).toBeInTheDocument();
+  expect(screen.getByText("Loading the newest users…")).toBeInTheDocument();
+  expect(listSeenByUserAnswers).toEqual([true, true]);
+  answerList();
+  expect(await screen.findByText("Newest Ada")).toBeInTheDocument();
 });
 
 test("an id that looks like a number is still requested as a string", async () => {
@@ -364,34 +410,53 @@ test("Swap exchanges the two ids in the URL", async () => {
 
   expect(router.state.location.search).toEqual({ a: "grace", b: "ada" });
 });
+
+test("a revisit after an invalidation paints the fresh data first", async () => {
+  let adaName = "Ada Lovelace";
+  server.use(
+    getGetUserMockHandler(async ({ params }) => {
+      // Slower than a paint, so a page painted from the invalidated cache would be seen.
+      if (adaName !== "Ada Lovelace") await delay(100);
+      return buildUser({ id: String(params.id), name: params.id === "ada" ? adaName : "Grace" });
+    }),
+  );
+  const { user, router } = renderRoute("/users/compare?a=ada&b=grace");
+  await screen.findByRole("heading", { name: "Ada Lovelace" });
+  await user.click(screen.getByRole("link", { name: "Users" }));
+  await screen.findByRole("heading", { name: "Users" });
+
+  adaName = "Ada King";
+  await router.options.context.queryClient.invalidateQueries();
+  act(() => router.history.back());
+
+  await screen.findByRole("heading", { name: "Compare users" });
+  expect(screen.getByRole("heading", { name: "Ada King" })).toBeInTheDocument();
+});
 ```
 
 ## Loader shapes
 
+The rule for what to await and what to defer is in `SKILL.md` under Loaders; these are the forms.
+
 | Need | Loader |
 |---|---|
-| one resource the page renders | `context.queryClient.query({ ...getXQueryOptions(deps), staleTime: "static" })`, awaited (returning it changes nothing) |
-| several independent resources the page shows on arrival | `await Promise.all([...])` of the same calls |
-| a resource that may be missing | `try` around the call; `ApiError` with status 404 becomes `throw notFound()`, anything else is rethrown |
+| one resource the page renders | `await loadQuery(context.queryClient, getXQueryOptions(deps))` (returning it changes nothing) |
+| several resources the page shows on arrival | one `await Promise.all([...])` of the same calls |
+| a resource that may be missing | the detail form below |
 | a second resource that needs the first | await the first, then the second; or let the component fetch the second with `useQuery` |
-| data the page can render without (behind a tab or toggle) | `void context.queryClient.query({ ...getXQueryOptions(...), staleTime: "static" }).catch(() => undefined)` before the loader's first `await`, or it waits a round trip; the component reads it with `useQuery` and renders its own pending and error state |
+| data the page can render without | `void loadQuery(...).catch(() => undefined)` before the first `await`; the component reads it with `useQuery` and renders its own pending and error state |
 | nothing from the API | no loader |
 
-A detail route checks the path id before any request and turns a 404 into its `notFoundComponent`:
+A route that takes an id from the path checks it with the generated params schema before any request, and turns a 404 into its `notFoundComponent`; any other error is rethrown to `RouteError`:
 
 ```tsx
 if (!GetUserParams.safeParse({ id: params.userId }).success) throw notFound();
 try {
-  await context.queryClient.query({
-    ...getGetUserQueryOptions(params.userId),
-    staleTime: "static",
-  });
+  await loadQuery(context.queryClient, getGetUserQueryOptions(params.userId));
 } catch (error) {
   if (error instanceof ApiError && error.status === 404) throw notFound();
   throw error;
 }
 ```
 
-- A loader may return what it fetched (the users list loader does), but no component reads it with `Route.useLoaderData()`: that value is a snapshot, while `useSuspenseQuery` follows refetches and invalidations.
-- The loader has no `try` around errors other than 404: a thrown `ApiError` renders `RouteError`, the router's `defaultErrorComponent`, whose Try again re-runs the loader through `router.invalidate()`.
-- `staleTime: "static"` only governs the loader's read. Freshness is the `QueryClient` default (30 seconds), and with `defaultPreloadStaleTime: 0` the loader runs on every navigation and preload, which costs only a cache read when the data is fresh.
+A loader may return what it fetched (the users list loader does), but no component reads it with `Route.useLoaderData()`: that value is a snapshot, while `useSuspenseQuery` follows refetches and invalidations.

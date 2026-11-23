@@ -12,6 +12,8 @@
 6. "`bg-[--anchor-width]` does nothing on my select popup, why"
 7. "which virtualized list package should I use for a 10k-row audit log, and is lucide ok for icons"
 8. "port this tailwind.config.js with theme.extend colors to our setup"
+9. "the users table makes the whole page scroll sideways on my phone, fix the layout"
+10. "export failures vanish after a few seconds and the screen reader never reads them"
 
 **Should not load**
 
@@ -24,6 +26,8 @@
 7. "write a Playwright test that the toast shows up after a failed refresh" -> `frontend-testing`
 8. "design the props API for a compound Tabs component with a controlled value" -> `vercel-composition-patterns`
 9. "share our src/shared/ui kit between two apps in a pnpm workspace" -> `frontend-shared-packages`
+10. "add an end-to-end check that no page scrolls sideways on a phone" -> `frontend-testing`
+11. "the icon buttons are too small to tap on mobile and the footer hides under the home bar" -> `mobile-native`
 
 ### Eval 1 - confirm dialog wrapper
 
@@ -82,7 +86,7 @@
 **Must produce**:
 
 - new role tokens (such as `success`, `warning`) as `light-dark()` pairs in `:root` and exposed in `@theme inline`, reusing `danger`
-- a `const` record mapping each status to a complete class string
+- a `const` record mapping each status to a complete class string, each value wrapped in `cx()` so the lint reads it
 - class strings joined with `cx` where a base and a tone are combined
 
 **Must not produce**:
@@ -109,6 +113,42 @@
 - `@tanstack/react-virtual` or `react-virtuoso`
 - `sonner` or any other toast package
 - a second `Toast.createToastManager()` at module scope
+- `priority: "high"` or `timeout: 0` on the success toast
+
+### Eval 5 - a kit component used in two widths
+
+**Prompt**: "Add a UserSummary component to the UI kit that shows a user's name, email and creation date. It goes in the narrow sidebar of the users list and full width on the user details page, and must look right on a phone."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- `@container` on the component's outer element, with `@sm:`, `@md:` or another `@` variant changing the layout
+- unprefixed classes giving the narrow, stacked layout, with variants widening it
+- colours from role tokens
+
+**Must not produce**:
+
+- viewport breakpoints (`sm:`, `md:`, `lg:`) as the component's only responsive classes
+- `h-screen`, `100vh` or an arbitrary breakpoint such as `min-[30rem]:`
+- a fixed width wider than a phone (`w-[600px]`, `min-w-[40rem]`)
+
+### Eval 6 - failure toast
+
+**Prompt**: "When the CSV export request fails, tell the user with a toast that includes the request id."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- `Toast.useToastManager().add(...)` (or the router's manager) with `priority: "high"` and `timeout: 0`
+- an `id` on the toast so repeated failures update one toast
+
+**Must not produce**:
+
+- `sonner` or another toast package
+- a module-level `Toast.createToastManager()`
+- a failure toast left at the 5 s default
 
 ### Probe 1 - palette colour
 
@@ -205,3 +245,23 @@
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:<DialogPopup\b[^>]*\bclassName=["{\x60][^>]*\b(?:min-|max-)?w-)`
 
 **Right answer**: `(?<![\w-])sizes?\s*[=:]`
+
+### Probe 12 - polite failure toast
+
+**Prompt**: "If saving the profile fails, show a toast saying the change was not saved."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\.add\(\{(?![^}]*\bpriority\b)[^}]*\}\))`
+
+**Right answer**: `priority:\s*["\x27]high["\x27]`
+
+### Probe 13 - bare class string in a record
+
+**Prompt**: "Add a Badge wrapper to src/shared/ui with neutral, accent and danger tones."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:\b(?:neutral|accent|danger)\s*:\s*["\x27][^"\x27\n]*\b(?:bg|text|border)-)`
+
+**Right answer**: `\b(?:neutral|accent|danger)\s*:\s*cx\(`

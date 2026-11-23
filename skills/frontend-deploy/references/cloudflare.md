@@ -108,23 +108,25 @@ status 200, and the `/assets/*` headers, `immutable` included, whatever the `Sec
 cases reach it:
 
 - A tab opened before a deploy asks for a lazy chunk of its old version, which the new deploy no
-  longer has. The import fails, Vite dispatches `vite:preloadError`, and `reloadOnStaleChunk()`
-  reloads onto the new `index.html`, once per deploy (below). The HTML cached under the old chunk's
-  URL is never requested again.
+  longer has. The import fails, Vite dispatches `vite:preloadError`, and `reloadOnStaleChunk(router)`
+  reloads onto the new `index.html` when a navigation is pending (below). The HTML cached under the
+  old chunk's URL is never requested again.
 - A new `index.html` reaches a browser while an edge still serves the previous asset set. The
   browser would cache HTML under a current chunk's URL for a year, and a reload cannot clear it.
   Deploys are atomic (no gradual deployments) to keep this window closed; it has not been
   observed.
 
-`src/app/error-reporting.ts` bounds the reload by time, not by session, so a tab left open across
-several deploys recovers from each:
+`src/app/error-reporting.ts` reloads only while the router has a navigation pending, and bounds the
+reload by time, not by session, so a tab left open across several deploys recovers from each:
 
 ```ts
-/** A route chunk of the previous deploy is gone: reload onto the new `index.html`. */
-export function reloadOnStaleChunk() {
+/** A chunk of the previous deploy is gone: a navigation reloads onto the new `index.html`. */
+export function reloadOnStaleChunk(router: { state: Pick<AnyRouter["state"], "status"> }) {
   // Never `preventDefault()`: Vite would resolve the import with `undefined` and the router would report a
   // TypeError; uncancelled, the router recognises the failed import and waits for the reload.
   window.addEventListener("vite:preloadError", () => {
+    // A preload on hover fails quietly; the click that follows is a navigation and reloads here.
+    if (router.state.status !== "pending") return;
     // A failure within a minute of the last reload is not a stale deploy: no reload loop.
     const last = Number(sessionStorage.getItem("reloaded-for-stale-chunk"));
     if (Date.now() - last < 60_000) return;
@@ -133,6 +135,17 @@ export function reloadOnStaleChunk() {
   });
 }
 ```
+
+- A preload on hover (`defaultPreload: "intent"`) that hits a missing chunk fails quietly: no
+  reload, and a dirty form's leave guard is not raised.
+- A real navigation to a missing route chunk reloads once onto the new build and lands on the
+  target URL; a chunk that is still missing after the reload shows the route error screen.
+- A lazy import that is not a route chunk (a language file, a realtime client) and fails while no
+  navigation is pending rejects to its importer, which reports it and keeps the current state; the
+  next navigation reloads.
+
+`src/main.tsx` creates the router before calling `reloadOnStaleChunk(router)`.
+`e2e/stale-chunk.spec.ts` proves the first two on the built app.
 
 If the second case is ever observed, a guard Worker (`run_worker_first: ["/assets/*"]` turning HTML
 responses into 404s with `no-store`) closes it, at the price of billing every asset request as a

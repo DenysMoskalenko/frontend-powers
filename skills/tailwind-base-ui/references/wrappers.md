@@ -10,8 +10,10 @@ Complete wrappers, compiled against `@base-ui/react` 1.9 under the scaffold's `t
 - Dialog
 - Menu
 - Select
+- A component that responds to its container
 - Composing them in a feature
 - Toasts
+- Test ids
 - Field
 
 ## Data attributes and CSS variables
@@ -61,13 +63,15 @@ never an `a`), so the link is its own component built on `useRender`.
 import { Button as BaseButton } from "@base-ui/react/button";
 import { cx } from "./cx";
 
-const base =
-  "inline-flex h-9 items-center justify-center gap-2 rounded-md px-4 font-medium text-sm transition-colors data-disabled:opacity-50";
+// Wrapped in cx() so the Tailwind lint rules read them, as they read a className.
+const base = cx(
+  "inline-flex h-9 items-center justify-center gap-2 rounded-md px-4 font-medium text-sm transition-colors data-disabled:opacity-50",
+);
 
 const variants = {
-  primary: "bg-accent text-accent-fg hover:not-data-disabled:bg-accent/90",
-  secondary: "border border-control bg-surface text-fg hover:not-data-disabled:bg-bg",
-  danger: "bg-danger text-danger-fg hover:not-data-disabled:bg-danger/90",
+  primary: cx("bg-accent text-accent-fg hover:not-data-disabled:bg-accent/90"),
+  secondary: cx("border border-control bg-surface text-fg hover:not-data-disabled:bg-bg"),
+  danger: cx("bg-danger text-danger-fg hover:not-data-disabled:bg-danger/90"),
 } as const;
 
 export type ButtonVariant = keyof typeof variants;
@@ -169,9 +173,9 @@ export const DialogTrigger = BaseDialog.Trigger;
 export const DialogClose = BaseDialog.Close;
 
 const sizes = {
-  sm: "w-[min(24rem,calc(100vw-2rem))]",
-  md: "w-[min(28rem,calc(100vw-2rem))]",
-  lg: "w-[min(40rem,calc(100vw-2rem))]",
+  sm: cx("w-[min(24rem,calc(100vw-2rem))]"),
+  md: cx("w-[min(28rem,calc(100vw-2rem))]"),
+  lg: cx("w-[min(40rem,calc(100vw-2rem))]"),
 } as const;
 
 // No `className`: the base string sets the width and the placement, so a caller's class could lose.
@@ -222,6 +226,7 @@ export function DialogPopup({
 // file: src/shared/ui/menu.tsx
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import type { ReactNode } from "react";
+import { cx } from "./cx";
 
 export const Menu = BaseMenu.Root;
 export const MenuTrigger = BaseMenu.Trigger;
@@ -229,13 +234,17 @@ export const MenuTrigger = BaseMenu.Trigger;
 interface MenuPopupProps {
   children: ReactNode;
   side?: BaseMenu.Positioner.Props["side"] | undefined;
+  "data-testid"?: string | undefined;
 }
 
-export function MenuPopup({ children, side = "bottom" }: MenuPopupProps) {
+export function MenuPopup({ children, side = "bottom", "data-testid": testId }: MenuPopupProps) {
   return (
     <BaseMenu.Portal>
       <BaseMenu.Positioner side={side} sideOffset={6} className="outline-hidden">
-        <BaseMenu.Popup className="min-w-40 origin-(--transform-origin) rounded-lg border border-line bg-surface p-1 text-fg shadow-md outline-hidden transition-[opacity,scale] duration-100 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-opacity">
+        <BaseMenu.Popup
+          data-testid={testId}
+          className="min-w-40 origin-(--transform-origin) rounded-lg border border-line bg-surface p-1 text-fg shadow-md outline-hidden transition-[opacity,scale] duration-100 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-opacity"
+        >
           {children}
         </BaseMenu.Popup>
       </BaseMenu.Positioner>
@@ -243,8 +252,10 @@ export function MenuPopup({ children, side = "bottom" }: MenuPopupProps) {
   );
 }
 
-const item =
-  "flex h-8 cursor-default select-none items-center rounded-md px-2 text-sm outline-hidden data-disabled:opacity-50 data-highlighted:bg-accent data-highlighted:text-accent-fg";
+// cx() so the Tailwind lint rules read it, as they read a className.
+const item = cx(
+  "flex h-8 cursor-default select-none items-center rounded-md px-2 text-sm outline-hidden data-disabled:opacity-50 data-highlighted:bg-accent data-highlighted:text-accent-fg",
+);
 
 export function MenuItem(props: Omit<BaseMenu.Item.Props, "className">) {
   return <BaseMenu.Item {...props} className={item} />;
@@ -278,6 +289,8 @@ interface SelectFieldProps<Value extends string>
   error?: string | undefined;
   /** Layout only (margin, width, placement). */
   className?: string | undefined;
+  /** Lands on the trigger, the element a user clicks. */
+  "data-testid"?: string | undefined;
 }
 
 export function SelectField<Value extends string>({
@@ -286,6 +299,7 @@ export function SelectField<Value extends string>({
   placeholder,
   error,
   className,
+  "data-testid": testId,
   ...props
 }: SelectFieldProps<Value>) {
   return (
@@ -295,7 +309,10 @@ export function SelectField<Value extends string>({
         {label}
       </Field.Label>
       <Select.Root {...props} items={items}>
-        <Select.Trigger className="flex h-9 items-center justify-between gap-2 rounded-md border border-control bg-surface px-3 text-sm data-invalid:border-danger">
+        <Select.Trigger
+          data-testid={testId}
+          className="flex h-9 items-center justify-between gap-2 rounded-md border border-control bg-surface px-3 text-sm data-invalid:border-danger"
+        >
           <Select.Value placeholder={placeholder} className="data-placeholder:text-muted" />
           <Select.Icon className="text-muted">
             <svg aria-hidden viewBox="0 0 16 16" fill="currentColor" className="size-4">
@@ -332,6 +349,37 @@ export function SelectField<Value extends string>({
 Use it with a typed list: `<SelectField label="Status" items={statuses} value={status}
 onValueChange={setStatus} />`, where `statuses` is `{ value: OrderStatus; label: string }[]`; in a
 test the trigger is `getByRole("combobox", { name: "Status" })` and each choice an `option`.
+
+## A component that responds to its container
+
+A kit component lays itself out by the width it is given, not the window's, so the same component
+works in a page column, a dialog and a sidebar. `@container` on its outer element; `@md:` and the
+other `@` variants then test that element (`@sm` 24rem, `@md` 28rem, `@lg` 32rem, `@xl` 36rem).
+
+```tsx,verify
+// file: src/shared/ui/detail-list.tsx
+import type { ReactNode } from "react";
+
+interface DetailListProps {
+  items: readonly { label: string; value: ReactNode }[];
+}
+
+/** Label and value pairs: stacked in a narrow container, side by side from `@md` (28rem). */
+export function DetailList({ items }: DetailListProps) {
+  return (
+    <div className="@container">
+      <dl className="grid gap-x-4 gap-y-1 @md:grid-cols-label">
+        {items.map(({ label, value }) => (
+          <div key={label} className="contents">
+            <dt className="text-muted text-sm @md:text-base">{label}</dt>
+            <dd className="mb-2 @md:mb-0">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+```
 
 ## Composing them in a feature
 
@@ -387,15 +435,120 @@ export function UserActions({ user }: { user: UserResponse }) {
 The scaffold's `src/shared/ui/toast.tsx` renders the toasts; `createAppRouter` creates one manager
 per router and hands it to `ToastProvider` and to the `createQueryClient` callback, which turns a
 failed refresh or mutation into a toast titled from `NOTICES` in `router.tsx`; each test's router
-has its own toasts. Inside React, `Toast.useToastManager().add({ title, description, type })`.
-Outside React (a socket handler), pass the manager in from where the router is created; never
-create a second manager at module scope, or its toasts never render.
+has its own toasts. Inside React, `Toast.useToastManager().add(...)`. Outside React (a socket
+handler), pass the manager in from where the router is created; never create a second manager at
+module scope, or its toasts never render.
 
-A `Toast.Root` is a non-modal dialog named by its title; testing toasts belongs to `frontend-testing`.
+What `add()` does with its options in `@base-ui/react` 1.9:
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `timeout` | `5000` ms | `0` keeps the toast until the user dismisses it |
+| `priority` | `"low"` | announced politely through the viewport's live region. `"high"`: the viewport adds a visually hidden `role="alert"` copy of the title and description, announced at once; the toast itself becomes an `alertdialog` hidden from assistive technology until F6 moves focus into the viewport |
+| `id` | generated | an `add()` under the id of a toast on screen updates that toast in place and restarts its timer; `update(id, ...)` does nothing once the toast is gone |
+
+- A failure (data not refreshed, a change not saved) is `priority: "high", timeout: 0`: it may be
+  the only sign that the work was lost, and a polite toast that leaves after 5 s is missed by a
+  screen-reader user mid-sentence and by anyone who looked away.
+- One toast per failure reason: pass the reason as `id`, so three failed polls leave one toast
+  carrying the latest request id, not three.
+- A success notice ("Email copied") keeps the defaults, low priority and timed: the user's own
+  action already confirmed it, and an urgent announcement would interrupt.
+
+```tsx,verify,test
+// file: src/shared/ui/toast.test.tsx
+import { Toast } from "@base-ui/react/toast";
+import { act, render, screen } from "@testing-library/react";
+import { expect, test } from "vitest";
+import { ToastProvider } from "./toast";
+
+test("a toast added again under its id replaces the one on screen", async () => {
+  const manager = Toast.createToastManager();
+  render(<ToastProvider manager={manager}>{null}</ToastProvider>);
+  const fail = (requestId: string) =>
+    manager.add({
+      id: "refresh",
+
+      title: "Could not refresh the data",
+      description: `Request id: ${requestId}`,
+      priority: "high",
+      timeout: 0,
+    });
+
+  act(() => {
+    fail("a");
+    fail("b");
+    fail("c");
+  });
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Request id: c");
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+});
+```
+
+A `Toast.Root` is named by its title; finding toasts in route tests belongs to `frontend-testing`.
 
 To style a toast by `type`, add `data-[type=error]:border-danger` to the root's class string in
 `toast.tsx`; to add an action, `actionProps: { children: "Retry", onClick }` on `add()` and a
 `<Toast.Action />` part in the list.
+
+## Test ids
+
+Every wrapper passes `data-testid` to the element a user acts on; naming it is `frontend-testing`'s
+convention. A wrapper that spreads its props onto one Base UI part forwards it already. One that
+sends its props elsewhere (`SelectField` to `Select.Root`, which renders no element for them) or
+takes a fixed prop list (`MenuPopup`) declares `"data-testid"?: string | undefined` and puts it on
+the part.
+
+| Wrapper | Receives `data-testid` |
+| --- | --- |
+| `Button`, `ButtonLink`, `TextField` | the `<button>`, the `<a>`, the `<input>` |
+| `SelectField` | the trigger (`combobox`), not the hidden input |
+| `CheckboxField` (`frontend-forms`) | the checkbox |
+| `DialogTrigger`, `DialogClose`, `MenuTrigger` | the button, or the kit `Button` in `render` |
+| `DialogPopup`, `MenuPopup` | the popup (`dialog`, `menu`) |
+| `MenuItem`, `MenuLinkItem` | the item |
+| `ToastProvider` | nothing: a failure toast is found by its `alert` role |
+
+```tsx,verify,test
+// file: src/shared/ui/test-ids.test.tsx
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { expect, test } from "vitest";
+import { Button } from "./button";
+import { Dialog, DialogPopup, DialogTrigger } from "./dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./menu";
+import { SelectField } from "./select-field";
+
+test("each wrapper puts data-testid on the element a user acts on", async () => {
+  const user = userEvent.setup();
+  render(
+    <>
+      <SelectField label="Status" items={[{ value: "active", label: "Active" }]} data-testid="s" />
+      <Dialog>
+        <DialogTrigger render={<Button data-testid="dt" />}>Details</DialogTrigger>
+        <DialogPopup title="Details" data-testid="dp" />
+      </Dialog>
+      <Menu>
+        <MenuTrigger render={<Button data-testid="mt" />}>More</MenuTrigger>
+        <MenuPopup data-testid="mp">
+          <MenuItem data-testid="mi">Copy</MenuItem>
+        </MenuPopup>
+      </Menu>
+    </>,
+  );
+  expect(screen.getByTestId("s")).toBe(screen.getByRole("combobox", { name: "Status" }));
+
+  await user.click(screen.getByTestId("dt"));
+  expect(await screen.findByTestId("dp")).toBe(screen.getByRole("dialog", { name: "Details" }));
+  await user.keyboard("{Escape}");
+
+  await user.click(screen.getByTestId("mt"));
+  expect(await screen.findByTestId("mp")).toBe(screen.getByRole("menu"));
+  expect(screen.getByTestId("mi")).toBe(screen.getByRole("menuitem", { name: "Copy" }));
+});
+```
 
 ## Field
 

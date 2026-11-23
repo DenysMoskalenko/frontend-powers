@@ -57,8 +57,8 @@ The Context is its own provider: `<DensityContext value={density}>{children}</De
 The hook's file exports no provider component: when a Context is warranted, where its value lives
 and where that element is mounted (for an app-wide value, `src/app/` and the router's `Wrap`) are
 `frontend-project-structure`'s.
-`<Ctx.Provider>` still works and is the old spelling. `use` may sit inside a condition or loop,
-unlike other hooks. Do not pass `use` a promise created during render: it suspends forever. Server
+`<Ctx.Provider>` still works and is the old spelling. `useContext` is not deprecated; this house
+reads every Context with `use`, which may sit inside a condition or loop, unlike other hooks. Do not pass `use` a promise created during render: it suspends forever. Server
 data comes from the Query cache (`tanstack-query-api`). Every Context has a `null` default and a
 `useX()` that throws without its provider, a compound component's own Context included.
 
@@ -126,8 +126,9 @@ heavy widget inside a page.
 
 ## Effects that stay correct uncompiled
 
-The compiler is off under Vitest, so every object and function created in render gets a new
-identity on every test render. An effect must stay correct when that happens:
+Where the compiler is off (an app without it, a component it skips, and the coverage run, which
+leaves it out), every object and function created in render gets a new identity on every render.
+An effect must stay correct when that happens:
 
 - Narrow dependencies are `vercel-react-best-practices`' rule (`rerender-dependencies`); here an
   object built in render is a new dependency on every uncompiled render, so the effect reruns.
@@ -138,7 +139,8 @@ identity on every test render. An effect must stay correct when that happens:
 
 ## The compiler: what it skips and the escape hatch
 
-Configuration lives in `vite.config.ts` (`frontend-tooling`). The compiler runs with its default
+Configuration lives in `vite.config.ts` (`frontend-tooling`); it compiles `pnpm dev`, `pnpm build`
+and `pnpm test`, and only `pnpm test:coverage` runs uncompiled. The compiler runs with its default
 `panicThreshold: "none"`: a component it cannot compile is left as written, without a build error.
 Biome `useReactCompiler` reports the patterns that cause that:
 

@@ -72,7 +72,8 @@ async function createUser(request: IncomingMessage, response: ServerResponse) {
     return send(response, 422, errorBody(response, "validation failed", details));
   }
   if (users.some((user) => user.email === email)) {
-    return send(response, 409, errorBody(response, "conflict"));
+    const taken = [{ code: "unique", message: "This email is already taken.", params: {} }];
+    return send(response, 409, errorBody(response, "conflict", { email: taken }));
   }
   const user = { id: randomUUID(), email, name, created_at: new Date().toISOString() };
   users.push(user);

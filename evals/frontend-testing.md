@@ -13,6 +13,8 @@
 7. "coverage dropped to 78% branches and `pnpm test:coverage` fails, how do I get it back over 80?"
 8. "this vitest test is flaky, fails only with some shuffle seeds"
 9. "all my assertions pass but the test fails with `AggregateError: The app called reportError`, what is failing it?"
+10. "my new src/shared/lib/recent-searches.test.ts fails with `ReferenceError: localStorage is not defined`, the code works in the browser"
+11. "our QA team wants stable selectors for their own Playwright suite, how should we name data-testid on the orders pages?"
 
 **Should not load**
 
@@ -24,6 +26,8 @@
 6. "map ApiError.fieldErrors onto the TanStack Form fields when the server returns 422" -> `frontend-forms`
 7. "where should a new test helper module live, and can feature code import from src/test?" -> `frontend-project-structure`
 8. "write a test for the live order feed that fakes the Centrifugo client and pushes a publication" -> `frontend-realtime`
+9. "our Select wrapper in src/shared/ui drops the data-testid prop, make it reach the trigger button" -> `tailwind-base-ui`
+10. "add a vitest project for browser-mode tests next to node and dom in vite.config.ts" -> `frontend-tooling`
 
 ### Eval 1 - route tests for list paging and a failed first load
 
@@ -52,7 +56,7 @@
 
 ### Eval 2 - timer behaviour under fake timers
 
-**Prompt**: "Test that the 'Could not refresh the data' toast on /users closes by itself after a few seconds. My attempt with vi.useFakeTimers() just times out."
+**Prompt**: "Test that the 'Could not refresh the data' toast on /users stays on screen until the user dismisses it, even a minute later. My attempt with vi.useFakeTimers() just times out."
 
 **Fixture**: scaffold
 
@@ -62,17 +66,19 @@
 - a user-event instance created with `userEvent.setup({ advanceTimers: vi.advanceTimersByTime })` if the test interacts, not the `user` from `renderRoute`
 - time advanced with `await act(() => vi.advanceTimersByTimeAsync(...))`
 - the background refresh triggered with `vi.setSystemTime` and a `visibilitychange` event and a 500 handler on `TEST_API_ORIGIN`
-- an assertion that the toast is present before the timeout and absent after it
+- the toast found with `findByRole("alert")` and its text checked with `toHaveTextContent`
+- an assertion that the toast is still present after advancing well past five seconds, and absent after Dismiss (reached after F6, or with the toast's Dismiss found while `aria-hidden`)
 
 **Must not produce**:
 
 - `vi.useFakeTimers({ shouldAdvanceTime: true })`
 - a raised test timeout as the fix
 - `await new Promise((r) => setTimeout(r, ...))`
+- an assertion that the toast closes by itself after five seconds
 
 ### Eval 3 - end-to-end spec
 
-**Prompt**: "Write a Playwright test that checks a new user's detail page has no accessibility violations and that the page survives a failing user lookup."
+**Prompt**: "Write a Playwright test that checks a new user's detail page has no accessibility violations and that the page shows its error screen and recovers when the user lookup fails once."
 
 **Fixture**: scaffold
 
@@ -81,7 +87,9 @@
 - `test` and `expect` imported from `./fixtures.ts`
 - a user created with a unique email built from `testInfo.testId` and `testInfo.retry`
 - the detail page scanned by `AxeBuilder` with WCAG tags in `light` and `dark` via `page.emulateMedia`, in new code or by naming the existing smoke axe test; any new axe run also covers both schemes
-- the failing lookup (a 500 from `GET /users/{id}`) tested as a route test through `renderRoute` with an `http.get` on `TEST_API_ORIGIN`, not in the spec, because the production build reports the boundary error and the guard fails the spec on it
+- the failing lookup faked once with `page.route` and `route.fulfill` with status 500, `access-control-allow-origin` and an error body carrying a unique `error` text, then `route.continue()` for the retry
+- `test.use({ expectedErrors: [...] })` with a regex matching that unique text, or the existing `e2e/errors.spec.ts` named as already covering it
+- "Try again" clicked and the user's heading asserted afterwards
 - role locators and web-first `expect(...).toBeVisible()` assertions
 
 **Must not produce**:
@@ -89,8 +97,9 @@
 - `import { test, expect } from "@playwright/test"` in the spec
 - `page.waitForTimeout`
 - an assertion that the user list is empty or has a fixed length
-- `page.route` fulfilling a 500 for the user lookup in a spec
-- an allow-list option added to `e2e/fixtures.ts` so the guard ignores the reported error
+- a 502, 503 or 504 for the failure (the query client retries those)
+- `expectedErrors` with a catch-all such as `/.*/` or a bare status code
+- a new option or filter added to `e2e/fixtures.ts`, which already has `expectedErrors`
 
 ### Probe 1 - no mocking of the generated client
 
@@ -207,3 +216,52 @@
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:thresholds\s*:\s*\{[^}]*\b(?:lines|branches|functions|statements)\s*:\s*[0-7]?\d\b)`
 
 **Right answer**: `pnpm test:coverage`
+
+### Eval 4 - a calendar date under another time zone
+
+**Prompt**: "The suite runs with TZ=UTC. Add `formatDate` for calendar dates to src/shared/lib/format-date.ts, then a test that proves `formatDate('2026-03-01')` shows Mar 1, 2026 to a user in New York."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- `vi.stubEnv("TZ", "America/New_York")` inside the test
+- `vi.resetModules()` and a dynamic `await import(...)` of the formatter after the stub, because a module-level `Intl` formatter keeps the zone it was built in
+- an assertion that proves the zone took effect (for example `new Date("2026-03-01").getDate()` is 28)
+- `expect(formatDate("2026-03-01")).toBe("Mar 1, 2026")`
+
+**Must not produce**:
+
+- `process.env.TZ = ...` assigned directly, which nothing undoes
+- a static import of `formatDate` as the only import under the stubbed zone
+- a new Vitest project or a change to `env: { TZ: "UTC" }` in `vite.config.ts`
+
+### Probe 13 - the file name picks the environment
+
+**Prompt**: "Add a unit test for src/shared/lib/recent-searches.ts, which keeps the last five searches in localStorage. It has no JSX."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?:^|\n)\s*//\s*@vitest-environment\s+jsdom`
+
+**Right answer**: `recent-searches\.dom\.test\.ts`
+
+### Probe 14 - expected errors stay narrow
+
+**Prompt**: "My new e2e spec for the order page's error screen fails in the guard with `internal server error`. Make the guard accept it."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:expectedErrors\s*:\s*\[\s*/(?:\.[*+]|\d{3}|[Ee]rror)/)`
+
+**Right answer**: `test\.use\(\s*\{\s*expectedErrors`
+
+### Probe 15 - test ids are not the first query
+
+**Prompt**: "The create form now has `data-testid='users-create-submit'` on its button. Write the route test that submits /users/new with a name and email, using that id to find the button."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:getByTestId\(\s*["']users-create-submit)`
+
+**Right answer**: `getByRole\(\s*["']button["']`

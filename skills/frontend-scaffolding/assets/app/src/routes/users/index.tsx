@@ -4,6 +4,7 @@ import * as z from "zod";
 import { getListUsersQueryOptions, getListUsersSuspenseQueryOptions } from "@/api/generated/api";
 import { pageCount, toListParams } from "@/features/users/pagination";
 import { UserTable } from "@/features/users/user-table";
+import { loadQuery } from "@/shared/lib/load-query";
 
 // `.catch(undefined)`: a hand-edited URL falls back to the first page instead of failing.
 const searchSchema = z.object({
@@ -13,13 +14,10 @@ const searchSchema = z.object({
 export const Route = createFileRoute("/users/")({
   validateSearch: searchSchema,
   loaderDeps: ({ search }) => toListParams(search.page ?? 1),
-  // Same key and fetch as the component's suspense options; `query()` rejects those under
+  // Same key and fetch as the component's suspense options; `loadQuery` rejects those under
   // exactOptionalPropertyTypes.
   loader: async ({ context, deps }) => {
-    const users = await context.queryClient.query({
-      ...getListUsersQueryOptions(deps),
-      staleTime: "static",
-    });
+    const users = await loadQuery(context.queryClient, getListUsersQueryOptions(deps));
     // A page past the end (an edited URL, the last user on it deleted) opens the last page.
     if (users.items.length === 0 && deps.offset > 0) {
       const last = pageCount(users);
@@ -41,7 +39,7 @@ function UsersPage() {
   const pages = pageCount(data);
 
   return (
-    <>
+    <div data-testid="users-list-page" className="flex flex-col gap-4">
       <title>Users</title>
       <h1 className="font-semibold text-2xl">Users</h1>
       <UserTable users={data.items} />
@@ -64,6 +62,6 @@ function UsersPage() {
           Next
         </Link>
       </nav>
-    </>
+    </div>
   );
 }

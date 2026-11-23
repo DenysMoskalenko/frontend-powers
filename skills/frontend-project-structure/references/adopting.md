@@ -13,6 +13,14 @@ stub that does the same job), user-event, the React Compiler in `vite.config.ts`
 that need an absent piece do not apply until the step that adopts it. A helper with a template name
 (`apiFetch`, `ApiError`, `createAppRouter`) may have another shape: read it before relying on it.
 
+On older package versions two APIs the skills use do not exist yet; check the installed versions
+before copying an example:
+
+- `queryClient.query()`, which `loadQuery` calls, is first in TanStack Query 5.102; an older 5.x
+  loader keeps the project's existing read (`ensureQueryData` or `fetchQuery`).
+- `server.listen({ onUnhandledFrame })` is first in MSW 3; MSW 2 takes
+  `onUnhandledRequest: "error"`.
+
 ## The order
 
 Each step leaves the project's own lint, tests and build green and changes no behaviour but its

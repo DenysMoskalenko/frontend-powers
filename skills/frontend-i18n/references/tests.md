@@ -5,6 +5,8 @@ Contents
 - [`renderRoute` with an instance](#renderroute-with-an-instance)
 - [Route tests](#route-tests)
 - [The setup module's own test](#the-setup-modules-own-test)
+- [The first load](#the-first-load)
+- [Field errors in two languages](#field-errors-in-two-languages)
 - [What covers a missing key](#what-covers-a-missing-key)
 - [No nested `$t()` with options](#no-nested-t-with-options)
 
@@ -112,16 +114,15 @@ those tests pass with a missing key, a wrong plural form and a dropped variable.
 
 ## The setup module's own test
 
-`pickLanguage`, the stored choice and the language side effects are app logic, tested beside
-`src/app/i18n.ts`. Nothing here depends on message text:
+`pickLanguage`, the stored choice, the language side effects and a failed message file are app
+logic, tested beside `src/app/i18n.ts`; the file needs the DOM. A namespace with no file stands in
+for a message chunk that fails to download: the backend's `read` throws for it, as a failed import
+rejects.
 
 ```ts,verify,test
-// file: src/app/i18n.test.ts
-import { afterEach, expect, test } from "vitest";
-import * as z from "zod";
+// file: src/app/i18n.dom.test.ts
+import { expect, test, vi } from "vitest";
 import { createI18n, pickLanguage } from "@/app/i18n";
-
-afterEach(() => localStorage.clear());
 
 test.each([
   [["ru", "en-US"], "ru"],
@@ -144,7 +145,7 @@ test("the first language waits for every namespace and is not stored as a choice
   expect(localStorage.getItem("app.language")).toBeNull();
 });
 
-test("a switch sets the page language, zod's messages and the stored choice", async () => {
+test("a switch sets the page language and the stored choice", async () => {
   const { i18n } = createI18n("en", {});
 
   await i18n.changeLanguage("ru");
@@ -152,28 +153,220 @@ test("a switch sets the page language, zod's messages and the stored choice", as
   expect(document.documentElement).toHaveAttribute("lang", "ru");
   expect(document.documentElement).toHaveAttribute("dir", "ltr");
   expect(localStorage.getItem("app.language")).toBe("ru");
-  expect(z.string().min(2).safeParse("a").error?.issues[0]?.message).toBe(
-    "Слишком маленькое значение: ожидалось, что string будет иметь >=2 символа",
+});
+
+test("a message file that fails at start rejects ready", async () => {
+  const { i18n, ready } = createI18n("ru");
+  void i18n.reloadResources("ru", "missing");
+
+  await expect(ready).rejects.toThrow("The ru/missing messages did not load");
+});
+
+test("a switch to a language whose file fails is reported and keeps the current language", async () => {
+  const reported = vi.fn();
+  vi.stubGlobal("reportError", reported);
+  const { i18n, ready } = createI18n("en");
+  await ready;
+  await i18n.reloadResources("ru", "missing");
+
+  await i18n.changeLanguage("ru");
+
+  await vi.waitFor(() => expect(i18n.language).toBe("en"));
+  expect(reported).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "The ru/missing messages did not load" }),
   );
+  expect(document.documentElement).toHaveAttribute("lang", "en");
+  expect(localStorage.getItem("app.language")).toBeNull();
 });
 ```
 
-The second test loads the real files through the lazy backend, which keeps `src/app/i18n.ts`
-inside the coverage gate. `localStorage` survives between tests in a file, so this file clears it.
+The tests without `resources` load the real files through the lazy backend, which keeps
+`src/app/i18n.ts` inside the coverage gate. The two failure tests exercise i18next's own
+`failedLoading` path, not a stand-in for it.
+
+## The first load
+
+`main.tsx` starts the router's first load before it renders. `RouterProvider` sees that load,
+running or finished, and does not run the loaders again; the shell renders in every language
+without waiting:
+
+```tsx,verify,test
+// file: src/app/start.test.tsx
+import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import { render, screen, waitForElementToBeRemoved } from "@testing-library/react";
+import { expect, test } from "vitest";
+import { configureApi } from "@/api/fetcher";
+import { getListUsersMockHandler } from "@/api/generated/api.msw";
+import { createI18n, LANGUAGES } from "@/app/i18n";
+import { createAppRouter } from "@/app/router";
+import { buildUser } from "@/test/factories/user";
+import { renderRoute, TEST_API_ORIGIN } from "@/test/render-route";
+import { server } from "@/test/server";
+
+test("a first load started before the render sends its request once", async () => {
+  let requests = 0;
+  server.use(
+    getListUsersMockHandler(() => {
+      requests += 1;
+      return { items: [buildUser({ name: "Ada Lovelace" })], total: 1, limit: 20, offset: 0 };
+    }),
+  );
+  configureApi({ baseUrl: TEST_API_ORIGIN });
+  const { i18n } = createI18n("en", {});
+  const router = createAppRouter({
+    history: createMemoryHistory({ initialEntries: ["/users"] }),
+    i18n,
+  });
+
+  const loading = router.load();
+  render(<RouterProvider router={router} />);
+  await loading;
+
+  expect(await screen.findByRole("link", { name: "Ada Lovelace" })).toBeInTheDocument();
+  expect(requests).toBe(1);
+});
+
+test.each(LANGUAGES)("the layout shows during a first load in %s", async (language) => {
+  const { promise: answered, resolve: answer } = Promise.withResolvers<void>();
+  server.use(
+    getListUsersMockHandler(async () => {
+      await answered;
+      return { items: [], total: 0, limit: 20, offset: 0 };
+    }),
+  );
+
+  renderRoute("/users", { language });
+
+  expect(await screen.findByRole("navigation", { name: "Main" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox")).toHaveValue(language);
+  expect(document.documentElement).toHaveAttribute("lang", language);
+  answer();
+  await waitForElementToBeRemoved(screen.getByRole("progressbar"));
+});
+```
+
+With `keycloak-spa-auth`, the first test's `createAppRouter` also takes
+`session: createSession(fakeIdentity())`.
+
+## Field errors in two languages
+
+The bound field is `src/shared` code, which cannot import `src/app/i18n.ts`: its test builds a bare
+instance with messages of its own, so it checks the mapping, not the app's text:
+
+```tsx,verify,test
+// file: src/shared/hooks/use-app-form.test.tsx
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createInstance } from "i18next";
+import { I18nextProvider } from "react-i18next";
+import { expect, test } from "vitest";
+import * as z from "zod";
+import { ApiError } from "@/api/api-error";
+import { useAppForm } from "@/shared/hooks/use-app-form";
+
+const resources = {
+  en: {
+    common: {
+      fieldErrors: {
+        taken: "This value is already taken.",
+        tooShort_one: "Enter at least {{count}} character.",
+        tooShort_other: "Enter at least {{count}} characters.",
+      },
+    },
+  },
+  ru: {
+    common: {
+      fieldErrors: {
+        taken: "Это значение уже занято.",
+        tooShort_one: "Введите не меньше {{count}} символа.",
+        tooShort_few: "Введите не меньше {{count}} символов.",
+        tooShort_many: "Введите не меньше {{count}} символов.",
+        tooShort_other: "Введите не меньше {{count}} символа.",
+      },
+    },
+  },
+};
+
+function NameForm({ save }: { save: (name: string) => Promise<void> }) {
+  const form = useAppForm({
+    defaultValues: { name: "" },
+    validators: { onSubmit: z.object({ name: z.string().min(2) }) },
+    onSubmit: ({ value }) => save(value.name),
+  });
+  return (
+    <form.AppForm>
+      <form.Form failed="Not saved.">
+        <form.AppField name="name">{(field) => <field.TextField label="Name" />}</form.AppField>
+        <form.SubmitButton pending="Saving">Save</form.SubmitButton>
+      </form.Form>
+    </form.AppForm>
+  );
+}
+
+function renderForm(save: (name: string) => Promise<void>) {
+  const i18n = createInstance();
+  void i18n.init({
+    lng: "en",
+    fallbackLng: "en",
+    defaultNS: "common",
+    resources,
+    initAsync: false,
+  });
+  render(
+    <I18nextProvider i18n={i18n}>
+      <NameForm save={save} />
+    </I18nextProvider>,
+  );
+  return { i18n, user: userEvent.setup() };
+}
+
+test("a schema error is the app's text in the active language, and follows a switch", async () => {
+  const { i18n, user } = renderForm(async () => {});
+
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  const name = screen.getByRole("textbox", { name: "Name" });
+  expect(name).toHaveAccessibleDescription("Enter at least 2 characters.");
+
+  await act(() => i18n.changeLanguage("ru"));
+
+  expect(name).toHaveAccessibleDescription("Введите не меньше 2 символов.");
+});
+
+test.each([
+  ["unique", "Это значение уже занято."],
+  ["not_a_known_code", "name rejected by the server"],
+])("a server error with code %s shows %j", async (code, text) => {
+  const { i18n, user } = renderForm(async () => {
+    throw new ApiError({
+      status: 422,
+      message: "Unprocessable",
+      fieldErrors: { name: [{ code, message: "name rejected by the server" }] },
+      body: null,
+    });
+  });
+  await act(() => i18n.changeLanguage("ru"));
+  const name = screen.getByRole("textbox", { name: "Name" });
+  await user.type(name, "Ada");
+
+  await user.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() => expect(name).toHaveAccessibleDescription(text));
+});
+```
 
 ## What covers a missing key
 
 | Mistake | Caught by |
 | --- | --- |
-| key in code, not in `en` | `tsc` (typed keys), `status`, `extract --ci` |
-| key in `en`, empty or absent in `ru` | `status` |
+| key in code, not in `en` | `tsc` (typed keys), `extract --ci` |
+| key in `en`, empty or absent in `ru` | `status`, before a release (the screen shows English until then) |
 | variable missing in the call | `tsc` |
 | variable dropped in a translation | `lint` (`checkTranslationPlaceholders`) |
 | plural forms missing or out of order | `extract --ci` |
 | a screen that renders the wrong key | the route test asserting the visible text |
 
 No test asserts a key or loops over JSON files to compare languages: the gates already do, on every
-file, in `pnpm check`. The one file loop is the guard below, which no gate covers.
+file. The one file loop is the guard below, which no gate covers.
 
 ## No nested `$t()` with options
 

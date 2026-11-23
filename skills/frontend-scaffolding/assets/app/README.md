@@ -20,7 +20,7 @@ stub: `pnpm exec node e2e/stub-api.ts` (port 4010, the pinned Node) and
 ```bash
 pnpm check          # Biome, tsc, knip, Vitest
 pnpm test:coverage  # Vitest with the 80 % line and branch thresholds
-pnpm exec playwright install chromium  # once per machine: the browser for test:e2e
+pnpm exec playwright install chromium webkit  # once per machine: the browsers for test:e2e
 pnpm test:e2e       # Playwright against the production build and the stub API
 pnpm hooks          # once per clone: install the pre-commit hooks
 ```

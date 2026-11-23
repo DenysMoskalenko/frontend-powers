@@ -22,8 +22,9 @@ Component API design for kit components belongs to `vercel-composition-patterns`
 - Inside `packages/` import `./file` or another package by name, never `@/`: in an app's `tsc`
   the alias silently resolves to that app's `src/`.
 - Every version lives in `catalog:`; a package takes React, Base UI, Query, zod and the like as
-  `peerDependencies` plus `devDependencies`, both `"catalog:"`; own packages are `"workspace:*"`,
-  written by hand (`pnpm add` would move the reference into the catalog).
+  `peerDependencies` plus `devDependencies`, both `"catalog:"` (a published package's peers:
+  `"catalog:peers"`, below); own packages are `"workspace:*"`, written by hand (`pnpm add` would
+  move the reference into the catalog).
 
 ## References
 
@@ -48,7 +49,7 @@ Component API design for kit components belongs to `vercel-composition-patterns`
 | Node-side code to share (a Vite plugin, scripts) | a copy per app: Node refuses `.ts` under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), which the workspace link hides until the first registry consumer |
 
 In-repository packages are `"private": true` with no `version`. Publishing adds `version`,
-`files`, `versioning.fixed`, `registries`, change intents and a tag job.
+`files`, `versioning.fixed`, `registries`, a `peers` catalog, change intents and a tag job.
 
 ## Layout
 
@@ -84,40 +85,32 @@ link and a registry install alike; without it the app emits none of the kit-only
 
 ## One version
 
-- `catalogMode: strict` makes `pnpm --filter <project> add <pkg>` write the catalog entry; a
-  version outside it fails with `ERR_PNPM_CATALOG_VERSION_MISMATCH`.
-- A hand-written version still installs; `pnpm peers check` in CI fails when it meets a
-  package's peer.
-- A package's `dependencies` hold only libraries no app imports; shared ones are peers, or an
-  app bundles two copies and hooks or `instanceof` break.
+`catalogMode: strict` makes `pnpm add` write the catalog entry and fails another version with
+`ERR_PNPM_CATALOG_VERSION_MISMATCH`; `pnpm peers check` in CI catches a hand-written one. A package's `dependencies` hold only libraries no app
+imports: shared ones are peers, or an app bundles two copies and hooks or `instanceof` break.
 
 ## Boundaries
 
-```text
-apps/*  ->  packages/*  ->  (other packages it declares)
-```
-
-Apps never import each other; a package imports only packages its `package.json` declares
-(`noUndeclaredDependencies`). The kit and the client stay independent: a component that needs
-`ApiError` or the router stays in the app (`route-error.tsx`). `boundaries.grit` gains
-`A package never imports @/`.
+`apps/* -> packages/* -> (other packages it declares)`: apps never import each other, a package
+imports only what its `package.json` declares (`noUndeclaredDependencies`), and the kit and the
+client stay independent, so a component that needs `ApiError` or the router stays in the app
+(`route-error.tsx`). `boundaries.grit` gains `A package never imports @/`.
 
 ## The two packages
 
-- UI kit: `button`, `text-field`, `toast` and `cx` move to `packages/ui/src/`, the tokens and
-  `@theme` blocks to its `styles.css`; each app's CSS imports `tailwindcss`, then
-  `@org/ui/styles.css`. Kit tests render one wrapper; `apps/ui-harness` renders all of them and
-  its Playwright spec fails on any CSP error in the production build.
-- API client: `openapi.json`, `orval.config.ts`, `fetcher.ts`, `api-error.ts` and the generated
-  files move to `packages/api/`. Each app calls `configureApi` from `@org/api/fetcher` in its
-  own `main.tsx` and `renderRoute`, and keeps `src/app/zod-config.ts` and the `zod` group in its
-  `vite.config.ts`; CI fails on a diff after `pnpm --filter @org/api api:generate`.
+`packages/ui` takes the wrappers and tokens, `packages/api` the spec, orval's output, `fetcher.ts`
+and `api-error.ts`. Each app keeps its own `configureApi` call (in `main.tsx` and `renderRoute`),
+`src/app/zod-config.ts` with the `zod` chunk group, and imports `tailwindcss` before
+`@org/ui/styles.css`; `apps/ui-harness` fails on any CSP error in the production build. Files and
+tests: packages reference.
 
 ## Release, when packages are published
 
 One `versioning.fixed` group, `pnpm change` in every change to `packages/`, `pnpm version -r`
-merged as a normal change, then a `v<version>` tag whose CI job publishes; consumers map the scope
-in `registries` and exclude `"@org/*"` from the cooldown (`references/ci-and-release.md`).
+merged as a normal change, then a `v<version>` tag whose CI job publishes. Peers are written
+`"catalog:peers"`, a named catalog of ranges: `"catalog:"` publishes the exact version and forces
+the consumer's React, Base UI and zod to the patch. Consumers map the scope in `registries` and
+exclude `"@org/*"` from the cooldown (`references/ci-and-release.md`).
 
 ## Prior-version corrections
 
@@ -134,7 +127,7 @@ in `registries` and exclude `"@org/*"` from the cooldown (`references/ci-and-rel
 | `"pnpm": { "overrides": … }` in `package.json`, `.npmrc` `link-workspace-packages` | `pnpm-workspace.yaml`; pnpm 12 ignores the field with `[WARN] The "pnpm" field in package.json is no longer read`, the key silently |
 | `.npmrc` `@org:registry=https://…` | `registries:` in `pnpm-workspace.yaml`, URL as the key |
 | `//host/:_authToken=${NPM_TOKEN}` in the repository `.npmrc` | the user-level `~/.npmrc`, written in CI |
-| peers `"react": "^18 \|\| ^19"` | `"catalog:"`, published as the exact catalog version |
+| peers `"react": "^18 \|\| ^19"` written by hand | `"catalog:"` in the workspace; `"catalog:peers"`, a named catalog of ranges, in a published package |
 | `@source "../node_modules/@org/ui"` or a `content` glob in each app | `@source "./";` in the kit's CSS |
 | `storybook` for the kit | `apps/ui-harness`: it runs the kit's production build under the production CSP, which a Storybook preview does not |
 

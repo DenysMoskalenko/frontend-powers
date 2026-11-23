@@ -24,8 +24,9 @@
         "noMisusedPromises": "error",
         "noTailwindArbitraryValue": "error",
         "noTailwindLegacyUtilities": "error",
-        "noTailwindRawColors": "error",
+        "noTailwindRawColors": { "level": "error", "options": { "allowBlackAndWhite": false } },
         "noTailwindRestyledComponents": "error",
+        "useExhaustiveSwitchCases": "error",
         "useReactCompiler": "error",
         "useTailwindShorthandClasses": "error",
         "useTailwindStaticClassStrings": "error",
@@ -49,6 +50,27 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["src/**", "!src/test/**", "!**/*.test.ts", "!**/*.test.tsx"],
+      "linter": {
+        "rules": {
+          "correctness": { "noNodejsModules": "error" },
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "process": "Browser code has no process: read a build-time value from import.meta.env.",
+                  "Buffer": "Browser code has no Buffer: use Uint8Array, TextEncoder or btoa.",
+                  "global": "Browser code has no global: use globalThis.",
+                  "require": "Browser code has no require: use import."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "includes": ["src/routes/**"],
       "linter": { "rules": { "style": { "useFilenamingConvention": "off" } } }

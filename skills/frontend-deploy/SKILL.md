@@ -16,35 +16,26 @@ CSP directive semantics, Trusted Types policy mechanics and HTML sanitization be
 ## Important
 
 - Everything in `import.meta.env` ships in the bundle. Only public addresses the browser calls go there, named `PUBLIC_*` and listed in `PUBLIC_ENV`; the app is built once per environment. Each is a bare origin, pasted into `connect-src`; the one exception is an optional `*_URL` (the Faro collector, whose path carries its key), and the build checks its origin the same way (telemetry reference). Any other value (a release id) never goes through `PUBLIC_*`: it is a build-time `define`, and feature flags come from an endpoint (`frontend-project-structure`).
-- Response headers come only from `deploy/headers.ts`, and the build refuses a `PUBLIC_*` origin that is not bare, a wildcard included. A CSP violation is fixed in the code that caused it, never with `'unsafe-inline'`, `'unsafe-eval'`, a wildcard or a Trusted Types policy.
-- Never turn a string into HTML, script or style (table below): Trusted Types blocks it in production only, so only `pnpm test:e2e`, whose guard fails on the violation, proves the fix.
+- Response headers come only from `deploy/headers.ts`, and the build refuses a `PUBLIC_*` origin that is not bare, a wildcard included. A CSP violation is fixed in the code that caused it, never with `'unsafe-inline'`, `'unsafe-eval'`, a wildcard or a Trusted Types policy; a source the code cannot avoid is an exception only the user approves, written in its narrowest form (headers reference).
+- Never turn a string into HTML, script or style (table below): Trusted Types blocks it in the production build and in Chromium only, so only `pnpm test:e2e`, whose guard fails on the violation, proves the fix.
 
 ## References
 
-- `references/headers-and-csp.md` — `deploy/headers.ts`, `isBareOrigin`, each directive's violation text, allowed and refused changes. Open before touching a header.
+- `references/headers-and-csp.md` — `deploy/headers.ts`, adding a `PUBLIC_*` origin, `isBareOrigin`, each directive's violation text, allowed changes and approved exceptions, `report-to`. Open before adding an origin or touching a header.
 - `references/client-security.md` — `safeHref` and `sameOriginPath` with a test, new windows, `postMessage`, web storage. Open when a URL, window or message comes from outside the app.
 - `references/cloudflare.md` — `wrangler.jsonc`, environments, `wrangler deploy --env`, `_headers`, the missing-asset limit, the stale-chunk reload. Open for any Cloudflare change.
-- `references/container.md` — `Dockerfile`, `deploy/Caddyfile`, run flags, the Kubernetes security context, the curl checklist for both targets. Open for the image or to prove a release.
-- `references/telemetry.md` — the Grafana Faro add-on: `PUBLIC_FARO_URL`, the release id, `startTelemetry`, URL scrubbing, tracing, source maps. Open when adding observability.
+- `references/container.md` — `Dockerfile`, `deploy/Caddyfile`, why one image per environment, run flags, the Kubernetes security context, the curl checklist for both targets. Open for the image, the release pipeline, or to prove a release.
+- `references/telemetry.md` — the Grafana Faro add-on: `PUBLIC_FARO_URL`, the release id, `startTelemetry`, URL scrubbing, tracing, source maps, CSP violations in production. Open when adding observability.
 
 ## Per-environment configuration
 
-One build and image per environment: the origins land in the bundle and in the CSP. A release process that requires one promoted artifact is the user's decision; the variant that keeps the CSP strict renders the header files from `deploy/headers.ts` at deploy time and serves a same-origin `/config.json` validated before the first render, while substitution inside built JavaScript and an inline config script stay forbidden.
-
-Adding an origin the browser calls, in six places (`PUBLIC_AUTH_ORIGIN` as the example):
-
-1. `vite.config.ts`: add the name to `PUBLIC_ENV`, before any optional `*_URL` name. The list validates it, exposes it and adds it to `connect-src`.
-2. `src/vite-env.d.ts`: `readonly PUBLIC_AUTH_ORIGIN: string;` in `ImportMetaEnv`.
-3. `src/app/env.ts`: `authOrigin: import.meta.env.PUBLIC_AUTH_ORIGIN,`.
-4. `.env.development`: the local value, `PUBLIC_AUTH_ORIGIN=http://localhost:8080`.
-5. `playwright.config.ts`: the same value in the preview server's `env`, next to `PUBLIC_API_ORIGIN`: the production build ignores `.env.development`. An origin the end-to-end build dials needs a server the end-to-end run starts, or a mock; the add-on's own test reference shows it.
-6. A placeholder next to `PUBLIC_API_ORIGIN` in `.github/workflows/ci.yml` (`env:`) and `.gitlab-ci.yml` (`variables:`), the real value in each deploy job, and `ARG PUBLIC_AUTH_ORIGIN` before `RUN pnpm build` in the `Dockerfile`.
-
-Then `pnpm check`, `pnpm build` (check that `dist/_headers` lists the origin in `connect-src`) and `pnpm test:e2e`.
-
-A realtime origin is listed as the browser dials it, `wss://rt.example.com` (`ws://` locally): Chromium does not let `connect-src https://rt.example.com` open the socket.
-
-The value is a bare origin (no path, no trailing slash) because it is pasted into the CSP. `vite`, `vite build` and `vite preview` stop on `Error: PUBLIC_AUTH_ORIGIN is not set` (set it in the shell, `.env.development`, CI or the image's `ARG`) and on `Error: PUBLIC_AUTH_ORIGIN is not a bare origin: https://id.example.com/realms/app` (keep the path in code: `` `${env.authOrigin}/realms/app` ``).
+One build per environment: the origins are inlined into the bundle and the generated CSP. The
+cost (production runs a bundle staging did not run), the mitigation and whose decision the
+pipeline shape is are in the container reference. An origin the browser calls is added in six
+places, listed in the headers reference. Each value is a bare origin; `vite`, `vite build` and
+`vite preview` stop on `Error: PUBLIC_AUTH_ORIGIN is not set` and on
+`Error: PUBLIC_AUTH_ORIGIN is not a bare origin: https://id.example.com/realms/app` (keep the path
+in code). A realtime origin is listed as `wss://`.
 
 ## The headers
 
@@ -58,18 +49,19 @@ Also HSTS, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP `same-origin
 
 ## Client-side rules the policy enforces
 
-These break only in the production build (jsdom has no CSP), where the E2E guard fixture fails on the messages; writing those tests is `frontend-testing`'s.
+They break only in the production build (jsdom has no CSP), where the end-to-end guard fails on the
+message; writing those tests is `frontend-testing`'s.
 
 | Rule | What breaking it prints |
 |---|---|
-| Render text, never an HTML string: no `dangerouslySetInnerHTML`, `innerHTML`, `insertAdjacentHTML`, `document.write`, `DOMParser`. HTML from an API or a user is shown as text; showing its markup needs a new package, so stop and let the user choose (headers reference) | `This document requires 'TrustedHTML' assignment. The action has been blocked.` |
-| No `<script>` in JSX, no `onclick="…"`, no `javascript:` URL, no `setTimeout("code")` | `This document requires 'TrustedScript' assignment.` |
-| No `eval` or `new Function`, dependencies included; zod runs `jitless` (wired by `tanstack-query-api`) | `This document requires 'TrustedScript' assignment.`; the thrown `EvalError` says `… 'unsafe-eval' is not an allowed source of script` |
-| Dynamic styles through `style={{ … }}`; no `style="…"` string, no runtime `<style>` | `Applying inline style violates the following Content Security Policy directive 'style-src 'self''` |
-| No `data:` images or fonts (`build.assetsInlineLimit: 0`); a `blob:` preview needs `img-src 'self' blob:` | `Loading the image 'data:…' violates the following Content Security Policy directive: "default-src 'self'"` |
-| No third-party script: tag manager, analytics, chat widget, CDN | `This document requires 'TrustedScriptURL' assignment.` |
+| Render text, never an HTML string (`dangerouslySetInnerHTML`, `innerHTML`, `DOMParser`); showing markup needs a package the user chooses (headers reference) | `This document requires 'TrustedHTML' assignment. The action has been blocked.` |
+| No `<script>` in JSX, `onclick="…"`, `javascript:` URL, `eval`, `new Function`, `setTimeout("code")`; zod runs `jitless` | `This document requires 'TrustedScript' assignment.` |
+| Dynamic styles through `style={{ … }}`, never a `style="…"` string or runtime `<style>` | `Applying inline style violates the following Content Security Policy directive 'style-src 'self''` |
+| No `data:` images or fonts (`build.assetsInlineLimit: 0`) | `Loading the image 'data:…' violates the following Content Security Policy directive: "default-src 'self'"` |
+| No third-party script (tag manager, analytics, widget, CDN) | `This document requires 'TrustedScriptURL' assignment.` |
 
-Rules that print nothing when broken, for outside URLs (`safeHref`, `sameOriginPath`), new windows and COOP, `postMessage` and web storage, are in the client-security reference. Libraries that inject `<style>` and the CSP-safe UI picks are `tailwind-base-ui`'s.
+Outside URLs (`safeHref`, `sameOriginPath`), new windows, `postMessage` and web storage print
+nothing when broken: client-security reference. Style-injecting libraries are `tailwind-base-ui`'s.
 
 ## Hosting
 
@@ -83,7 +75,7 @@ Cloudflare Workers static assets by default, or the Caddy container on `scratch`
 | `index.html`, deep links, `public/` files | `no-cache` |
 | a missing `/assets/*` file | container: 404 `no-cache`; Cloudflare: `index.html`, 200, `immutable` (known limit) |
 
-A tab opened before a deploy asks for chunks the new build removed: `reloadOnStaleChunk()` (`src/app/error-reporting.ts`) reloads once per deploy on either target, never twice within 60 s, so a truly broken chunk shows the route error, not a reload loop.
+A tab opened before a deploy asks for chunks the new build removed. `reloadOnStaleChunk(router)` (`src/app/error-reporting.ts`) reloads only while a navigation is pending, never twice within 60 s: a preload on hover fails quietly, a click onto a missing route chunk reloads once onto the new build, and a non-route lazy import that fails rejects to its importer (Cloudflare reference).
 
 ## Observability
 
@@ -98,18 +90,18 @@ Grafana Faro is an add-on, loaded only when the build sets `PUBLIC_FARO_URL` (te
 | `wrangler pages deploy`, `pages_build_output_dir`, Workers Sites `site.bucket`, `wrangler.toml` | `assets.directory` in `wrangler.jsonc`, `wrangler deploy` |
 | a hand-written `public/_headers` | generated from `deploy/headers.ts` |
 | an `nginx` or `static-web-server` image | Caddy on `scratch`: `static-web-server` 2.44.3 serves a missing chunk as `index.html` with `immutable` and its 3.0 betas keep `immutable` on the 404; revisit when a release serves a missing `/assets/*` file as an uncached 404 and answers HEAD like GET |
-| `@sentry/react` | the Grafana Faro add-on |
 
 ## Red Flags — STOP
 
 | About to… | Do this instead |
 |---|---|
 | read `import.meta.env.PUBLIC_*` in a component | read `env` from `@/app/env` in the route and pass the value down (placement: `frontend-project-structure`) |
-| substitute values inside built JavaScript, or add an inline config script | one build per environment, or the promoted-artifact variant above: the inline script needs a CSP exception |
+| substitute values inside built JavaScript, add an inline config script or a runtime `/config.json` | one build per environment; how a pipeline promotes artifacts is the platform team's decision |
 | create a Trusted Types policy, edit `trusted-types`, or `pnpm add` an HTML parser | render text; describe the allow-list parser package and the sanitizer policy with their cost and stop: only the user decides |
 | add a `<script>` tag for analytics or a widget | refuse: it needs a CSP exception and runs with the user's session |
 | set `href={user.website}` or `location.href = returnTo` | `safeHref(user.website)`; `location.assign(sameOriginPath(returnTo))` |
 | add `immutable` outside `/assets/*`, or a fallback under it in Caddy | `no-cache`; a missing chunk is a 404, never `index.html` cached for a year |
 | set `build.sourcemap: true`, or deploy a `.map` file | `"hidden"`, uploaded from CI under the release id, never deployed (`.assetsignore`, `find dist -name '*.map' -delete`) |
-| `event.preventDefault()` in a `vite:preloadError` handler, as Vite's docs show | leave it uncancelled: cancelled, the router reports a TypeError on every stale-chunk recovery |
+| `event.preventDefault()` in a `vite:preloadError` handler, as Vite's docs show, or reload on every such event | leave it uncancelled and reload only while `router.state.status === "pending"`: cancelled, the router reports a TypeError; reloading on a hover's preload loses the page |
+| add `@sentry/react` or another tracker SDK | the Grafana Faro add-on: the organisation's telemetry backend is Faro |
 | set `workers_dev` or `preview_urls` to `true`, or enable gradual deployments | keep them off unless Cloudflare Access guards the URLs: they are public |

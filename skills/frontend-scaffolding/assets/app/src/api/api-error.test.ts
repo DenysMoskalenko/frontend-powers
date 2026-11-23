@@ -10,7 +10,12 @@ test("an axum ErrorBody keeps its message and request id, and maps validator det
     request_id: "req-1",
     details: {
       email: [{ code: "email", message: null, params: {} }],
-      address: { city: [{ code: "length", message: "too long", params: {} }] },
+      address: {
+        city: [
+          { code: "length", message: "too long", params: {} },
+          { code: "regex", message: "letters only", params: {} },
+        ],
+      },
     },
   });
 
@@ -18,7 +23,13 @@ test("an axum ErrorBody keeps its message and request id, and maps validator det
     status: 422,
     message: "validation failed",
     requestId: "req-1",
-    fieldErrors: { email: "email", "address.city": "too long" },
+    fieldErrors: {
+      email: [{ message: "email", code: "email" }],
+      "address.city": [
+        { message: "too long", code: "length" },
+        { message: "letters only", code: "regex" },
+      ],
+    },
   });
 });
 
@@ -31,8 +42,8 @@ test("a FastAPI validation error maps each location to a dotted field path", () 
   });
 
   expect(error.fieldErrors).toEqual({
-    email: "value is not a valid email address",
-    "address.city": "Field required",
+    email: [{ message: "value is not a valid email address", code: "value_error" }],
+    "address.city": [{ message: "Field required", code: "missing" }],
   });
 });
 
@@ -71,8 +82,8 @@ test("array items use TanStack Form's index syntax in both validation shapes", (
     detail: [{ loc: ["body", "items", 0, "name"], msg: "Field required" }],
   });
 
-  expect(axum.fieldErrors).toEqual({ "items[0].name": "length" });
-  expect(fastApi.fieldErrors).toEqual({ "items[0].name": "Field required" });
+  expect(axum.fieldErrors).toEqual({ "items[0].name": [{ message: "length", code: "length" }] });
+  expect(fastApi.fieldErrors).toEqual({ "items[0].name": [{ message: "Field required" }] });
 });
 
 test("pydantic's error-type prefix is dropped from a FastAPI field message", () => {
@@ -85,21 +96,30 @@ test("pydantic's error-type prefix is dropped from a FastAPI field message", () 
   });
 
   expect(error.fieldErrors).toEqual({
-    name: "name is reserved",
-    email: "not allowed",
-    role: "invalid",
+    name: [{ message: "name is reserved", code: "value_error" }],
+    email: [{ message: "not allowed", code: "assertion_error" }],
+    role: [{ message: "invalid", code: "assertion_error" }],
   });
 });
 
-test("a FastAPI field named like an Object.prototype member keeps its message", () => {
-  const error = toApiError(response(422), {
+test("a field named like an Object.prototype member keeps all its errors in both shapes", () => {
+  const fastApi = toApiError(response(422), {
     detail: [
       { loc: ["body", "constructor"], msg: "required" },
       { loc: ["body", "toString"], msg: "too long" },
+      { loc: ["body", "toString"], msg: "not ascii" },
     ],
   });
+  const axum = toApiError(response(422), {
+    error: "validation failed",
+    details: { constructor: [{ code: "required", message: null }] },
+  });
 
-  expect(error.fieldErrors).toEqual({ constructor: "required", toString: "too long" });
+  expect(fastApi.fieldErrors).toEqual({
+    constructor: [{ message: "required" }],
+    toString: [{ message: "too long" }, { message: "not ascii" }],
+  });
+  expect(axum.fieldErrors).toEqual({ constructor: [{ message: "required", code: "required" }] });
 });
 
 test("a hostile, deeply nested error body still becomes an ApiError", () => {

@@ -75,6 +75,42 @@
   display: none;
 }
 
+/* The bar __root.tsx shows during a navigation: hidden for 200 ms, so a fast one does not flash it. */
+.navigation-progress {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  z-index: 50;
+  height: 3px;
+  background: var(--color-accent);
+  transform-origin: left;
+  opacity: 0;
+  animation:
+    navigation-progress-show 0s 200ms forwards,
+    navigation-progress-grow 8s 200ms cubic-bezier(0.1, 0.7, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navigation-progress {
+    animation: navigation-progress-show 0s 200ms forwards;
+  }
+}
+
+@keyframes navigation-progress-show {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes navigation-progress-grow {
+  from {
+    scale: 0.05 1;
+  }
+  to {
+    scale: 0.9 1;
+  }
+}
+
 /* Popups portal to <body>; the app root is its own stacking context so they always sit above it. */
 #root {
   isolation: isolate;

@@ -4,11 +4,17 @@
 
 - [`src/app/oidc.ts`](#srcappoidcts)
 - [Defaults and behaviour in 3.5](#defaults-and-behaviour-in-35)
-- [`src/app/oidc.test.ts`](#srcappoidctestts)
+- [`src/app/oidc.dom.test.ts`](#srcappoidcdomtestts)
 
 `oidc-client-ts` 3.5 behind the same `IdentityProvider` contract, so `createSession`, the guard,
 `configureApi` and every route test stay as they are. Swap `startKeycloak(...)` for
 `startOidc({ authority: \`${env.authOrigin}/<issuer path>\`, clientId: "app-spa" })` in `main.tsx`.
+
+keycloak-js also accepts another provider (`new Keycloak({ oidcProvider: <issuer URL>, clientId })`,
+which reads the discovery document), but it decodes every token as a JWT, the refresh token
+included: a provider that issues an opaque refresh token fails the sign-in with
+`Unable to decode token, payload not found.` Use it only with a provider whose access and refresh
+tokens are both JWTs; check one token response before choosing.
 
 ## `src/app/oidc.ts`
 
@@ -97,9 +103,28 @@ export async function startOidc(settings: {
       return new Promise<never>(() => {});
     },
     async signOut() {
+      const endpoint = await manager.metadataService.getEndSessionEndpoint();
+      if (!endpoint) throw new Error("The identity provider has no end_session_endpoint");
       // The page the provider sends back reads it and tells the other tabs.
       save(SIGNED_OUT_KEY, "1");
-      await manager.signoutRedirect({ redirectMethod: "replace" });
+      // A form POST, as keycloak-js does: signoutRedirect() puts the ID token in the URL's query.
+      const form = document.createElement("form");
+      form.method = "post";
+      form.action = endpoint;
+      const fields = {
+        id_token_hint: user?.id_token ?? "",
+        client_id: settings.clientId,
+        post_logout_redirect_uri: appUrl.href,
+      };
+      for (const [name, value] of Object.entries(fields)) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = name;
+        input.value = value;
+        form.append(input);
+      }
+      document.body.append(form);
+      form.submit();
       return new Promise<never>(() => {});
     },
     justSignedOut,
@@ -128,7 +153,9 @@ function take(key: string) {
 ## Defaults and behaviour in 3.5
 
 Read in `oidc-client-ts` 3.5.0 `dist/esm/oidc-client-ts.js`; the rows marked (run) are asserted by
-`src/app/oidc.test.ts` against a fake provider. Not run against a real provider.
+`src/app/oidc.dom.test.ts` against a fake provider. The scaffold's end-to-end suite and the
+auth-tests reference's sign-out spec passed with `startOidc` against Keycloak 26.8 used as a plain
+OpenID provider (its issuer URL): sign-in, a refresh near expiry, sign-out by form POST, three tabs.
 
 | Default or behaviour | Why it is overridden or relied on |
 |---|---|
@@ -141,22 +168,24 @@ Read in `oidc-client-ts` 3.5.0 `dist/esm/oidc-client-ts.js`; the rows marked (ru
 | `signinSilent()` | uses the refresh token when the user has one. Without one it falls back to a hidden `prompt=none` iframe at `silent_redirect_uri`, which defaults to `redirect_uri`; the CSP blocks it and the call waits `silentRequestTimeoutInSeconds` (10). So `renew` ends the session itself and never calls it without a refresh token (run) |
 | concurrent `signinSilent()` | not serialized by the library: two parallel refreshes spend a rotated refresh token twice, so `renew` is single-flight |
 | `ErrorResponse` | thrown for an error answer from the provider (`invalid_grant`): the session ended (run) |
-| `signoutRedirect()` | adds `id_token_hint` from the stored user itself; sends no `state` unless given one |
+| `signoutRedirect()` | a GET with `id_token_hint` in the query, and no POST option: `signOut` posts a form to the discovery document's `end_session_endpoint` instead, as keycloak-js does, and the CSP's `form-action` names the provider's origin (session-module reference) |
 | `url_state` | travels through the provider in `state` and returns on `User.url_state`: the return path, still checked with `sameOriginPath` (run) |
 
 Older examples keep the defaults: tokens in `sessionStorage` and `automaticSilentRenew: true`. Here
 the user store is `InMemoryWebStorage` and a token renews on demand.
 
-The provider must issue refresh tokens to a public client with rotation, and list the app's root URL
-exactly as a redirect and post-logout URI, like the Keycloak client.
+The provider must issue refresh tokens to a public client with rotation, list the app's root URL
+exactly as a redirect and post-logout URI, like the Keycloak client, accept `response_mode=fragment`
+for the code flow, and accept the RP-initiated logout by POST (OpenID Connect RP-Initiated Logout
+requires it of a provider).
 
-## `src/app/oidc.test.ts`
+## `src/app/oidc.dom.test.ts`
 
 MSW answers the discovery document and the token endpoint; a stubbed `location` records where the
 page would go, as in the keycloak-js tests.
 
 ```ts,verify,test
-// file: src/app/oidc.test.ts
+// file: src/app/oidc.dom.test.ts
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test, vi } from "vitest";
 import { server } from "@/test/server";
@@ -199,7 +228,10 @@ async function signIn(returnTo: string, tokens: object, refresh = () => HttpResp
 
 beforeEach(() => {
   history.replaceState(null, "", "/");
+  document.body.replaceChildren();
   replace.mockReset();
+  // jsdom cannot navigate; the test reads the form the sign-out appended.
+  vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {});
   const page = location;
   vi.stubGlobal("location", {
     get href() {
@@ -276,11 +308,20 @@ test("a refused refresh ends the session", async () => {
   expect(provider.userId()).toBeUndefined();
 });
 
-test("only the page the logout comes back to reports the sign-out", async () => {
+test("sign-out posts the ID token hint in a form body, and only the page it returns to reports it", async () => {
   const provider = await signIn("/", { refresh_token: "r1" });
 
   void provider.signOut();
-  await vi.waitFor(() => expect(replace).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(HTMLFormElement.prototype.submit).toHaveBeenCalledOnce());
+  const form = document.querySelector("form");
+  expect(form?.method).toBe("post");
+  expect(form?.action).toBe(`${authority}/logout`);
+  expect(Object.fromEntries(new FormData(form ?? undefined))).toEqual({
+    id_token_hint: expect.stringMatching(/^ey/),
+    client_id: "app-spa",
+    post_logout_redirect_uri: `${location.origin}/`,
+  });
+  expect(replace).toHaveBeenCalledOnce();
   history.replaceState(null, "", "/");
 
   expect((await startOidc(settings)).justSignedOut).toBe(true);

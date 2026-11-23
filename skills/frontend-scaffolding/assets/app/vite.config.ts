@@ -3,8 +3,8 @@ import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
-import type { Plugin } from "vite";
-import { defineConfig } from "vitest/config";
+import type { Plugin, PluginOption, ResolvedConfig } from "vite";
+import { defaultExclude, defineConfig } from "vitest/config";
 import { caddyHeaders, cloudflareHeaders, headersFor, isBareOrigin } from "./deploy/headers.ts";
 
 // The only variables that reach the bundle. Each is public, and each is an origin the CSP allows.
@@ -81,26 +81,54 @@ export function entryBudget(limit: number): Plugin {
   };
 }
 
+/**
+ * The React Compiler, under Vitest too. A coverage run (`--coverage` or `coverage.enabled`) leaves it
+ * out: its memo caches double the branch count.
+ */
+function reactCompiler(): PluginOption[] {
+  const preset = reactCompilerPreset();
+  const rolldown = {
+    ...preset.rolldown,
+    configResolvedHook: (config: ResolvedConfig) => !config.test?.coverage?.enabled,
+  };
+  return [
+    babel({ presets: [{ ...preset, rolldown }] }),
+    {
+      name: "react-compiler-state",
+      // Read from Vitest's own resolved config, so a test can check the switch above.
+      configureVitest: ({ vitest, project }) => {
+        project.provide("reactCompiler", !vitest.config.coverage.enabled);
+      },
+    },
+  ];
+}
+
+declare module "vitest" {
+  interface ProvidedContext {
+    reactCompiler: boolean;
+  }
+}
+
 export default defineConfig({
   envPrefix: PUBLIC_ENV,
   resolve: { tsconfigPaths: true },
   plugins: [
-    // Both off under Vitest, where they would skew coverage (split chunks map back poorly, compiler
-    // memo caches double the branch count); E2E runs the production build with both.
+    // Off under Vitest, where split chunks map back poorly to coverage; E2E runs the production build.
     tanstackRouter({
       target: "react",
       autoCodeSplitting: !process.env.VITEST,
       routeFileIgnorePattern: String.raw`\.test\.tsx?$`,
     }),
     react(),
-    !process.env.VITEST && babel({ presets: [reactCompilerPreset()] }),
+    reactCompiler(),
     tailwindcss(),
     securityHeaders(PUBLIC_ENV),
     entryBudget(ENTRY_BUDGET_BYTES),
   ],
   build: {
-    // The browser floor: Tailwind 4 needs Firefox 128; the rest matches `lib: es2024` in tsconfig.json.
-    target: ["chrome119", "edge119", "firefox128", "safari17.4"],
+    // The browser floor: Baseline Widely Available at the last version audit (the newest releases on
+    // or before 23 May 2024), Firefox raised to 128 for Tailwind 4. It moves at every audit.
+    target: ["chrome125", "edge125", "firefox128", "safari17.5"],
     // An inlined data: URL would need data: in the CSP's img-src and font-src.
     assetsInlineLimit: 0,
     // Written for the error tracker's upload, never referenced from the bundle, never deployed.
@@ -117,9 +145,28 @@ export default defineConfig({
   server: { port: 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
   test: {
-    environment: "jsdom",
-    include: ["**/*.test.{ts,tsx}"],
-    setupFiles: ["src/test/setup.ts"],
+    // Chosen by file name: `*.test.tsx` and `*.dom.test.ts` get a DOM, every other `*.test.ts` runs in Node.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "node",
+          environment: "node",
+          include: ["**/*.test.ts"],
+          exclude: [...defaultExclude, "**/*.dom.test.ts"],
+          setupFiles: ["src/test/setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "dom",
+          environment: "jsdom",
+          include: ["**/*.test.tsx", "**/*.dom.test.ts"],
+          setupFiles: ["src/test/setup.ts", "src/test/setup-dom.ts"],
+        },
+      },
+    ],
     env: { TZ: "UTC" },
     restoreMocks: true,
     unstubGlobals: true,

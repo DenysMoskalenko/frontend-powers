@@ -313,6 +313,32 @@ def bump_pin_by_the_book(c: Path) -> None:
 
 case("pin_bump_lists_stale_copies", bump_pin_by_the_book, r"skills/(?!frontend-scaffolding/assets/app/package\.json)\S+:\d+: ERROR: stale version: msw [\d.]+, but STACK.md pins 99\.0\.0")
 
+# Browser floor
+FLOOR = r"{file}:{line}: ERROR: stale browser floor: {found}, but STACK.md states chrome\d+"
+
+
+def floor_error(found: str, file: str = r"skills/frontend-forms/references/[\w.-]+\.md", line: str = r"\d+") -> str:
+    return FLOOR.format(file=file, line=line, found=found)
+
+
+case("floor_target_token_stale", lambda c: append(c, first_reference(c), '\n```ts\nconst target = ["chrome119", "safari17.4"];\n```\n'), floor_error("chrome119"))
+case("floor_target_token_in_template", lambda c: sub(c, SCAFFOLD / "vite.config.ts", r'"safari[\d.]+"', '"safari16.4"'), floor_error("safari16.4", file=r"skills/frontend-scaffolding/assets/app/vite\.config\.ts"))
+case("floor_prose_stale", lambda c: append(c, first_reference(c), "\nOn the browser floor, Firefox 128 and\nSafari 17.4 ignore both directives.\n"), floor_error("Safari 17.4"))
+case("floor_prose_table_cell", lambda c: append(c, first_reference(c), "\n| Rule | Note |\n| --- | --- |\n| floor | the floor is Chrome 119 |\n"), floor_error("Chrome 119"))
+case("floor_prose_feature_version_allowed", lambda c: append(c, first_reference(c), "\nBelow the browser floor, `URL.parse` needs Safari 18; Trusted Types is enforced from Firefox 148 (first in Chrome 83, Safari 26).\n"), r"stale browser floor", present=False)
+case("floor_prose_without_floor_allowed", lambda c: append(c, first_reference(c), "\nThe fix is for iOS 26 Safari and Chrome 140.\n"), r"stale browser floor", present=False)
+case("floor_prior_version_first_cell_allowed", lambda c: append(c, first_reference(c), '\n## Prior-version notes\n\n| `target: ["chrome119"]` | the floor moved |\n'), r"stale browser floor", present=False)
+case("floor_prior_version_current_cell", lambda c: append(c, first_reference(c), '\n## Prior-version notes\n\n| old | `["chrome119"]` |\n'), floor_error("chrome119"))
+case("floor_missing_in_stack", lambda c: sub(c, "STACK.md", r'\["chrome\d+"', '["chromeX"'), r"STACK\.md:1: ERROR: states no browser floor")
+
+
+def move_floor_by_the_book(c: Path) -> None:
+    """The floor moves in STACK.md only: the template and every skill copy are reported."""
+    sub(c, "STACK.md", r'\["chrome\d+", "edge\d+"', '["chrome126", "edge126"')
+
+
+case("floor_move_lists_stale_copies", move_floor_by_the_book, floor_error(r"chrome125", file=r"skills/frontend-scaffolding/assets/app/vite\.config\.ts"))
+
 # --base
 case("base_unknown_ref", lambda c: None, r"git diff against 'no-such-ref' failed", "--base", "no-such-ref", git=True, baseline_clean=False)
 case("base_skill_changed_without_bump", lambda c: append(c, SKILL, "\nOne more line.\n"), r"skills/frontend-forms/ changed since base but metadata.version is still", "--base", "base", git=True)

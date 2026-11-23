@@ -48,6 +48,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, and by hand: the full audit. In a public repository GitHub disables the schedule after
+  # 60 days without repository activity.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -62,6 +67,7 @@ env:
 
 jobs:
   check:
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -84,6 +90,8 @@ jobs:
       - run: pnpm --filter @org/api api:generate && git diff --exit-code packages/api/src/generated
       - run: pnpm exec vitest run --dir biome-plugins
       - run: pnpm --filter "./packages/*" test
+      # Coverage switches the React Compiler off, so this run is the one that tests compiled components.
+      - run: pnpm --filter "./apps/*" test
       - run: pnpm -r test:coverage --reporter=default --reporter=junit --outputFile.junit=test-results/vitest-junit.xml
       - run: pnpm build
       - if: ${{ !cancelled() }}
@@ -95,7 +103,9 @@ jobs:
             apps/*/test-results/
           retention-days: 14
 
+  # Gates a merge: what ships to the browser, at high and above. A dev-only advisory waits for the weekly run.
   audit:
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -105,9 +115,23 @@ jobs:
       - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
         with:
           install: false
-      - run: pnpm audit --audit-level=high
+      - run: pnpm audit --prod --audit-level=high
+
+  audit-full:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
+      - run: pnpm audit --audit-level=moderate
 
   e2e:
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -145,6 +169,7 @@ stays as is):
 
 ```diff
  check:
+   extends: .not-scheduled
    stage: check
    script:
      # Every installed tarball carries a valid registry signature, also through a mirror or proxy.
@@ -157,11 +182,14 @@ stays as is):
      # The committed client must be what openapi.json generates (the image has no git).
 -    - cp -R src/api/generated /tmp/generated-committed
 -    - pnpm api:generate && diff -r /tmp/generated-committed src/api/generated
--    - pnpm exec vitest run --coverage --reporter=default --reporter=junit --outputFile.junit=test-results/vitest-junit.xml
 +    - cp -R packages/api/src/generated /tmp/generated-committed
 +    - pnpm --filter @org/api api:generate && diff -r /tmp/generated-committed packages/api/src/generated
 +    - pnpm exec vitest run --dir biome-plugins
 +    - pnpm --filter "./packages/*" test
+     # Coverage switches the React Compiler off, so this run is the one that tests compiled components.
+-    - pnpm test
+-    - pnpm exec vitest run --coverage --reporter=default --reporter=junit --outputFile.junit=test-results/vitest-junit.xml
++    - pnpm --filter "./apps/*" test
 +    - pnpm -r test:coverage --reporter=default --reporter=junit --outputFile.junit=test-results/vitest-junit.xml
      - pnpm build
    coverage: '/Lines\s*:\s*(\d+(?:\.\d+)?)%/'
@@ -178,6 +206,7 @@ stays as is):
 +        path: apps/*/coverage/cobertura-coverage.xml
 ...
  e2e:
+   extends: .not-scheduled
    stage: e2e
 -  # Pinned by digest; the tag in the comment equals @playwright/test in package.json. It carries the browsers.
 +  # Pinned by digest; the tag in the comment equals @playwright/test in the catalog. It carries the browsers.
@@ -215,7 +244,29 @@ registries:
     scopes: ["@org"]
 ```
 
-Each published package replaces `"private": true` with `"version": "0.1.0"` and adds its `files`
+`pnpm pack` and `pnpm publish` write a `"catalog:"` specifier as the catalog's exact version, so
+a published package whose peers say `"catalog:"` demands the consumer's React, Base UI and zod to
+the patch. A named catalog of ranges publishes a range for peers, while `devDependencies` keep
+`"catalog:"`, so the workspace still installs and tests the exact versions:
+
+```yaml
+catalogs:
+  # Published peer ranges: the caret of the default catalog's version, moved in the same change.
+  peers:
+    "@base-ui/react": ^1.9.0
+    react: ^19.3.1
+    react-dom: ^19.3.1
+    zod: ^4.6.7
+```
+
+```json
+"peerDependencies": { "react": "catalog:peers", "react-dom": "catalog:peers" },
+"devDependencies": { "react": "catalog:", "react-dom": "catalog:" }
+```
+
+The packed manifest then reads `"react": "^19.3.1"` under `peerDependencies` and `"19.3.1"` under
+`devDependencies`. A major upgrade left out of `peers` fails `pnpm peers check`; a minor one does
+not, so move both lines in the same change. Each published package replaces `"private": true` with `"version": "0.1.0"` and adds its `files`
 line. The scope map alone routes `pnpm publish`; no `publishConfig.registry` is needed. `knip.json`
 gains `"ignoreBinaries": ["change"]`: knip reads the CI files and reports `pnpm change check` as
 an unlisted binary `change`.
@@ -229,6 +280,9 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 # check: under actions/checkout `with:` add `fetch-depth: 0`, then after `pnpm knip`:
       - run: pnpm change check
@@ -336,7 +390,7 @@ prerelease in an app's lockfile.
 | `pnpm change check` | validates intents and versions: `ERR_PNPM_VERSIONING_UNKNOWN_PACKAGE` for an intent naming a package not in the workspace, `ERR_PNPM_VERSIONING_INVARIANTS_VIOLATED` ... `The fixed group [@org/api, @org/ui] is not in lockstep` after a hand edit, `ERR_PNPM_VERSIONING_UNRELEASABLE_PACKAGE` for a package without a `version` |
 | `pnpm version -r` | bumps the whole fixed group, writes `.changeset/ledger.yaml` and `.changeset/changelogs/<scope>!<name>@<version>.md`, deletes `none` intents; makes no commit and no tag; refuses a dirty tree with `ERR_PNPM_UNCLEAN_WORKING_TREE` |
 | `pnpm version -r --dry-run` | prints the plan, changes nothing |
-| `pnpm -r publish` | skips private projects, replaces `catalog:` and `workspace:*` with exact versions, packs a `CHANGELOG.md` holding only that version's entry from `.changeset/changelogs/`; no `CHANGELOG.md` is written into the package folder |
+| `pnpm -r publish` | skips private projects, replaces `workspace:*` with the exact version and `catalog:<name>` with that catalog's entry (exact from the default catalog, the range from `peers`), packs a `CHANGELOG.md` holding only that version's entry from `.changeset/changelogs/`; no `CHANGELOG.md` is written into the package folder |
 
 `pnpm change status` and `pnpm version -r` read the published versions from the registry, so they
 fail with a DNS or network error where it does not resolve.

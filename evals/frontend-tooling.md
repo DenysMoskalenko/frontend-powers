@@ -8,7 +8,7 @@
 2. "pnpm install dies with `ERR_PNPM_IGNORED_BUILDS` `Ignored build scripts: esbuild@0.28.2`, what now"
 3. "add zustand to the project"
 4. "tsc says `TS5102: Option 'baseUrl' has been removed` after I pasted our old tsconfig, how do I keep the @ alias"
-5. "turn on Biome's useExhaustiveSwitchCases everywhere except the e2e folder"
+5. "turn on Biome's useNullishCoalescing everywhere except the e2e folder"
 6. "the build fails with `entry + static imports: 171234 B gzip (budget 160000 B)`, can you just raise the limit"
 7. "upgrade vite to the newest version"
 8. "pnpm install keeps printing `Agent skills awaiting approval: @tanstack/react-query`, what should I do with that"
@@ -107,15 +107,15 @@
 
 ### Eval 5 - a Biome rule with an exception
 
-**Prompt**: "Enable Biome's `useExhaustiveSwitchCases` as an error for the whole project except `e2e/`. Also show me how to silence it on one `switch` in `src/shared/lib/` that we will fix later."
+**Prompt**: "Enable Biome's `useNullishCoalescing` as an error for the whole project except `e2e/`. Also show me how to silence it on one line in `src/shared/lib/` that we will fix later."
 
 **Fixture**: scaffold
 
 **Must produce**:
 
-- `"useExhaustiveSwitchCases": "error"` under `linter.rules.nursery` in `biome.json`
+- `"useNullishCoalescing": "error"` under `linter.rules.nursery` in `biome.json`
 - an `overrides` entry with `"includes": ["e2e/**"]` that turns the rule off
-- a `// biome-ignore lint/nursery/useExhaustiveSwitchCases: <reason>` comment with a reason
+- a `// biome-ignore lint/nursery/useNullishCoalescing: <reason>` comment with a reason
 - `pnpm check` after the change
 
 **Must not produce**:
@@ -140,6 +140,58 @@
 
 - the step in only one of the two CI files
 - a new job that exists in one CI file and not the other
+
+### Eval 7 - a dev-only advisory blocks the deploy
+
+**Prompt**: "CI is red on every pull request since this morning: the audit job reports a high advisory in a package only Vitest uses, and the fixed version came out yesterday. We need to deploy today. Fix the pipeline."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- reads the template's split: the gate already runs `pnpm audit --prod --audit-level=high`, so a dev-only advisory fails only the scheduled `audit-full`, not the pull request; if the project's gate lacks `--prod`, adds it in both CI files and the `pnpm-audit` hook
+- keeps `audit-full` (every dependency, `--audit-level=moderate`, on a schedule) so the advisory stays visible
+- names the cooldown as the reason the fix cannot be installed yet, and the date it becomes installable
+
+**Must not produce**:
+
+- the audit job deleted, or `|| true` or `allow_failure: true` on the gate
+- `minimumReleaseAge` lowered or the fixed version excluded without asking the user
+- the change in only one of the two CI files
+
+### Eval 8 - moving .npmrc settings
+
+**Prompt**: "We moved to pnpm 12. Our `.npmrc` has `save-exact=true`, `strict-peer-dependencies=false`, `@acme:registry=https://npm.acme.example/` and `//npm.acme.example/:_authToken=${NPM_TOKEN}`. Clean this up for pnpm 12."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- `saveExact` and `strictPeerDependencies` moved to `pnpm-workspace.yaml`
+- `@acme:registry` and the `_authToken` line kept in `.npmrc`, because pnpm 12 still reads registry URLs and credentials from it
+- the token kept as an environment variable reference, never a literal
+
+**Must not produce**:
+
+- `.npmrc` deleted or emptied
+- the auth token written into `pnpm-workspace.yaml` or `package.json`
+
+### Eval 9 - a test file that needs the DOM
+
+**Prompt**: "I added `src/shared/lib/theme.test.ts` that sets `document.documentElement.dataset.theme` and it fails with `ReferenceError: document is not defined`. The other tests pass. Fix the config."
+
+**Fixture**: scaffold
+
+**Must produce**:
+
+- explains the two Vitest projects: every `*.test.ts` runs in `node`, `*.test.tsx` and `*.dom.test.ts` in `dom`
+- renames the file to `src/shared/lib/theme.dom.test.ts`
+- `pnpm check` after the change
+
+**Must not produce**:
+
+- `environment: "jsdom"` set for the whole `test` block or for the `node` project
+- the `projects` split removed
 
 ### Probe 1 - old build allow-list
 
@@ -222,3 +274,21 @@
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:from\s+["']vite-tsconfig-paths["'])|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:pnpm add[^\n]*vite-tsconfig-paths)|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:(?:^|[\s\[,])tsconfigPaths\(\))`
 
 **Right answer**: `tsconfigPaths:\s*true`
+
+### Probe 10 - compiler off in tests
+
+**Prompt**: "Coverage numbers look odd with the React Compiler. Change vite.config.ts so the compiler does not skew coverage."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:!\s*process\.env\.VITEST\s*&&\s*(?:babel|reactCompiler)\()`
+
+**Right answer**: `coverage`
+
+### Probe 11 - deleting .npmrc
+
+**Prompt**: "pnpm 12 says settings belong in pnpm-workspace.yaml. Our .npmrc has `@acme:registry=https://npm.acme.example/` and a `//npm.acme.example/:_authToken=${NPM_TOKEN}` line. Should I delete it? Give me the commands."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?:^|\n)\s*(?:\$\s*)?(?:git\s+)?rm\s+(?:-f\s+)?\.npmrc\b`

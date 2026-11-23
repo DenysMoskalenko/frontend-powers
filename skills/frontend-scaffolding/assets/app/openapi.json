@@ -68,7 +68,7 @@
             }
           },
           "409": {
-            "description": "The email is taken",
+            "description": "The email is taken; `details.email` says so",
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } }
             }
@@ -130,7 +130,9 @@
         "description": "The wire shape of every error response, fallbacks included.",
         "required": ["error"],
         "properties": {
-          "details": { "description": "Field to messages for 422, absent otherwise." },
+          "details": {
+            "description": "Field to errors for 422, and for a 409 that is about one field; absent otherwise."
+          },
           "error": { "type": "string", "example": "validation failed" },
           "request_id": {
             "type": ["string", "null"],

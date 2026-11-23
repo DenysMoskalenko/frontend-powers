@@ -11,7 +11,7 @@
 5. Our `<Trans>` link renders an empty `<a>` with the text after it: `components={{ link: <a href="/help" /> }}`.
 6. Since upgrading to i18next 27, a missing Russian translation shows the key instead of the English text.
 7. The created dates in the users table stay English when the UI is switched to Russian.
-8. `i18next-cli status` says `ru: 94% (16/17 keys) — 1 absent` in the pre-commit hook. What now?
+8. `i18next-cli status` says `ru: 94% (16/17 keys) — 1 absent` in the release job. What now?
 9. Add German as a third language.
 10. Screen readers announce the toast region as "Notifications" in English although the UI is in Russian.
 
@@ -37,9 +37,10 @@
 - `fallbackLng` set to English (`"en"` or the `FALLBACK_LANGUAGE` constant) and `supportedLngs` in the init options.
 - `interpolation: { escapeValue: false }`.
 - Message files under `src/app/locales/<language>/<namespace>.json`, loaded through an `import.meta.glob` backend.
-- `main.tsx` rendering after the init promise, with a rejection handler that reports the error and renders a static message instead of a blank page.
+- `main.tsx` rendering after the init promise with `.then(render).catch(...)`, the handler reporting the error and rendering a static message instead of a blank page.
+- A message file that fails to load made visible (`failedLoading`): the start fails, and a later switch is reported and keeps the current language.
 - A stored language validated against the supported list before use.
-- `i18next-cli extract --ci`, `status` and `lint` in a script that `pnpm check` runs, plus `"@swc/core": false` under `allowBuilds`.
+- `i18next-cli extract --ci`, `types --ci` and `lint` in a script that `pnpm check` runs, `i18next-cli status` in a separate script for the release job, plus `"@swc/core": false` under `allowBuilds`.
 - `renderRoute` building its instance from the app's JSON files.
 - `i18next-cli lint --update-baseline` run once for the English text the app already has.
 - `ENTRY_BUDGET_BYTES` raised by the growth `pnpm build` reports (about 20 KB gzip for i18next with react-i18next on the scaffold), with i18next and react-i18next named as the cause.
@@ -50,6 +51,8 @@
 - `i18next-browser-languagedetector` added as a dependency.
 - Init options without `fallbackLng`.
 - `import i18n from "i18next"` inside a feature or shared component.
+- `i18next-cli status` in `pnpm check` or the pre-commit hook.
+- `ready.then(render, startFailed)` with the handler as the second argument of `then`.
 
 ### Eval 2 - translating the users list
 
@@ -71,30 +74,29 @@
 - `vi.mock("react-i18next")` or a `t` that returns its key.
 - `toLocaleDateString()` or `new Intl.DateTimeFormat("en")`.
 
-### Eval 3 - server errors and validation in Russian
+### Eval 3 - field and server errors in Russian
 
-**Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app, messages in src/app/locales/<language>/<namespace>.json. Russian users see English errors on the create user form: zod's messages and the server's error text. Make both follow the UI language.
+**Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app, messages in src/app/locales/<language>/<namespace>.json. Russian users see English errors on the create user form: zod's messages under the fields, the server's field errors and the form's failure message. Make them follow the UI language.
 
 **Fixture**: scaffold
 
 **Must produce**:
 
-- A mapping from `ApiError` status or `code` to translation keys, each a literal `t("...")` call.
-- zod's locale switched with the language (`z.config(ru())` or equivalent from `zod/locales`) without dropping `jitless`.
-- Copy for unknown errors from a key, with the request id as an interpolated variable when shown.
-- The server's `fieldErrors` sentences shown as sent, with translating them named as a backend contract change (a stable code per field, or messages localised from `Accept-Language`) for the user to raise.
+- The bound field in `src/shared/hooks/use-app-form.tsx` choosing a key per backend `code` and per schema issue kind (`code`, with `origin` or `format`, the bound as `count`), each a literal `t("...")` call, at render time.
+- The error's own `message` shown for a code or issue kind with no key, with the backend's sentence named as what an untranslated code shows.
+- `submitErrors` taking `t`, with `failed` and the request id as interpolated variables, one key per variant.
+- Plural forms for the counted messages in Russian (`_one`, `_few`, `_many`, `_other`).
 
 **Must not produce**:
 
 - `error.message` from an `ApiError` rendered or passed to `t`.
 - A key built from the error code at runtime (`` t(`errors.${error.code}`) ``).
-- `error.code` compared with a short name such as `"email_taken"` instead of a status or a full problem `type` URI.
+- `z.config(ru())` or another `zod/locales` import as the text users read.
 - Hand-edited messages in the generated `src/api/generated/api.zod.ts`.
-- Server `fieldErrors` sentences replaced by client keys or translated in the form.
 
 ### Eval 4 - a failing status gate
 
-**Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app, messages in src/app/locales/<language>/<namespace>.json. `pnpm check` fails at `i18next-cli status`: `ru: [...] 94% (16/17 keys) — 1 absent`. I just added a button label. Make it pass.
+**Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app, messages in src/app/locales/<language>/<namespace>.json. The release job fails at `pnpm i18n:status`: `ru: [...] 94% (16/17 keys) — 1 absent`. Someone added a button label last week. Make it pass.
 
 **Fixture**: scaffold
 
@@ -106,7 +108,7 @@
 **Must not produce**:
 
 - The English text copied into the Russian file.
-- `status.ignoreKeys`, removing `status` from the check script, or `lint --update-baseline` to pass.
+- `status.ignoreKeys`, removing `status` from the release job, or `lint --update-baseline` to pass.
 - A default value in the `t()` call instead of the JSON text.
 
 ### Eval 5 - adding a language
@@ -118,7 +120,6 @@
 **Must produce**:
 
 - `"de"` added to `LANGUAGES` in `src/app/i18n.ts`.
-- zod's German messages (`de` from `zod/locales`) added to `ZOD_MESSAGES`.
 - `"de"` added to `locales` in `i18next.config.ts`.
 - `pnpm i18n:extract` run, and German text written for every key in `src/app/locales/de/`.
 
@@ -225,3 +226,29 @@
 **Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\$t\([^)\n]*,\s*\{`
 
 **Right answer**: `t\(\s*["\x27](?:common:)?greeting["\x27]\s*,\s*\{`
+
+### Probe 12 - start-up handler as the second argument of then
+
+**Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app returns `{ i18n, ready }`. Write `src/main.tsx` so the app renders after the messages load and shows a message instead of a blank page when the start fails.
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)\bready\.then\(\s*render\s*,`
+
+**Right answer**: `\.then\(\s*render\s*\)\s*\.catch\(`
+
+### Probe 13 - status in the commit gate
+
+**Prompt**: Assume the i18next add-on from our setup is installed with `i18next.config.ts`. Add the i18next-cli checks to the `package.json` scripts that `pnpm check` and the pre-commit hook run.
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)"(?:i18n:)?check"\s*:\s*"[^"\n]*i18next-cli status`
+
+### Probe 14 - zod's locale as user text
+
+**Prompt**: Assume the i18next add-on from our setup is installed: `createI18n` in src/app, messages in src/app/locales/<language>/<namespace>.json. The create user form shows zod's English messages under its fields to Russian users. Make them Russian.
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?:from\s+["\x27]zod/locales["\x27]|z\.config\(\s*(?:z\.locales\.)?ru\(\))`

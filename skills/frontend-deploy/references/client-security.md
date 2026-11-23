@@ -17,15 +17,25 @@ functions before it reaches `href`, `window.open` or navigation.
 // file: src/shared/lib/safe-url.ts
 const LINK_PROTOCOLS = new Set(["https:", "mailto:"]);
 
+/** `URL.parse` without it: Safari before 18 and Chrome before 126 lack it. */
+function parseUrl(value: string, base?: string): URL | undefined {
+  try {
+    return new URL(value, base);
+  } catch {
+    // Not a URL: the callers' answer for that is "no link" or "/".
+    return undefined;
+  }
+}
+
 /** A user-supplied link target, or undefined when its scheme is not allowed. */
 export function safeHref(value: string): string | undefined {
-  const url = URL.parse(value);
+  const url = parseUrl(value);
   return url && LINK_PROTOCOLS.has(url.protocol) ? url.href : undefined;
 }
 
 /** A redirect target such as `?returnTo=`: a path on this origin, or "/" for anything else. */
 export function sameOriginPath(value: string | null | undefined): string {
-  const url = URL.parse(value ?? "/", window.location.origin);
+  const url = parseUrl(value ?? "/", window.location.origin);
   // "/.//evil.example" resolves to the path "//evil.example", which a browser reads as another host.
   if (url?.origin !== window.location.origin || url.pathname.startsWith("//")) return "/";
   return url.pathname + url.search + url.hash;
@@ -33,7 +43,7 @@ export function sameOriginPath(value: string | null | undefined): string {
 ```
 
 ```ts,verify,test
-// file: src/shared/lib/safe-url.test.ts
+// file: src/shared/lib/safe-url.dom.test.ts
 import { expect, test } from "vitest";
 import { safeHref, sameOriginPath } from "./safe-url";
 
@@ -53,6 +63,18 @@ test("a redirect target stays on this origin", () => {
   expect(sameOriginPath("/\\evil.example")).toBe("/");
   expect(sameOriginPath("/.//evil.example")).toBe("/");
   expect(sameOriginPath(null)).toBe("/");
+});
+
+test("URL.parse is not called", () => {
+  const parse = URL.parse;
+  // @ts-expect-error simulating a floor browser
+  URL.parse = undefined;
+  try {
+    expect(safeHref("https://example.com/a")).toBe("https://example.com/a");
+    expect(sameOriginPath("https://evil.example/users")).toBe("/");
+  } finally {
+    URL.parse = parse;
+  }
 });
 ```
 

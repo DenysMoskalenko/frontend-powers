@@ -1,22 +1,15 @@
-import "@testing-library/jest-dom/vitest";
+// Every test, in Node and in jsdom. The DOM-only part is setup-dom.ts.
 import { faker } from "@faker-js/faker";
-import { configure } from "@testing-library/dom";
-import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, vi } from "vitest";
 import { server } from "./server";
-
-// The bound only ends a hang; a loaded CI machine must never reach it.
-configure({ asyncUtilTimeout: 5_000 });
-// jsdom has no layout; the router restores scroll after every navigation.
-window.scrollTo = () => {};
 
 const unhandled: string[] = [];
 server.events.on("request:unhandled", ({ request }) => {
   unhandled.push(`${request.method} ${request.url}`);
 });
 
-// jsdom's reportError only logs to the virtual console. This one records the error, and the test
-// fails unless it stubs reportError.
+// The platform's reportError only logs. This one records the error, and the test fails unless it
+// stubs reportError.
 const reported: unknown[] = [];
 globalThis.reportError = (error: unknown) => {
   reported.push(error);
@@ -28,10 +21,6 @@ beforeEach(() => {
   faker.seed(20_261_119);
 });
 afterEach(() => {
-  // `globals: false` turns off Testing Library's automatic cleanup.
-  cleanup();
-  localStorage.clear();
-  sessionStorage.clear();
   // Also undoes a bare vi.setSystemTime(), which no config option resets.
   vi.useRealTimers();
   server.resetHandlers();
