@@ -1,0 +1,65 @@
+{
+  "name": "frontend-powers",
+  "version": "0.1.0",
+  "description": "Opinionated engineering skills for AI-assisted frontend development: client-rendered Vite SPAs in TypeScript and React with TanStack Router and Query, orval, Tailwind and Base UI, Biome, Vitest, Playwright, and pnpm.",
+  "author": {
+    "name": "Denys Moskalenko",
+    "email": "denysmoskalenko11@gmail.com",
+    "url": "https://github.com/DenysMoskalenko"
+  },
+  "homepage": "https://github.com/DenysMoskalenko/frontend-powers",
+  "repository": "https://github.com/DenysMoskalenko/frontend-powers",
+  "license": "Apache-2.0",
+  "keywords": [
+    "frontend",
+    "spa",
+    "react",
+    "vite",
+    "typescript",
+    "tanstack-router",
+    "tanstack-query",
+    "openapi",
+    "orval",
+    "forms",
+    "tailwind",
+    "base-ui",
+    "testing",
+    "vitest",
+    "playwright",
+    "msw",
+    "tooling",
+    "biome",
+    "pnpm",
+    "keycloak",
+    "i18n",
+    "realtime",
+    "deploy",
+    "csp",
+    "scaffolding",
+    "boilerplate",
+    "skills"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Frontend Powers",
+    "shortDescription": "Vite + React SPA playbook",
+    "longDescription": "Frontend Powers gives Codex an opinionated playbook for client-rendered Vite SPAs in TypeScript and React - project structure, TanStack Router and Query, orval-generated API clients, TanStack Form, Tailwind and Base UI, Vitest, MSW and Playwright testing, Biome and pnpm tooling, Keycloak auth, i18n, realtime, static deploy with a strict CSP, and shared packages - plus scaffolding a brand-new app from a buildable template.",
+    "developerName": "Denys Moskalenko",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/DenysMoskalenko/frontend-powers",
+    "defaultPrompt": [
+      "Scaffold a brand-new Vite + React SPA from scratch.",
+      "Use Frontend Powers for this frontend change.",
+      "Review this SPA against Frontend Powers."
+    ],
+    "brandColor": "#3178C6",
+    "composerIcon": "./assets/frontend-powers-logo.svg",
+    "logo": "./assets/frontend-powers-logo.svg",
+    "screenshots": []
+  }
+}

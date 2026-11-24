@@ -1,0 +1,98 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true, "defaultBranch": "main" },
+  "files": { "includes": ["**", "!src/routeTree.gen.ts", "!src/api/generated"] },
+  "formatter": { "indentStyle": "space", "lineWidth": 100 },
+  "tailwind": { "stylesheet": "./src/styles.css", "mergeFunctions": ["cx"] },
+  "plugins": ["./biome-plugins/boundaries.grit"],
+  "linter": {
+    "domains": {
+      "react": "recommended",
+      "project": "recommended",
+      "types": "recommended",
+      "test": "recommended"
+    },
+    "rules": {
+      "complexity": { "noExcessiveCognitiveComplexity": "error" },
+      "correctness": {
+        "noNestedComponentDefinitions": "error",
+        "noUndeclaredDependencies": "error",
+        "noUnresolvedImports": "off"
+      },
+      "nursery": {
+        "noFloatingPromises": "error",
+        "noMisusedPromises": "error",
+        "noTailwindArbitraryValue": "error",
+        "noTailwindLegacyUtilities": "error",
+        "noTailwindRawColors": { "level": "error", "options": { "allowBlackAndWhite": false } },
+        "noTailwindRestyledComponents": "error",
+        "useExhaustiveSwitchCases": "error",
+        "useReactCompiler": "error",
+        "useTailwindShorthandClasses": "error",
+        "useTailwindStaticClassStrings": "error",
+        "useTailwindVariablesShorthand": "error"
+      },
+      "performance": { "noBarrelFile": "error", "noReExportAll": "error" },
+      "style": {
+        "noDefaultExport": "error",
+        "noNonNullAssertion": "error",
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": { "filenameCases": ["kebab-case"], "requireAscii": true }
+        }
+      },
+      "suspicious": {
+        "noConsole": "error",
+        "noExplicitAny": "error",
+        "noImportCycles": "error",
+        "noReactForwardRef": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/**", "!src/test/**", "!**/*.test.ts", "!**/*.test.tsx"],
+      "linter": {
+        "rules": {
+          "correctness": { "noNodejsModules": "error" },
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "process": "Browser code has no process: read a build-time value from import.meta.env.",
+                  "Buffer": "Browser code has no Buffer: use Uint8Array, TextEncoder or btoa.",
+                  "global": "Browser code has no global: use globalThis.",
+                  "require": "Browser code has no require: use import."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/routes/**"],
+      "linter": { "rules": { "style": { "useFilenamingConvention": "off" } } }
+    },
+    {
+      "includes": ["src/shared/ui/**"],
+      "linter": {
+        "rules": {
+          "nursery": { "noTailwindArbitraryValue": "off", "noTailwindRestyledComponents": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["*.config.ts"],
+      "linter": { "rules": { "style": { "noDefaultExport": "off" } } }
+    },
+    {
+      "includes": ["e2e/**"],
+      "linter": {
+        "domains": { "playwright": "recommended" },
+        "rules": { "suspicious": { "noConsole": "off" } }
+      }
+    }
+  ]
+}

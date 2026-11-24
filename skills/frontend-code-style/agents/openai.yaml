@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend Code Style"
+  short_description: "TS 7, React 19 and errors"
+
+policy:
+  allow_implicit_invocation: true
