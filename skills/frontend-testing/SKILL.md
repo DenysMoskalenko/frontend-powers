@@ -2,14 +2,14 @@
 name: frontend-testing
 description: "Use when writing or fixing Vitest route integration tests or Playwright specs in a Vite SPA: renderRoute, MSW 3 server.use with orval getXMockHandler, onUnhandledFrame, Requests without an MSW handler, document is not defined in a .test.ts, user-event, findByRole, buildUser factories, vi.useFakeTimers hangs, vi.stubEnv TZ, jsdom lacking matchMedia, data-testid, flaky shuffled runs, the e2e/fixtures.ts guard, expectedErrors, axe scans. Not for test-quality principles (writing-good-tests), vite.config.ts test keys or CI jobs (frontend-tooling), test sessions (keycloak-spa-auth)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Testing a Vite SPA
 
 Assumes Vitest 5.1, jsdom 31.0, @testing-library/react 16.3, @testing-library/dom 10.4, @testing-library/user-event 14.6, @testing-library/jest-dom 8.0, MSW 3.0, @faker-js/faker 10.6, @playwright/test 1.65, @axe-core/playwright 4.14.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 What makes a test worth having (naming the break, literal expectations, no assertions on mocks, the mutation check) belongs to `writing-good-tests`. If that skill is available, load it before writing or reviewing a test. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules.
 

@@ -8,7 +8,7 @@ BASE ?= origin/main
 # Everything the CI `check` job runs; green here predicts a green pull request.
 check: validate test-scripts lint plugin-validate snippets
 
-# Frontmatter, budgets, ownership hygiene, manifests, STACK.md parity and every copy of a pinned version.
+# Frontmatter, budgets, ownership hygiene, manifests, scaffold and add-on majors and every copy of the pnpm, Node and image pins.
 validate:
 	@if git rev-parse --verify --quiet "$(BASE)^{commit}" >/dev/null; then \
 		python3 scripts/validate_skills.py --strict --base "$(BASE)"; \

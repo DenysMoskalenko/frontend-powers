@@ -24,18 +24,18 @@ Everything pinned, and where it lives:
 
 | Pin | Lives in |
 |---|---|
-| package versions | STACK.md `## package.json` block; its mirror `skills/frontend-scaffolding/assets/app/package.json` (`dependencies`, `devDependencies`, `devEngines`, validator-enforced) and that directory's `pnpm-lock.yaml` |
-| add-on package versions | STACK.md `## Add-on packages` block (exact pins, no lockfile; `make snippets` resolves them on top of the scaffold lockfile); the version-pin lines of the add-on skills |
-| pnpm and Node.js | `devEngines` in the same two places; the version-pin lines of `frontend-tooling` and `frontend-scaffolding` |
+| package versions | `skills/frontend-scaffolding/assets/app/package.json` (`dependencies`, `devDependencies`) and that directory's `pnpm-lock.yaml`, the only exact copy; majors in STACK.md `## Scaffold packages` (validator-enforced) and the version-pin lines |
+| add-on package versions | STACK.md `## Add-on packages` block (major ranges, no lockfile; `make snippets` resolves each to the newest release past the cooldown on top of the scaffold lockfile); the version-pin lines of the add-on skills |
+| pnpm and Node.js | `devEngines` in the scaffold `package.json`; the version-pin lines of `frontend-tooling` and `frontend-scaffolding`; every other copy is listed by `make validate` |
 | pnpm settings | scaffold `pnpm-workspace.yaml` (`minimumReleaseAge`, `trustPolicy`, catalogs); mirrored in `frontend-tooling` references and, for catalogs, `frontend-shared-packages` |
 | config files | scaffold `tsconfig.json`, `biome.json`, `vite.config.ts`, `knip.json`, `.pre-commit-config.yaml`; repeated verbatim in `frontend-tooling` references |
-| container and server images | scaffold `Dockerfile` (tags pinned by digest) and `deploy/Caddyfile`; the container-images line under STACK.md `## package.json`; `frontend-deploy` references |
+| container and server images | scaffold `Dockerfile` (tags pinned by digest) and `deploy/Caddyfile`; the container-images line under STACK.md `## Exact pins`; `frontend-deploy` references |
 | CI images | scaffold `.github/workflows/ci.yml` and `.gitlab-ci.yml`: the Playwright image (tag equal to `@playwright/test`) and the GitLab `node` image, each pinned by digest with the tag in a comment; the same STACK.md line; `frontend-tooling` and `frontend-shared-packages` references |
 | GitHub Actions | `.github/workflows/check.yml`, scaffold CI files, `frontend-tooling` references (full SHA plus `# vX.Y.Z` comment) |
 | prek and its hooks | `@j178/prek` in the scaffold `package.json`, the `pnpm dlx @j178/prek@...` line in `.github/workflows/check.yml` |
 | Claude Code for CI | the `pnpm dlx @anthropic-ai/claude-code@...` line in `.github/workflows/check.yml` |
 | browser floor | the `build.target` list in STACK.md (Build) and the scaffold `vite.config.ts`; its copy in `frontend-tooling` references and the floor prose in skills, listed by `make validate` as `stale browser floor` errors |
-| versions quoted in skill bodies | the version-pin line at the top of every SKILL.md; every other exact copy (the `package.json` copy in `frontend-tooling`, the catalog in `frontend-shared-packages`, prose) is listed by `make validate` as a `stale version` error; `grep -rnE '[0-9]+\.[0-9]+\.[0-9]+' skills/ --include='*.md'` for the rest |
+| versions quoted in skill bodies | the version-pin line at the top of every SKILL.md (major.minor); a copy of a pnpm, Node or image version is listed by `make validate` as a `stale version` error; other exact versions in prose record where a fact was measured, and `grep -rnE '[0-9]+\.[0-9]+\.[0-9]+' skills/ --include='*.md'` lists them to re-check |
 
 Current versions:
 
@@ -43,8 +43,8 @@ Current versions:
   research; a release younger than the scaffold's `minimumReleaseAge` waits for the next audit unless
   it fixes an advisory.
 - `pnpm view <package> version dist-tags` for anything not in the lockfile.
-- By hand, because `pnpm outdated` reports neither: `npm view pnpm time` and the Node release index
-  for the `devEngines` pins; Caddy's releases and the Playwright image tag; then each image digest
+- `pnpm outdated` lists both `devEngines` pins (`pnpm (dev)`, `node (dev)`) but no image, so by
+  hand: Caddy's releases and the Playwright image tag; then each image digest
   resolved again from its tag (`docker buildx imagetools inspect <image>:<tag>`). A security release
   of pnpm is taken at the next audit once past the cooldown.
 - `gh api repos/<o>/<r>/releases/latest --jq .tag_name` for actions and tools, then dereference the tag
@@ -87,11 +87,13 @@ A fact that lives only in a Red Flags or correction-table row stays there.
 
 The bump itself is AGENTS.md `## Versions`; the order across a release:
 
-1. STACK.md: the `## package.json` or `## Add-on packages` block and prose naming the old version.
-2. The scaffold `package.json` mirror, then `pnpm install` in a copy outside the repository and the
-   lockfile copied back. Never run pnpm inside `skills/`: `node_modules/` there ships with every local
-   install and fails validation.
-3. `frontend-tooling` references re-mirrored byte for byte; `diff` each block against the scaffold file.
+1. STACK.md: a new major in the One Pick table and the `## Scaffold packages` or `## Add-on packages` ranges, the
+   container-images line, and prose naming the old version.
+2. The scaffold: `pnpm update --latest <names>` in a copy outside the repository, then `package.json`,
+   the lockfile and a regenerated `src/api/generated/` copied back. Never run pnpm inside `skills/`:
+   `node_modules/` there ships with every local install and fails validation.
+3. `frontend-tooling` references re-mirrored byte for byte; `diff` each block against the scaffold
+   file, except the `package.json` copy, which leaves out `dependencies` and `devDependencies`.
 4. Skill pin lines, correction-table rows, snippets.
 5. `evals/<skill>.md` in the same commit whenever what a good answer looks like changed.
 6. `metadata.version` in every skill whose files changed (`frontend-scaffolding` whenever the template
@@ -202,7 +204,7 @@ after them. Nothing runs on a real floor browser: Playwright's engines are curre
 | Signal | Instead |
 |---|---|
 | Rewriting a section because it reads better | Revert; only the line the changelog invalidates changes. |
-| A version bumped in a skill body only | STACK.md and the scaffold mirror first, the pin line last. |
+| A version bumped in a skill body only | The scaffold (and STACK.md for a major) first, the pin line last. |
 | A passing snippet taken as proof the teaching is right | Read the prose beside the block against the changelog entry. |
 | A changelog example pasted into a snippet | Run it under the scaffold's tsconfig and Biome first; the strict flags reject most upstream examples. |
 | A new library appearing in a skill | Stop; it needs a STACK.md decision first. |

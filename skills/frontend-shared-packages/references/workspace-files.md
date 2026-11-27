@@ -92,41 +92,9 @@ packages:
   - packages/*
 # The one version of every dependency; package.json files write "catalog:".
 catalog:
-  "@axe-core/playwright": 4.14.0
-  "@babel/core": 8.1.2
-  "@base-ui/react": 1.9.0
-  "@biomejs/biome": 2.6.8
-  "@faker-js/faker": 10.6.0
-  "@j178/prek": 0.5.11
-  "@playwright/test": 1.65.1
-  "@rolldown/plugin-babel": 0.3.1
-  "@tailwindcss/vite": 4.3.5
-  "@tanstack/react-form": 1.33.5
-  "@tanstack/react-query": 5.108.0
-  "@tanstack/react-router": 1.170.46
-  "@tanstack/router-plugin": 1.169.0
-  "@testing-library/dom": 10.4.2
-  "@testing-library/jest-dom": 8.0.0
-  "@testing-library/react": 16.3.3
-  "@testing-library/user-event": 14.6.13
-  "@types/node": 26.6.6
-  "@types/react": 19.3.0
-  "@types/react-dom": 19.3.0
-  "@vitejs/plugin-react": 6.3.0
-  "@vitest/coverage-v8": 5.1.1
-  babel-plugin-react-compiler: 1.0.0
-  jsdom: 31.0.1
-  knip: 6.46.1
-  msw: 3.0.7
-  orval: 8.48.0
-  react: 19.3.1
-  react-dom: 19.3.1
-  tailwindcss: 4.3.5
-  typescript: 7.0.2
-  vite: 8.3.8
-  vitest: 5.1.1
-  wrangler: 4.165.0
-  zod: 4.6.7
+  # every dependency of the apps, at the exact version their package.json files had
+  react: <version>
+  zod: <version>
 catalogMode: strict
 # 3 days: npm's 72-hour unpublish window. Set explicitly, the cooldown is strict.
 minimumReleaseAge: 4320

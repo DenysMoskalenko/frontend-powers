@@ -2,14 +2,14 @@
 name: frontend-realtime
 description: "Use when adding live updates or streaming: SSE over fetch with eventsource-parser, EventSource cannot send an Authorization header, Last-Event-ID, experimental_streamedQuery, a Centrifugo channel with the centrifuge client, newSubscription, getData, recovered false, PUBLIC_REALTIME_ORIGIN or wss in connect-src, pushing events into the Query cache with cancelQueries and setQueryData, a raw WebSocket protocol, MSW ws.link or streamed responses in tests. Not for refetchInterval polling (tanstack-query-api), adding an origin to the CSP (frontend-deploy) or renderRoute basics (frontend-testing)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Realtime: streams and push
 
 Assumes centrifuge 5.8, eventsource-parser 4.1, TanStack Query 5.108, zod 4.6, React 19.3, MSW 3.0.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 ## Important
 

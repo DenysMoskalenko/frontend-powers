@@ -2,14 +2,14 @@
 name: frontend-tooling
 description: "Use when changing package.json scripts, pnpm-workspace.yaml, tsconfig.json, biome.json, vite.config.ts, knip.json, .pre-commit-config.yaml or the CI files, or adding, removing or upgrading a dependency — ERR_PNPM_NO_MATURE_MATCHING_VERSION, ERR_PNPM_IGNORED_BUILDS, Agent skills awaiting approval, allowBuilds, devEngines, TS5102 baseUrl, TS5108, biome-ignore, the entry budget, pnpm check or CI failing on config. Not for fixing one lint finding (frontend-code-style), import-boundary rules (frontend-project-structure), Dockerfile or headers (frontend-deploy), or a new app (frontend-scaffolding)."
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Frontend Tooling
 
 Assumes pnpm 12.22, Node 26.13, TypeScript 7.0, Vite 8.3, @vitejs/plugin-react 6.3, Biome 2.6, Vitest 5.1, knip 6.46, prek 0.5, Playwright 1.65.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 ## Important
 
@@ -18,7 +18,7 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 - Add a dependency with a bare `pnpm add <pkg>` (`-D` for tools): with `minimumReleaseAge` and
   `saveExact: true` in `pnpm-workspace.yaml` (check both), it pins the newest mature release
   exactly; without `saveExact`, use `pnpm add -E <pkg>`. `pnpm add pkg@^3` or `pkg@3` writes a
-  caret despite `saveExact`.
+  caret despite `saveExact`. Never type a version into `pnpm add` from memory: pnpm resolves it.
 - Never weaken the supply-chain settings to get past an install error: no deleting
   `minimumReleaseAge`, no `--ignore-scripts`, no `dangerouslyAllowAllBuilds`. Decide per
   package, in `pnpm-workspace.yaml`, with a reason comment. A request that names a version is
@@ -29,9 +29,10 @@ Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `
 
 ## References
 
-- `references/package-and-pnpm.md` — `package.json` and `pnpm-workspace.yaml` verbatim, the
-  pnpm 12.22 error output and fix for each install failure, upgrades, lockfile, audit, bumping
-  pnpm or Node. Open it before touching a dependency or when an install fails.
+- `references/package-and-pnpm.md` — `package.json` (without its dependency lists) and
+  `pnpm-workspace.yaml` verbatim, the pnpm 12.22 error output and fix for each install failure,
+  upgrades, lockfile, audit, bumping pnpm or Node. Open it before touching a dependency or when
+  an install fails.
 - `references/typescript-biome-knip.md` — `tsconfig.json`, `biome.json`, `boundaries.grit` and
   `knip.json` verbatim, key by key, with the TypeScript 7 error codes. Open it before editing one
   of them or when `tsc`, Biome or knip fails on configuration.
@@ -69,18 +70,19 @@ writes files Biome would lint.
 Every other install error (agent-skill approval, trust downgrade, unrecognized setting, dedupe,
 audit signatures, audit): its output and fix are in `references/package-and-pnpm.md`.
 
-Upgrade with `pnpm update <pkg> --latest`; then `pnpm exec biome migrate --write` for Biome, the
-image digest and its tag comment in both CI files for Playwright. Add a dependency in the same
-change as its first import, or knip fails; asked to add one with no caller named, install it
-and say that knip reports it until the first import lands. Never delete the lockfile.
+Upgrade with `pnpm update <pkg> --latest`; then `pnpm exec biome migrate --write` for Biome,
+`pnpm api:generate` for orval, the image digest and its tag comment in both CI files for
+Playwright. Add a dependency in the same change as its first import, or knip fails; asked to add
+one with no caller named, install it and say that knip reports it until the first import lands.
+Never delete the lockfile.
 
 ## Runtime and package manager
 
 `devEngines` pins pnpm 12.22.0 and Node 26.13.1 with `onFail: "download"`: any pnpm 12 switches
 to the pin and installs that Node into `node_modules`. Images bootstrap with
 `npm install --global pnpm@$PNPM_VERSION`. A bump edits `devEngines`, `.gitlab-ci.yml` and the
-Dockerfile in one commit. `pnpm outdated` never reports these pins: an audit checks them by hand
-(package reference).
+Dockerfile in one commit. `pnpm outdated` lists both pins, as `pnpm (dev)` and `node (dev)`; the
+package reference has the bump.
 
 ## Configuration files
 

@@ -2,14 +2,14 @@
 name: keycloak-spa-auth
 description: "Use when adding login, sign-in or bearer tokens to the SPA with keycloak-js, or showing UI by role: keycloak.init, updateToken, checkLoginIframe, onLoad check-sso, configureApi getToken and retryToken, a 401 or 403 from the API, a sign-in redirect loop, a _signed-in guard route, sign-out and its form-action, PUBLIC_AUTH_ORIGIN, oidc-client-ts, signed-out sessions in route tests, Playwright against Keycloak. Not for beforeLoad and redirect mechanics (tanstack-router-spa), apiFetch and ApiError (tanstack-query-api), other CSP headers (frontend-deploy)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Keycloak sign-in for a browser-only SPA
 
 Assumes keycloak-js 26.2, oidc-client-ts 3.5, @tanstack/react-router 1.170, @playwright/test 1.65.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 ## Important
 

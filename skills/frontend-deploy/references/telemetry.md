@@ -24,8 +24,8 @@ Packages: `pnpm add @grafana/faro-web-sdk @grafana/faro-web-tracing` (a bare add
 
 `@grafana/faro-web-tracing` 2.14.0 depends on `@opentelemetry/api@^1.9.0`, which resolves to 1.10.0,
 while the `@opentelemetry/core`, `resources` and `sdk-trace-web` 2.12.1 it also pulls in declare the
-peer `@opentelemetry/api >=1.0.0 <1.10.0`. pnpm installs anyway and reports the unmet peer. Pin the
-API to the newest version inside every range, in `pnpm-workspace.yaml`:
+peer `@opentelemetry/api >=1.0.0 <1.10.0`. pnpm installs anyway and reports the unmet peer. While
+it reports it, pin the API to the newest version inside every range, in `pnpm-workspace.yaml`:
 
 ```yaml
 overrides:

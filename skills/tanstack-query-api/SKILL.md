@@ -2,14 +2,14 @@
 name: tanstack-query-api
 description: "Use when calling the backend: openapi.json, orval.config.ts, pnpm api:generate, generated getXQueryOptions, getXSuspenseQueryOptions, getXQueryKey or getXMutationOptions, apiFetch, configureApi, ApiError, TimeoutError, createQueryClient, useSuspenseQuery, useMutation, invalidateQueries, optimistic updates, infinite lists, refetchInterval polling, file download or upload progress, ensureQueryData deprecated, TS2379, decimal and date wire formats. Not for route files and loaders (tanstack-router-spa), form fields (frontend-forms), MSW handlers (frontend-testing), tokens and 401 (keycloak-spa-auth)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Server state and the API client
 
 Assumes TanStack Query 5.108, orval 8.48, zod 4.6.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 ## Important
 

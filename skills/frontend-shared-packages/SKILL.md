@@ -2,14 +2,14 @@
 name: frontend-shared-packages
 description: "Use when a second app, admin panel or deployable must share the UI kit or API client: a pnpm workspace with apps/* and packages/*, pnpm-workspace.yaml catalog: and catalogMode, workspace:*, source-only packages with exports to .ts, tsconfig.base.json, peerDependencies, pnpm change, versioning.fixed, pnpm version -r, publishing @scope packages to a registry, ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING, ERR_PNPM_CATALOG_VERSION_MISMATCH, @source in a kit. Not for single-app configuration (frontend-tooling), folders inside one app (frontend-project-structure), or a new app (frontend-scaffolding)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Shared packages
 
 Assumes pnpm 12.22, Node 26.13, TypeScript 7.0, Vite 8.3, Tailwind CSS 4.3, Biome 2.6, knip 6.46, orval 8.48.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 Component API design for kit components belongs to `vercel-composition-patterns`. If that skill is available, load it before designing a kit component's props. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules.
 

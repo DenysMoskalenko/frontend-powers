@@ -2,14 +2,14 @@
 name: tailwind-base-ui
 description: "Use when using or wrapping a Base UI (@base-ui/react) button, dialog, menu, select or toast in src/shared/ui, editing src/styles.css or Tailwind CSS 4 (@theme, light-dark(), @container, breakpoints), adding a colour token or dark mode, or adding any package that renders UI (chart, date picker, virtual list, icons, font) under a strict CSP; on style-src-elem, 'Applying inline style violates', noTailwindRestyledComponents, bg-[--var], tailwind.config.js. Not for visual direction (frontend-design), motion (animate), component API design (vercel-composition-patterns), or biome.json (frontend-tooling)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Tailwind 4 and Base UI
 
 Assumes Tailwind CSS 4.3, `@base-ui/react` 1.9, Biome 2.6, React 19.3.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 Visual direction, token values and type choices belong to `frontend-design`; polish and motion belong to `emil-design-eng` and `animate`; component API design belongs to `vercel-composition-patterns`; accessibility and UI review belong to `web-design-guidelines`; touch targets, hover-only controls and safe areas belong to `mobile-native`; native-element alternatives (`<dialog>`, `popover`) belong to `modern-web-guidance`, and the wrapper wins as `frontend-code-style`'s precedence table says. If one of those skills is available, load it before making that kind of decision. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules.
 
