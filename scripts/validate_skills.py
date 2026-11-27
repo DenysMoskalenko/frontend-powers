@@ -18,6 +18,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILLS = ROOT / "skills"
@@ -25,9 +26,10 @@ STACK = ROOT / "STACK.md"
 EVALS = ROOT / "evals"
 SCAFFOLD_SKILL = "frontend-scaffolding"
 SCAFFOLD_PACKAGE = SKILLS / SCAFFOLD_SKILL / "assets" / "app" / "package.json"
-PINNED_PACKAGE_KEYS = ("dependencies", "devDependencies", "devEngines")
 ADDON_KEYS = ("dependencies", "devDependencies")
 EXACT_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+# A STACK.md range: the tested major, or for a 0.x package its minor (`"26"`, `"0.55"`).
+MAJOR_RANGE_RE = re.compile(r"^(?:[1-9]\d*|0\.[1-9]\d*)$")
 # Rejected names that are also ordinary English words count only as code: backticked, quoted, or `name.js`.
 COMMON_WORD_NAMES = {"moment", "turbo"}
 
@@ -71,9 +73,9 @@ SCOPE_BLOCK = (
     "equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when "
     "editing existing code, keep its public contract, structure and tuned configuration, even where a table below "
     "calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and "
-    "architecture documents win over this skill. If the project pins another version of a package than the line "
-    "above, check the API or configuration key in the installed package before using it, follow the project and say "
-    "which rules do not apply."
+    "architecture documents win over this skill. If the project pins another major of a package than the line above, "
+    "or an older minor, check the API or configuration key in the installed package before using it, follow the "
+    "project and say which rules do not apply."
 )
 
 ALLOWED_KEYS = {"name", "description", "metadata"}
@@ -545,7 +547,7 @@ def check_stray_skill_files(report: Report) -> None:
             report.error(path, 1, "SKILL.md outside skills/<name>/ is discovered and installed as a skill; remove or rename it")
 
 
-# --------------------------------------------------------------------------- STACK.md parity
+# --------------------------------------------------------------------------- STACK.md package blocks
 
 
 def fenced_block_after(path: Path, heading_re: str) -> tuple[str, int] | None:
@@ -554,8 +556,8 @@ def fenced_block_after(path: Path, heading_re: str) -> tuple[str, int] | None:
     start = next((i for i, ln in enumerate(lines) if re.match(heading_re, ln)), None)
     if start is None:
         return None
-    open_idx = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("```")), None)
-    if open_idx is None:
+    open_idx = next((i for i in range(start + 1, len(lines)) if lines[i].startswith(("```", "#"))), None)
+    if open_idx is None or lines[open_idx].startswith("#"):
         return None
     close_idx = next((i for i in range(open_idx + 1, len(lines)) if lines[i].startswith("```")), None)
     if close_idx is None:
@@ -563,86 +565,92 @@ def fenced_block_after(path: Path, heading_re: str) -> tuple[str, int] | None:
     return "\n".join(lines[open_idx + 1 : close_idx]), open_idx + 2
 
 
-def check_package_parity(report: Report) -> None:
-    if not STACK.is_file():
-        report.error(STACK, 1, "STACK.md is missing; it is the source of truth the scaffold package.json is checked against")
-        return
-    block = fenced_block_after(STACK, r"^##\s+package\.json\s*$")
+def range_block(report: Report, heading: str) -> tuple[dict[str, dict[str, str]], Callable[[str], int]] | None:
+    """A STACK.md JSON block of major ranges (`"26"`, `"0.55"`) by dependency key; errors go to the report."""
+    block = fenced_block_after(STACK, rf"^##\s+{re.escape(heading)}\s*$")
     if block is None:
-        report.error(STACK, 1, "no fenced JSON block under '## package.json'")
-        return
+        report.error(STACK, 1, f"no fenced JSON block under '## {heading}'")
+        return None
     text, line0 = block
     try:
-        want = json.loads(text)
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
-        report.error(STACK, line0 + exc.lineno - 1, f"the '## package.json' block is not valid JSON: {exc.msg}")
-        return
-    if not SCAFFOLD_PACKAGE.is_file():
-        report.error(SCAFFOLD_PACKAGE, 1, "scaffold package.json is missing; it must mirror STACK.md's '## package.json' block")
-        return
-    try:
-        got = json.loads(SCAFFOLD_PACKAGE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        report.error(SCAFFOLD_PACKAGE, exc.lineno, f"not valid JSON: {exc.msg}")
-        return
-    for key in PINNED_PACKAGE_KEYS:
-        w, g = want.get(key), got.get(key)
-        if w is None:
-            report.error(STACK, line0, f"the '## package.json' block has no {key!r}")
-        elif w != g:
-            report.error(SCAFFOLD_PACKAGE, 1, f"{key} differs from STACK.md: {describe_drift(w, g)}")
-
-
-def check_addon_block(report: Report) -> None:
-    """STACK.md's `## Add-on packages`: exact pins for packages the scaffold does not install."""
-    if not STACK.is_file():
-        return
-    block = fenced_block_after(STACK, r"^##\s+Add-on packages\s*$")
-    if block is None:
-        report.error(STACK, 1, "no fenced JSON block under '## Add-on packages' (the snippet check installs it)")
-        return
-    text, line0 = block
-    try:
-        addons = json.loads(text)
-    except json.JSONDecodeError as exc:
-        report.error(STACK, line0 + exc.lineno - 1, f"the '## Add-on packages' block is not valid JSON: {exc.msg}")
-        return
-    if not isinstance(addons, dict):
-        report.error(STACK, line0, "the '## Add-on packages' block must be a JSON object")
-        return
-    baseline: set[str] = set()
-    package_block = fenced_block_after(STACK, r"^##\s+package\.json\s*$")
-    try:
-        baseline_json = json.loads(package_block[0]) if package_block else {}
-        baseline = {name for key in ADDON_KEYS for name in baseline_json.get(key, {})}
-    except json.JSONDecodeError:
-        pass  # check_package_parity reports it
+        report.error(STACK, line0 + exc.lineno - 1, f"the '## {heading}' block is not valid JSON: {exc.msg}")
+        return None
+    if not isinstance(data, dict):
+        report.error(STACK, line0, f"the '## {heading}' block must be a JSON object")
+        return None
     lines = text.splitlines()
 
     def line_of(name: str) -> int:
         return line0 + next((i for i, ln in enumerate(lines) if f'"{name}"' in ln), 0)
 
-    for key in sorted(addons.keys() - set(ADDON_KEYS)):
-        report.error(STACK, line_of(key), f"'## Add-on packages' may hold only {' and '.join(ADDON_KEYS)}, not {key!r}")
+    ranges: dict[str, dict[str, str]] = {}
+    for key in sorted(data.keys() - set(ADDON_KEYS)):
+        report.error(STACK, line_of(key), f"'## {heading}' may hold only {' and '.join(ADDON_KEYS)}, not {key!r}")
     for key in ADDON_KEYS:
-        packages = addons.get(key, {})
+        packages = data.get(key, {})
         if not isinstance(packages, dict):
-            report.error(STACK, line_of(key), f"'## Add-on packages' {key} must map package names to versions")
+            report.error(STACK, line_of(key), f"'## {heading}' {key} must map package names to major ranges")
             continue
+        ranges[key] = {}
         for name, version in packages.items():
+            if isinstance(version, str) and MAJOR_RANGE_RE.match(version):
+                ranges[key][name] = version
+            else:
+                report.error(STACK, line_of(name), f'{name}: {json.dumps(version)} is not a major range such as "26" or "0.55"')
+    return ranges, line_of
+
+
+def major_of(version: str) -> str:
+    """`19.3.1` -> `19`, `0.5.11` -> `0.5`: the part a release within the range keeps."""
+    major, minor = version.split(".")[:2]
+    return f"0.{minor}" if major == "0" else major
+
+
+def check_scaffold_packages(report: Report) -> None:
+    """The scaffold's package.json is readable, pins pnpm and Node, and its dependencies are STACK.md's picks at their majors."""
+    package = scaffold_package()
+    if not package:
+        report.error(SCAFFOLD_PACKAGE, 1, "missing or not a valid JSON object; it holds the exact versions every gate ran on")
+        return
+    engines = package.get("devEngines")
+    for key, name in (("packageManager", "pnpm"), ("runtime", "node")):
+        entry = engines.get(key) if isinstance(engines, dict) else None
+        if not (isinstance(entry, dict) and entry.get("name") == name):
+            report.error(SCAFFOLD_PACKAGE, 1, f"devEngines.{key} must name {name}")
+        elif not (isinstance(entry.get("version"), str) and EXACT_VERSION_RE.match(entry["version"])):
+            report.error(SCAFFOLD_PACKAGE, 1, f"devEngines.{key} needs an exact version")
+    if not STACK.is_file() or (parsed := range_block(report, "Scaffold packages")) is None:
+        return
+    ranges, line_of = parsed
+    for key, wanted in ranges.items():
+        got = package.get(key, {})
+        if not isinstance(got, dict):
+            report.error(SCAFFOLD_PACKAGE, 1, f"{key} must map package names to versions")
+            continue
+        for name in sorted(got.keys() - wanted.keys()):
+            report.error(SCAFFOLD_PACKAGE, 1, f"{key} {name} is not in STACK.md's '## Scaffold packages'; record the pick there first")
+        for name in sorted(wanted.keys() - got.keys()):
+            report.error(STACK, line_of(name), f"{name} is not in the scaffold's {key}")
+        for name in sorted(wanted.keys() & got.keys()):
+            version = got[name]
             if not (isinstance(version, str) and EXACT_VERSION_RE.match(version)):
-                report.error(STACK, line_of(name), f"add-on {name}: {json.dumps(version)} is not an exact version")
-            if name in baseline:
-                report.error(STACK, line_of(name), f"add-on {name} is already in the '## package.json' block")
+                report.error(SCAFFOLD_PACKAGE, 1, f"{key} {name}: {json.dumps(version)} is not an exact version")
+            elif major_of(version) != wanted[name]:
+                report.error(SCAFFOLD_PACKAGE, 1, f"{key} {name} {version} is outside STACK.md's range {json.dumps(wanted[name])}; a new major is recorded there first")
 
 
-def describe_drift(want: object, got: object) -> str:
-    if not (isinstance(want, dict) and isinstance(got, dict)):
-        return f"STACK.md {json.dumps(want)} vs scaffold {json.dumps(got)}"
-    parts = [f"{k} only in STACK.md" for k in sorted(want.keys() - got.keys())]
-    parts += [f"{k} only in the scaffold" for k in sorted(got.keys() - want.keys())]
-    parts += [f"{k}: STACK.md {json.dumps(want[k])}, scaffold {json.dumps(got[k])}" for k in sorted(want.keys() & got.keys()) if want[k] != got[k]]
-    return "; ".join(parts)
+def check_addon_block(report: Report) -> None:
+    """STACK.md's `## Add-on packages`: major ranges for packages the scaffold does not install."""
+    if not STACK.is_file() or (parsed := range_block(report, "Add-on packages")) is None:
+        return
+    ranges, line_of = parsed
+    package = scaffold_package()
+    baseline = {name for key in ADDON_KEYS if isinstance(package.get(key), dict) for name in package[key]}
+    for packages in ranges.values():
+        for name in sorted(packages.keys() & baseline):
+            report.error(STACK, line_of(name), f"add-on {name} is already in the scaffold's package.json")
 
 
 def rejected_terms() -> list[tuple[re.Pattern[str], str]]:
@@ -754,47 +762,34 @@ ENGINE_VERSION_RE = re.compile(rf"\b(pnpm|node)[_-]version\b[\"']?\s*[:=]\s*[\"'
 NAME_KEY_RE = re.compile(r"""["']?name["']?\s*:\s*["']?([@\w./-]+)["']?""")
 VERSION_KEY_RE = re.compile(rf"""["']?version["']?\s*:\s*["']?[\^~]?v?{SEMVER}""")
 VERSION_HINT_RE = re.compile(r"\d\.\d+\.\d")
-# Images whose tag STACK.md pins (its container-images line); the template's three and the add-ons' services.
+# Pinned images: the template's three (node follows devEngines, playwright follows @playwright/test) and the add-ons' services.
 IMAGES = ("playwright", "node", "caddy", "keycloak", "centrifugo")
 # `node:26.13.1-trixie-slim`, or a digest pin with the tag in a comment: `node@sha256:<hex> # 26.13.1-trixie-slim`.
 IMAGE_TAG_RE = re.compile(rf"\b({'|'.join(IMAGES)})(?::|@sha256:[0-9a-f]+[ \t]*#[ \t]*)v?{SEMVER}")
-# Prose names of pinned packages: `TanStack Query 5.108.0` is a copy of the @tanstack/react-query pin.
-DISPLAY_NAMES = {
-    "tanstack query": "@tanstack/react-query",
-    "tanstack router": "@tanstack/react-router",
-    "tanstack form": "@tanstack/react-form",
-    "tanstack table": "@tanstack/react-table",
-    "tailwind css": "tailwindcss",
-    "tailwind": "tailwindcss",
-    "base ui": "@base-ui/react",
-    "biome": "@biomejs/biome",
-    "jest-dom": "@testing-library/jest-dom",
-    "user-event": "@testing-library/user-event",
-    "react compiler": "babel-plugin-react-compiler",
-}
+
+
+def scaffold_package() -> dict:
+    """The scaffold's package.json, or {} when it is missing or not valid JSON."""
+    try:
+        data = json.loads(SCAFFOLD_PACKAGE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def stack_pins() -> dict[str, str]:
-    """Exact versions from STACK.md's two JSON blocks, plus `node`, `pnpm` and the image tags."""
+    """What stays exact: `pnpm` and `node` from the scaffold's `devEngines`, the Playwright image (equal to
+    `@playwright/test`), and the image tags on STACK.md's container-images line."""
     pins: dict[str, str] = {}
-    for heading in (r"^##\s+package\.json\s*$", r"^##\s+Add-on packages\s*$"):
-        block = fenced_block_after(STACK, heading) if STACK.is_file() else None
-        try:
-            data = json.loads(block[0]) if block else {}
-        except json.JSONDecodeError:
-            continue  # check_package_parity and check_addon_block report it
-        if not isinstance(data, dict):
-            continue
-        for key in ADDON_KEYS:
-            packages = data.get(key, {})
-            if isinstance(packages, dict):
-                pins.update({k: v for k, v in packages.items() if isinstance(v, str) and EXACT_VERSION_RE.match(v)})
-        engines = data.get("devEngines", {})
-        for key, alias in (("packageManager", "pnpm"), ("runtime", "node")):
-            if isinstance(engines, dict) and isinstance(engines.get(key), dict) and isinstance(engines[key].get("version"), str):
-                pins[alias] = engines[key]["version"]
-    if "@playwright/test" in pins:
-        pins["playwright"] = pins["@playwright/test"]
+    package = scaffold_package()
+    engines = package.get("devEngines", {})
+    for key, alias in (("packageManager", "pnpm"), ("runtime", "node")):
+        version = engines.get(key, {}).get("version") if isinstance(engines, dict) and isinstance(engines.get(key), dict) else None
+        if isinstance(version, str) and EXACT_VERSION_RE.match(version):
+            pins[alias] = version
+    dev = package.get("devDependencies")
+    if isinstance(dev, dict) and isinstance(playwright := dev.get("@playwright/test"), str) and EXACT_VERSION_RE.match(playwright):
+        pins["playwright"] = pins["@playwright/test"] = playwright
     text = STACK.read_text(encoding="utf-8") if STACK.is_file() else ""
     for image in ("caddy", "keycloak", "centrifugo"):
         if m := re.search(rf"`(?:[\w.-]+/)*{image}:v?(\d+\.\d+\.\d+)", text):
@@ -802,27 +797,42 @@ def stack_pins() -> dict[str, str]:
     return pins
 
 
+def stack_package_names() -> set[str]:
+    """Every package name in STACK.md's `## Scaffold packages` and `## Add-on packages` blocks; empty when unreadable."""
+    names: set[str] = set()
+    for heading in ("Scaffold packages", "Add-on packages"):
+        block = fenced_block_after(STACK, rf"^##\s+{heading}\s*$") if STACK.is_file() else None
+        try:
+            data = json.loads(block[0]) if block else {}
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            names |= {name for key in ADDON_KEYS if isinstance(data.get(key), dict) for name in data[key]}
+    return names
+
+
 def pin_names(pins: dict[str, str]) -> str:
-    names = [*pins, *(d for d, n in DISPLAY_NAMES.items() if n in pins)]
-    return "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    return "|".join(re.escape(n) for n in sorted(pins, key=len, reverse=True))
 
 
 def pin_pattern(pins: dict[str, str]) -> re.Pattern[str]:
-    """`"name": "^x.y.z"`, `name: x.y.z`, `name@~x.y.z`, `name x.y.z` in prose and `| name | x.y.z |`, for every pinned or display name."""
+    """`"name": "^x.y.z"`, `name: x.y.z`, `name@~x.y.z`, `name x.y.z` in prose and `| name | x.y.z |`, for every pinned name."""
     return re.compile(rf"(?<![\w@/.-])[\"'`]?({pin_names(pins)})[\"'`]?(?:\s*:\s*[\"']?|@|[ \t\u00a0]+|[ \t]*\|[ \t]*`?)[\^~]?v?{SEMVER}", re.IGNORECASE)
 
 
 def canonical(name: str) -> str:
-    return DISPLAY_NAMES.get(name.lower(), name.lower())
+    return name.lower()
 
 
 def check_version_copies(report: Report) -> None:
-    """Every exact version of a STACK.md package or image written anywhere under skills/ equals the pin."""
+    """Every copy under skills/ of what stays exact (pnpm, Node, the images) equals the pin."""
     pins = stack_pins()
     if not pins:
-        return  # check_package_parity and check_addon_block report the unreadable blocks
+        return
     pattern = pin_pattern(pins)
     names = pin_names(pins)
+    others = "|".join(re.escape(n) for n in sorted(stack_package_names() - set(pins), key=len, reverse=True))
+    package_version = re.compile(rf"(?<![\w@/.-])[\"'`]?(?:{others})[\"'`]?(?:\s*:\s*[\"']?|@|[ \t\u00a0]+)[\^~]?v?{SEMVER}") if others else None
     # A name that ends a line and a version that starts the next one: `vite` / `8.2.0`, `"vite":` / `"8.2.0"`.
     trailing_name = re.compile(rf"(?<![\w@/.-])[\"'`]?({names})[\"'`]?\s*:?\s*$", re.IGNORECASE)
     leading_version = re.compile(rf"^\s*[\"'`]?[\^~]?v?{SEMVER}")
@@ -862,11 +872,13 @@ def check_version_copies(report: Report) -> None:
                 # A bare `switches to 12.21.0` or `prints v26.13.1` after the word pnpm or node in the same sentence,
                 # same major, unclaimed; `node is replaced. Keycloak 26.4.0` is another product.
                 claimed = {version for _, version in found}
+                if package_version:
+                    claimed |= {m.group(1) for m in package_version.finditer(before + " " + text)}
                 joined = before + " " + text
                 for alias in ("pnpm", "node"):
                     major = pins.get(alias, "").split(".")[0]
                     if major:
-                        bare = rf"\b{alias}\b(?:[^|\n.]|\.(?!\s)){{0,40}}?(?<![\d.])v?({major}\.\d+\.\d+)(?![\w.]*\d)"
+                        bare = rf"(?<![\w/.-]){alias}\b(?:[^|\n.]|\.(?!\s)){{0,40}}?(?<![\d.])v?({major}\.\d+\.\d+)(?![\w.]*\d)"
                         found += [
                             (alias, m.group(1))
                             for m in re.finditer(bare, joined, re.IGNORECASE)
@@ -874,7 +886,7 @@ def check_version_copies(report: Report) -> None:
                         ]
                 for name, version in dict.fromkeys(found):
                     if name in pins and version != pins[name]:
-                        report.error(path, idx, f"stale version: {name} {version}, but STACK.md pins {pins[name]}")
+                        report.error(path, idx, f"stale version: {name} {version}, but the pin is {pins[name]}")
 
 
 # --------------------------------------------------------------------------- browser floor
@@ -1009,7 +1021,7 @@ def main() -> int:
     for name in sorted(EXPECTED_SKILLS - {d.name for d in skill_dirs}):
         (report.error if args.strict else report.warn)(SKILLS / name, 1, f"skill {name!r} from AGENTS.md does not exist yet")
     check_stray_skill_files(report)
-    check_package_parity(report)
+    check_scaffold_packages(report)
     check_addon_block(report)
     check_manifest_versions(report)
     check_version_copies(report)

@@ -5,10 +5,10 @@
     "email": "denysmoskalenko11@gmail.com"
   },
   "description": "Opinionated Vite, React, TypeScript, TanStack Router and Query, orval, Tailwind and Base UI, Biome, Vitest, Playwright, and pnpm engineering skills for client-rendered SPAs",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "metadata": {
     "description": "Opinionated Vite, React, TypeScript, TanStack Router and Query, orval, Tailwind and Base UI, Biome, Vitest, Playwright, and pnpm engineering skills for client-rendered SPAs",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {

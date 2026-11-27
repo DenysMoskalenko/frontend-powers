@@ -821,7 +821,7 @@ function notifications(response: ServerResponse) {
 }
 ```
 
-## Facts checked at the pinned versions
+## Facts and the versions they were checked on
 
 | Fact | Version |
 | --- | --- |

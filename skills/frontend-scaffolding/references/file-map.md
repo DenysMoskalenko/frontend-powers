@@ -17,7 +17,7 @@ replaces it; the full list is under [The users example](#the-users-example).
 
 | File | What it is | Owner |
 | --- | --- | --- |
-| `package.json` | scripts, `devEngines` (pnpm 12.22.0, Node 26.13.1), exact pins | `frontend-tooling` |
+| `package.json` | scripts, `devEngines` (pnpm 12.22.0, Node 26.13.1), exact versions: the tested baseline that step 9 moves within each major | `frontend-tooling` |
 | `pnpm-lock.yaml` | the tested dependency set; committed | `frontend-tooling` |
 | `pnpm-workspace.yaml` | release cooldown, `saveExact`, trust policy, `allowBuilds`, skill permissions | `frontend-tooling` |
 | `tsconfig.json` | the one TypeScript config, `@/*` paths | `frontend-tooling` |

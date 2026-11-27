@@ -2,14 +2,14 @@
 name: frontend-deploy
 description: "Use when deploying the SPA or changing its CSP and security headers: an environment variable or PUBLIC_* origin, import.meta.env, 'is not set' or 'is not a bare origin', deploy/headers.ts, Cache-Control, 'TrustedHTML' assignment or 'violates the following Content Security Policy directive', analytics or third-party scripts, wrangler.jsonc, Caddy Dockerfile, source maps, vite:preloadError, error tracking with Faro, innerHTML, postMessage, user-supplied URLs. Not for vite.config.ts or CI jobs (frontend-tooling), style-injecting libraries (tailwind-base-ui), auth tokens (keycloak-spa-auth), or CSP semantics (modern-web-guidance)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Configuring, serving and securing the built app
 
 Assumes Vite 8.3, React 19.3, zod 4.6, wrangler 4.165, Caddy 2.11, @grafana/faro-web-sdk 2.14.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 CSP directive semantics, Trusted Types policy mechanics and HTML sanitization belong to `modern-web-guidance`. If that skill is available, load it before changing a directive. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules.
 

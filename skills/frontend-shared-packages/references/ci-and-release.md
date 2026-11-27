@@ -253,10 +253,10 @@ the patch. A named catalog of ranges publishes a range for peers, while `devDepe
 catalogs:
   # Published peer ranges: the caret of the default catalog's version, moved in the same change.
   peers:
-    "@base-ui/react": ^1.9.0
-    react: ^19.3.1
-    react-dom: ^19.3.1
-    zod: ^4.6.7
+    "@base-ui/react": ^<catalog version>
+    react: ^<catalog version>
+    react-dom: ^<catalog version>
+    zod: ^<catalog version>
 ```
 
 ```json
@@ -264,8 +264,8 @@ catalogs:
 "devDependencies": { "react": "catalog:", "react-dom": "catalog:" }
 ```
 
-The packed manifest then reads `"react": "^19.3.1"` under `peerDependencies` and `"19.3.1"` under
-`devDependencies`. A major upgrade left out of `peers` fails `pnpm peers check`; a minor one does
+The packed manifest then reads `"react": "^<version>"` under `peerDependencies` and `"<version>"`
+under `devDependencies`. A major upgrade left out of `peers` fails `pnpm peers check`; a minor one does
 not, so move both lines in the same change. Each published package replaces `"private": true` with `"version": "0.1.0"` and adds its `files`
 line. The scope map alone routes `pnpm publish`; no `publishConfig.registry` is needed. `knip.json`
 gains `"ignoreBinaries": ["change"]`: knip reads the CI files and reports `pnpm change check` as

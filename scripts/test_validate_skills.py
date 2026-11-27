@@ -62,16 +62,10 @@ def first_reference(c: Path) -> Path:
     return sorted((c / FORMS / "references").glob("*.md"))[0].relative_to(c)
 
 
-def stack_block(c: Path, heading: str) -> dict:
-    text = read(c, "STACK.md")
-    return json.loads(re.search(rf"^## {re.escape(heading)}\s*$.*?```json\n(.*?)```", text, re.MULTILINE | re.DOTALL).group(1))
-
-
 def pin(c: Path, name: str) -> str:
-    block = stack_block(c, "package.json")
-    if name in ("pnpm", "node"):
-        return block["devEngines"]["packageManager" if name == "pnpm" else "runtime"]["version"]
-    return {**block["dependencies"], **block["devDependencies"]}[name]
+    """The `devEngines` pin of pnpm or node in the scaffold's package.json."""
+    engines = json.loads(read(c, SCAFFOLD / "package.json"))["devEngines"]
+    return engines["packageManager" if name == "pnpm" else "runtime"]["version"]
 
 
 def set_versions(c: Path, version: str) -> None:
@@ -238,23 +232,41 @@ case(
     lambda c: write(c, ".codex-plugin/plugin.json", json.dumps({**(m := json.loads(read(c, ".codex-plugin/plugin.json"))), "interface": {**m["interface"], "shortDescription": "x" * 40}}, indent=2) + "\n"),
     r"interface.shortDescription is 40 chars",
 )
-case("stack_parity_dependencies", lambda c: sub(c, SCAFFOLD / "package.json", r'("zod": ")[^"]+"', r'\g<1>0.0.1"'), r"package.json:1: ERROR: dependencies differs from STACK.md: zod")
-case("stack_parity_dev_engines", lambda c: sub(c, SCAFFOLD / "package.json", r'("runtime": \{\s*"name": "node",\s*"version": ")[^"]+"', r'\g<1>0.0.1"'), r"devEngines differs from STACK.md")
-case("addon_exact_version", lambda c: sub(c, "STACK.md", r'("keycloak-js": ")([^"]+)"', r'\1^\2"'), r"add-on keycloak-js: \"\^[\d.]+\" is not an exact version")
-case("addon_not_in_baseline", lambda c: sub(c, "STACK.md", r'("keycloak-js": "[^"]+",)', r'\1\n    "zod": "4.0.0",'), r"add-on zod is already in the '## package.json' block")
+case("addon_exact_version", lambda c: sub(c, "STACK.md", r'("keycloak-js": ")([^"]+)"', r'\g<1>26.2.5"'), r"keycloak-js: \"26\.2\.5\" is not a major range")
+case("addon_caret_range", lambda c: sub(c, "STACK.md", r'("keycloak-js": ")([^"]+)"', r'\1^\2"'), r"keycloak-js: \"\^\d+\" is not a major range")
+case("addon_zero_major", lambda c: sub(c, "STACK.md", r'("virtua": ")([^"]+)"', r'\g<1>0"'), r"virtua: \"0\" is not a major range")
+case("addon_malformed_json", lambda c: sub(c, "STACK.md", r'("keycloak-js": "[^"]+",)', r'\1,'), r"the '## Add-on packages' block is not valid JSON")
+case("scaffold_new_dependency", lambda c: sub(c, SCAFFOLD / "package.json", r'("devDependencies": \{)', r'\1\n    "left-pad": "1.3.0",'), r"package.json:1: ERROR: devDependencies left-pad is not in STACK.md's '## Scaffold packages'")
+case("scaffold_new_major", lambda c: sub(c, SCAFFOLD / "package.json", r'("vite": ")[^"]+"', r'\g<1>99.0.0"'), r"devDependencies vite 99\.0\.0 is outside STACK.md's range \"\d+\"")
+case("scaffold_range_in_package_json", lambda c: sub(c, SCAFFOLD / "package.json", r'("zod": ")([^"]+)"', r'\1^\2"'), r"dependencies zod: \"\^[\d.]+\" is not an exact version")
+case("scaffold_pick_missing_from_scaffold", lambda c: sub(c, "STACK.md", r'("zod": "\d+")', r'\1,\n    "left-pad": "1"'), r"STACK\.md:\d+: ERROR: left-pad is not in the scaffold's dependencies")
+case("scaffold_package_invalid_json", lambda c: sub(c, SCAFFOLD / "package.json", r'("dependencies": \{)', r"\1,"), r"package.json:1: ERROR: missing or not a valid JSON object")
+case("scaffold_dev_engines_without_version", lambda c: sub(c, SCAFFOLD / "package.json", r'("name": "pnpm",\s*)"version": "[^"]+",', r"\1"), r"devEngines.packageManager needs an exact version")
+case("addon_zero_zero_range", lambda c: sub(c, "STACK.md", r'("virtua": ")([^"]+)"', r'\g<1>0.0"'), r"virtua: \"0\.0\" is not a major range")
+case("range_block_missing", lambda c: sub(c, "STACK.md", r"(## Scaffold packages\n(?:.*\n)*?)```json\n(?:.*\n)*?```\n", r"\1"), r"STACK\.md:1: ERROR: no fenced JSON block under '## Scaffold packages'")
+case("range_block_not_object", lambda c: sub(c, "STACK.md", r"(## Add-on packages\n(?:.*\n)*?```json\n)(?:.*\n)*?```\n", r"\1[]\n```\n"), r"the '## Add-on packages' block must be a JSON object")
+case("range_block_unknown_key", lambda c: sub(c, "STACK.md", r'(## Add-on packages\n(?:.*\n)*?```json\n\{)', r'\1\n  "peerDependencies": {},'), r"'## Add-on packages' may hold only dependencies and devDependencies, not 'peerDependencies'")
+case("range_block_not_a_map", lambda c: sub(c, "STACK.md", r'(## Add-on packages\n(?:.*\n)*?\s*)"devDependencies": \{[^}]*\}', r'\1"devDependencies": "x"'), r"'## Add-on packages' devDependencies must map package names to major ranges")
+case("scaffold_zero_major_out_of_range", lambda c: sub(c, SCAFFOLD / "package.json", r'("@j178/prek": ")[^"]+"', r'\g<1>0.99.0"'), r"devDependencies @j178/prek 0\.99\.0 is outside STACK.md's range \"0\.\d+\"")
+case("scaffold_dev_engines_wrong_name", lambda c: sub(c, SCAFFOLD / "package.json", r'"name": "pnpm",', r'"name": "npm",'), r"devEngines.packageManager must name pnpm")
+case("scaffold_runtime_without_version", lambda c: sub(c, SCAFFOLD / "package.json", r'("name": "node",\s*)"version": "[^"]+",', r"\1"), r"devEngines.runtime needs an exact version")
+case("scaffold_dev_engines_wildcard", lambda c: sub(c, SCAFFOLD / "package.json", r'("name": "pnpm",\s*"version": ")[^"]+"', r'\g<1>*"'), r"devEngines.packageManager needs an exact version")
+case("addon_not_in_baseline", lambda c: sub(c, "STACK.md", r'("keycloak-js": "[^"]+",)', r'\1\n    "zod": "4",'), r"add-on zod is already in the scaffold's package.json")
 
-# Copies of pinned versions under skills/
-STALE = r"{file}:{line}: ERROR: stale version: {name} 0\.0\.1, but STACK.md pins \d"
+# Copies of what stays exact (pnpm, node, images) under skills/
+STALE = r"{file}:{line}: ERROR: stale version: {name} 0\.0\.1, but the pin is \d"
 
 
 def stale(name: str, line: str = r"\d+") -> str:
     return STALE.format(file=r"references/[\w.-]+\.md", line=line, name=re.escape(name))
 
 
-case("pin_copy_json", lambda c: append(c, first_reference(c), '\n```json\n{ "msw": "0.0.1" }\n```\n'), stale("msw"))
-case("pin_copy_yaml_catalog", lambda c: append(c, first_reference(c), "\n```yaml\ncatalog:\n  msw: 0.0.1\n  '@tanstack/react-query': 0.0.1\n```\n"), stale("msw") + "|" + stale("@tanstack/react-query"))
-case("pin_copy_at_version", lambda c: append(c, first_reference(c), "\nRun `pnpm add @tanstack/react-query@0.0.1`.\n"), stale("@tanstack/react-query"))
-case("pin_copy_prose", lambda c: append(c, first_reference(c), "\nMeasured with MSW 0.0.1.\n"), stale("msw"))
+case("pin_copy_prose", lambda c: append(c, first_reference(c), "\nMeasured with pnpm 0.0.1.\n"), stale("pnpm"))
+case("package_version_in_prose_allowed", lambda c: append(c, first_reference(c), "\nMeasured with MSW 0.0.1 and `pnpm add @tanstack/react-query@0.0.1`.\n"), r"stale version: (msw|@tanstack)", present=False)
+case("types_node_is_not_node", lambda c: append(c, first_reference(c), f'\n```json\n{{ "@types/node": "{pin(c, "node").split(".")[0]}.0.1" }}\n```\n'), r"stale version: node", present=False)
+case("package_version_near_node_allowed", lambda c: append(c, first_reference(c), f"\nWith Node, keycloak-js {pin(c, 'node').split('.')[0]}.2.5 works.\n"), r"stale version: node", present=False)
+case("pin_copy_scoped_pnpm_package", lambda c: append(c, first_reference(c), f"\nRun `npm i -g @pnpm/exe@{pin(c, 'pnpm').split('.')[0]}.0.1`.\n"), r"stale version: pnpm \d+\.0\.1")
+case("pin_copy_playwright_package", lambda c: append(c, first_reference(c), "\nRun `pnpm add -D @playwright/test@0.0.1`.\n"), stale("@playwright/test"))
 case("pin_copy_pnpm_bootstrap", lambda c: append(c, first_reference(c), "\n```dockerfile\nRUN npm install --global pnpm@0.0.1\n```\n"), stale("pnpm"))
 case("pin_copy_pnpm_variable", lambda c: append(c, first_reference(c), "\n```yaml\nvariables:\n  PNPM_VERSION: 0.0.1\n```\n"), stale("pnpm"))
 case("pin_copy_node_image", lambda c: append(c, first_reference(c), "\n```yaml\nimage: node:0.0.1-trixie-slim\n```\n"), stale("node"))
@@ -268,19 +280,18 @@ case(
 case(
     "pin_copy_bare_engine_version",
     lambda c: append(c, first_reference(c), f"\nAfter the install pnpm switches to {pin(c, 'pnpm').split('.')[0]}.0.1.\n"),
-    r"references/[\w.-]+\.md:\d+: ERROR: stale version: pnpm \d+\.0\.1, but STACK.md pins",
+    r"references/[\w.-]+\.md:\d+: ERROR: stale version: pnpm \d+\.0\.1, but the pin is",
 )
-case("pin_copy_table_cell", lambda c: append(c, first_reference(c), "\n| `msw` | 0.0.1 |\n"), stale("msw"))
-case("pin_copy_display_name", lambda c: append(c, first_reference(c), "\nMeasured on TanStack Query 0.0.1.\n"), stale("@tanstack/react-query"))
-case("pin_copy_caret_range", lambda c: append(c, first_reference(c), '\n```json\n{ "msw": "^0.0.1" }\n```\n'), stale("msw"))
-case("pin_copy_yaml_name_version", lambda c: append(c, first_reference(c), "\n```yaml\n- name: msw\n  version: 0.0.1\n```\n"), stale("msw"))
-case("pin_copy_line_break", lambda c: append(c, first_reference(c), "\nThe handlers were measured with MSW\n0.0.1 on a laptop.\n"), stale("msw"))
-case("pin_copy_split_json", lambda c: append(c, first_reference(c), '\n```json\n{\n  "msw":\n    "0.0.1"\n}\n```\n'), stale("msw"))
+case("pin_copy_table_cell", lambda c: append(c, first_reference(c), "\n| `pnpm` | 0.0.1 |\n"), stale("pnpm"))
+case("pin_copy_caret_range", lambda c: append(c, first_reference(c), '\n```json\n{ "pnpm": "^0.0.1" }\n```\n'), stale("pnpm"))
+case("pin_copy_split_json", lambda c: append(c, first_reference(c), '\n```json\n{\n  "pnpm":\n    "0.0.1"\n}\n```\n'), stale("pnpm"))
+case("pin_copy_yaml_name_version", lambda c: append(c, first_reference(c), "\n```yaml\n- name: pnpm\n  version: 0.0.1\n```\n"), stale("pnpm"))
+case("pin_copy_line_break", lambda c: append(c, first_reference(c), "\nThe install was measured with pnpm\n0.0.1 on a laptop.\n"), stale("pnpm"))
 case("pin_copy_service_image", lambda c: append(c, first_reference(c), "\n```yaml\nimage: quay.io/keycloak/keycloak:0.0.1\n```\n"), stale("keycloak"))
 case(
     "pin_copy_bare_engine_version_wrapped",
     lambda c: append(c, first_reference(c), f"\nAfter the install pnpm switches\nto {pin(c, 'pnpm').split('.')[0]}.0.1.\n"),
-    r"references/[\w.-]+\.md:\d+: ERROR: stale version: pnpm \d+\.0\.1, but STACK.md pins",
+    r"references/[\w.-]+\.md:\d+: ERROR: stale version: pnpm \d+\.0\.1, but the pin is",
 )
 case(
     "pin_copy_other_product_near_node_allowed",
@@ -294,24 +305,17 @@ case(
     r"stale version: pnpm",
     present=False,
 )
-case(
-    "pin_copy_malformed_stack_json",
-    lambda c: sub(c, "STACK.md", r'("dependencies": \{)', r"\1,"),
-    r"STACK\.md:\d+: ERROR: the '## package.json' block is not valid JSON",
-)
-case("pin_copy_prior_version_first_cell_allowed", lambda c: append(c, first_reference(c), "\n## Prior-version notes\n\n| `msw@0.0.1` | current |\n"), r"stale version: msw 0\.0\.1", present=False)
-case("pin_copy_prior_version_current_cell", lambda c: append(c, first_reference(c), "\n## Prior-version notes\n\n| old | `msw@0.0.1` |\n"), stale("msw"))
-case("pin_copy_equal_to_pin_allowed", lambda c: append(c, first_reference(c), f'\n```json\n{{ "msw": "{pin(c, "msw")}" }}\n```\n'), r"frontend-forms/references/[\w.-]+:\d+: ERROR: stale version: msw", present=False)
+case("pin_copy_prior_version_first_cell_allowed", lambda c: append(c, first_reference(c), "\n## Prior-version notes\n\n| `pnpm@0.0.1` | current |\n"), r"stale version: pnpm 0\.0\.1", present=False)
+case("pin_copy_prior_version_current_cell", lambda c: append(c, first_reference(c), "\n## Prior-version notes\n\n| old | `pnpm@0.0.1` |\n"), stale("pnpm"))
+case("pin_copy_equal_to_pin_allowed", lambda c: append(c, first_reference(c), f"\nRun `npm install --global pnpm@{pin(c, 'pnpm')}`.\n"), r"frontend-forms/references/[\w.-]+:\d+: ERROR: stale version: pnpm", present=False)
 
 
 def bump_pin_by_the_book(c: Path) -> None:
-    """H1 finding 1: the pin moves in STACK.md and the scaffold, every other copy is left behind."""
-    old = pin(c, "msw")
-    for rel in ("STACK.md", SCAFFOLD / "package.json"):
-        sub(c, rel, rf'"msw": "{re.escape(old)}"', '"msw": "99.0.0"')
+    """H1 finding 1: the pin moves in the scaffold's devEngines, every other copy is left behind."""
+    sub(c, SCAFFOLD / "package.json", rf'("name": "pnpm",\s*"version": "){re.escape(pin(c, "pnpm"))}"', r'\g<1>99.0.0"')
 
 
-case("pin_bump_lists_stale_copies", bump_pin_by_the_book, r"skills/(?!frontend-scaffolding/assets/app/package\.json)\S+:\d+: ERROR: stale version: msw [\d.]+, but STACK.md pins 99\.0\.0")
+case("pin_bump_lists_stale_copies", bump_pin_by_the_book, r"skills/(?!frontend-scaffolding/assets/app/package\.json)\S+:\d+: ERROR: stale version: pnpm [\d.]+, but the pin is 99\.0\.0")
 
 # Browser floor
 FLOOR = r"{file}:{line}: ERROR: stale browser floor: {found}, but STACK.md states chrome\d+"

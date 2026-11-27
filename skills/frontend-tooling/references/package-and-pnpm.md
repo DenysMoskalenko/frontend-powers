@@ -1,7 +1,8 @@
 # package.json, pnpm-workspace.yaml and dependency procedures
 
-Both files verbatim, identical to the scaffold's, then the procedures and the exact pnpm 12.22
-messages. In an existing project merge only the entries a change needs into its own files.
+Both files as the scaffold ships them (`package.json` without `dependencies` and
+`devDependencies`), then the procedures and the exact pnpm 12.22 messages. In an existing project merge only the entries a
+change needs into its own files.
 
 ## Contents
 
@@ -47,50 +48,15 @@ messages. In an existing project merge only the entries a change needs into its 
       "version": "26.13.1",
       "onFail": "download"
     }
-  },
-  "dependencies": {
-    "@base-ui/react": "1.9.0",
-    "@tanstack/react-form": "1.33.5",
-    "@tanstack/react-query": "5.108.0",
-    "@tanstack/react-router": "1.170.46",
-    "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "zod": "4.6.7"
-  },
-  "devDependencies": {
-    "@axe-core/playwright": "4.14.0",
-    "@babel/core": "8.1.2",
-    "@biomejs/biome": "2.6.8",
-    "@faker-js/faker": "10.6.0",
-    "@j178/prek": "0.5.11",
-    "@playwright/test": "1.65.1",
-    "@rolldown/plugin-babel": "0.3.1",
-    "@tailwindcss/vite": "4.3.5",
-    "@tanstack/router-plugin": "1.169.0",
-    "@testing-library/dom": "10.4.2",
-    "@testing-library/jest-dom": "8.0.0",
-    "@testing-library/react": "16.3.3",
-    "@testing-library/user-event": "14.6.13",
-    "@types/node": "26.6.6",
-    "@types/react": "19.3.0",
-    "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "6.3.0",
-    "@vitest/coverage-v8": "5.1.1",
-    "babel-plugin-react-compiler": "1.0.0",
-    "jsdom": "31.0.1",
-    "knip": "6.46.1",
-    "msw": "3.0.7",
-    "orval": "8.48.0",
-    "tailwindcss": "4.3.5",
-    "typescript": "7.0.2",
-    "vite": "8.3.8",
-    "vitest": "5.1.1",
-    "wrangler": "4.165.0"
   }
 }
 ```
 
-- Every version is exact. Build tools sit in `devDependencies`; nothing is published, so the
+- `dependencies` and `devDependencies` follow, every version exact: the scaffold's are the tested
+  baseline, and a new app moves each within its major
+  (`frontend-scaffolding`). Runtime: `@base-ui/react`, `@tanstack/react-form`,
+  `@tanstack/react-query`, `@tanstack/react-router`, `react`, `react-dom`, `zod`. Every build and
+  test tool is in `devDependencies`, listed in the scaffold's file; nothing is published, so the
   split only documents what reaches the bundle.
 - `devEngines` pins both pnpm and Node with `onFail: "download"`: a pnpm of any 12.x switches to
   12.22.0 and installs Node 26.13.1 into `node_modules`, locked with integrity in
@@ -157,6 +123,7 @@ ignored, which is worse.
 | Upgrade one package | `pnpm update <pkg> --latest` | Writes the new exact version and moves the lockfile. |
 | Upgrade Vitest | `pnpm update vitest @vitest/coverage-v8 --latest` | The two move together, at the same version. |
 | Upgrade Biome | `pnpm update @biomejs/biome --latest`, then `pnpm exec biome migrate --write` | Rewrites renamed keys; nursery rules can change in a minor. |
+| Upgrade orval | `pnpm update orval --latest`, then `pnpm api:generate` | A newer orval can rewrite the generated client; commit it in the same change, or CI fails on the drift. |
 | Upgrade Playwright | `pnpm update @playwright/test --latest` | Change both CI files' Playwright image, digest and tag comment, to the same version in the same commit. |
 
 `saveExact` applies only to a bare name: `pnpm add pkg@3` or `pkg@^3` writes `^3.0.6`, `pkg@~3.0`
@@ -298,9 +265,9 @@ interactive terminal`.
 
 ## Bumping pnpm or Node
 
-`pnpm outdated` never lists the two `devEngines` pins. On every audit compare them by hand:
-`pnpm view pnpm time --json` for the newest pnpm 12 past the cooldown, and
-`https://nodejs.org/dist/index.json` for the newest release of the pinned Node LTS line.
+`pnpm outdated` lists both pins, as `pnpm (dev)` and `node (dev)`. `pnpm view pnpm time --json`
+and `https://nodejs.org/dist/index.json` give the release dates: take the newest pnpm 12 past the
+cooldown and the newest release of the pinned Node LTS line.
 
 Edit `devEngines` in `package.json` and run `pnpm install`, which locks the new runtime. Then
 change the same pnpm version in `.gitlab-ci.yml` (`PNPM_VERSION`) and in the Dockerfile's

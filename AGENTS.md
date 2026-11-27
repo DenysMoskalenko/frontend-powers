@@ -7,8 +7,9 @@ client-rendered Vite SPA in TypeScript and React that talks to OpenAPI backends.
 shipped artifact is the `skills/` tree; everything else exists to keep those skills accurate,
 portable, and installable in Claude Code, Codex, and Cursor.
 
-`STACK.md` is the single source of truth for versions and library choices. It is not a skill
-and is never quoted from inside one. python-powers and rust-powers are the sibling projects
+`STACK.md` is the single source of truth for library choices and the major of each; the exact
+tested versions live only in the scaffold's `package.json` and `pnpm-lock.yaml`. It is not a
+skill and is never quoted from inside one. python-powers and rust-powers are the sibling projects
 for the backends this frontend calls.
 
 ## The Skills
@@ -113,7 +114,7 @@ them to change. Every skill except the greenfield `frontend-scaffolding` carries
 paragraph verbatim after its version pin, as one unwrapped line of plain text (no blockquote
 marker), before the first `## ` heading:
 
-> Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+> Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 **What earns a place in `## Important` and Red Flags.** A failure that reproduces on a model
 the skills support: an eval case where the skill makes a difference, or a recorded incident.
@@ -163,7 +164,8 @@ writing a variant.
 
 **Ownership.** Exclusive. Cross-reference a sibling by name, never by repeating its rules.
 The one deliberate exception is `frontend-tooling`, which repeats config file contents
-inline, equal to the scaffold's, so it is readable without opening the scaffold.
+inline, equal to the scaffold's (`package.json` without `dependencies` and `devDependencies`), so
+it is readable without opening the scaffold.
 
 **No repository plumbing inside skills.** A skill is read inside somebody else's project,
 where the verify copy, this repository's `scripts/`, `evals/`, `make validate`,
@@ -223,21 +225,20 @@ no indented `ts` or `tsx` fence, every file a `## References` index names exists
 such as `.DS_Store` are ignored), no repository plumbing and no out-of-stack terms in skill
 text or in the template's `AGENTS.md` and `README.md`, the scope block, equal versions in
 every plugin manifest, no `SKILL.md` outside `skills/*/`, no build output inside `skills/`,
-that the `dependencies`, `devDependencies` and `devEngines` of
-`skills/frontend-scaffolding/assets/app/package.json` still match STACK.md's
-`## package.json` block, and that every exact version of a pinned package written anywhere
-under `skills/` equals its pin. That last check reads the names in STACK.md's
-`## package.json` and `## Add-on packages` blocks, and a few display names (`TanStack Query`,
-`Tailwind CSS`, `Biome`, `Base UI`, `jest-dom`), and finds `"<name>": "x.y.z"`,
-`<name>: x.y.z`, `<name>@x.y.z`, `<name> x.y.z`, a `^` or `~` range, a table row
-`| <name> | x.y.z |`, a YAML `name:` with its `version:`, and a name that ends one line with
-the version starting the next; the `devEngines` pnpm and Node versions as `pnpm@`, `node:<v>`,
-`PNPM_VERSION:`, a `devEngines` copy, or a bare version after the word pnpm or node in the
-same sentence; and the image tags on STACK.md's container-images line (Playwright against
-`@playwright/test`, Caddy, and the add-ons' Keycloak and Centrifugo services), as `<image>:<tag>`
-or a digest pin with the tag in a comment. It skips `pnpm-lock.yaml` and the first cell of a
-row under a `Prior-version` heading, and reports `file:line`, the name, the version found and
-the pin. A malformed JSON block in STACK.md is reported as such and skips this check. It also
+that the scaffold's `package.json` parses, pins pnpm and Node exactly in `devEngines`, and lists
+exactly the packages of STACK.md's `## Scaffold packages`, each an exact version inside its range,
+that every entry there and in `## Add-on packages` is a major range (`"26"`, or `"0.55"` for a
+`0.x` package), that no add-on is already in the scaffold, and that every copy under
+`skills/` of what stays exact equals its pin. Those are the scaffold's `devEngines` pnpm and Node
+versions, found as `pnpm@`, `pnpm <x.y.z>`, `node:<v>`, `PNPM_VERSION:`, a `devEngines` copy, a
+table row `| pnpm | x.y.z |`, a YAML `name:` with its `version:`, or a bare version after the
+word pnpm or node in the same sentence; and the image tags (Playwright against the scaffold's
+`@playwright/test`, Caddy, and the add-ons' Keycloak and Centrifugo services against STACK.md's
+container-images line), as `<image>:<tag>` or a digest pin with the tag in a comment. Package
+versions are not checked: skill text names majors, and a version noted where a fact was measured
+(`on i18next 27.2.2`) is a record, not a pin. The check skips `pnpm-lock.yaml` and the first cell
+of a row under a `Prior-version` heading, and reports `file:line`, the name, the version found
+and the pin. It also
 checks the browser floor: STACK.md states it as one `build.target` list
 (`["chrome125", "edge125", "firefox128", "safari17.5"]`), and every `chrome<N>`, `edge<N>`,
 `firefox<N>`, `safari<N.N>` or `ios<N.N>` token in any file under `skills/` (the template's
@@ -267,8 +268,8 @@ written once. Generated file names are kebab-case and
 a test block becomes a `*.test.ts(x)` file, as the scaffold's lint rules require; a snippet
 that imports a package in neither `package.json` nor the add-on block cannot be verified.
 Snippets must already be formatted as Biome formats them; a formatting failure prints the
-diff. The install is reused while the scaffold's `package.json`, lockfile and workspace
-file and the add-on block are unchanged. On failure it prints
+diff. `node_modules/` is reused while the scaffold's `package.json`, lockfile and workspace
+file and the add-on block are unchanged; the add-on ranges resolve again once per run, as in CI. On failure it prints
 which `skill/file.md:line` the failing file came from. `--dry-run` extracts and summarizes
 without installing; `--skip-tests` stops after Biome; `--only <skill>...` checks only those
 skills' snippets; `--verify-dir <dir>` uses another directory, so agents working on
@@ -324,38 +325,42 @@ scaffold's own hook file and installs `node_modules/` inside `skills/`.
 
 ## Versions
 
-`STACK.md` is the single source of truth; every other copy of a version follows it. To bump a
-dependency, a runtime or an image:
+`STACK.md` records each pick and its major (`## Scaffold packages`, `## Add-on packages`); a
+skill's version-pin line names the major and the minor it was checked on (`Assumes Vite 8.3`; a
+newer minor is expected) and never an exact package version. The exact versions live in the
+scaffold's `package.json` and `pnpm-lock.yaml`: the baseline every gate ran on, which a new app
+moves within each major (`frontend-scaffolding` step 9). Exact by design: the `devEngines` pnpm
+and Node, container images (tag and digest), the Playwright image equal to `@playwright/test`,
+and CI actions by commit SHA. The validator checks every copy of the pnpm, Node,
+`@playwright/test` and image-tag versions; digests and SHAs are checked by hand. At a version
+audit:
 
-1. **Find the version.** Take the newest release older than the three-day cooldown
+1. **Find the versions.** Take the newest release older than the three-day cooldown
    (`minimumReleaseAge` in the scaffold's `pnpm-workspace.yaml`). In a copy of the scaffold
-   outside the repository, `pnpm outdated --long` lists the packages. Add-on packages are not
-   installed there: `pnpm view <package> time --json` for each name in `## Add-on packages`.
-   `pnpm outdated` does not list the `devEngines` pins either: read `npm view pnpm time --json` for pnpm and
-   `https://nodejs.org/dist/index.json` for Node. Container images: the tag on its registry and
-   the digest it resolves to now (`docker buildx imagetools inspect <image>:<tag>`).
-2. **Edit `STACK.md`.** The `## package.json` block (or `## Add-on packages` for a package the
-   scaffold does not install), the container-images line under it, and any prose in that file
-   that names the old version.
-3. **Mirror into the template.** Edit `skills/frontend-scaffolding/assets/app/package.json` to
-   match, copy the template to a directory outside the repository, run `pnpm install` there,
-   and copy its `pnpm-lock.yaml` back. Never run pnpm inside `skills/`. An image moves, tag and
-   digest together, in the template's `Dockerfile` (`<image>:<tag>@sha256:<digest>`) and its
-   `.github/workflows/ci.yml` and `.gitlab-ci.yml` (`<image>@sha256:<digest> # <tag>`); the
-   add-ons' service images (Keycloak, Centrifugo) move in `keycloak-spa-auth`'s and
-   `frontend-realtime`'s end-to-end references, in the same two forms.
-4. **Update every other copy.** Run `python3 scripts/validate_skills.py`: it lists every stale
-   copy under `skills/` as `file:line`, with the name, the version found and the pin, and
-   fails until none is left. The usual places: `frontend-tooling`'s references (a verbatim
-   `package.json`, the CI files, the bootstrap line), `frontend-shared-packages`' catalog and
-   CI references, `frontend-deploy`'s container reference, `frontend-scaffolding`'s `SKILL.md`
-   and `file-map.md`, and each skill's version-pin line. The check sees exact `x.y.z`
-   versions only: a two-part pin line (`Assumes zod 4.6`) and a digest are yours to check;
-   `grep -rn <old digest> skills/` lists every copy of a digest, including one that moved
-   under an unchanged tag.
-5. **An add-on pin** has no lockfile: the snippet run installs it on top of the template's
-   lockfile, and pnpm refuses a release younger than the cooldown there
-   (`ERR_PNPM_NO_MATURE_MATCHING_VERSION`), so a too-new pin fails `make snippets`.
+   outside the repository, `pnpm outdated --long` lists the packages and both `devEngines` pins
+   (`pnpm (dev)`, `node (dev)`). Add-on packages are not
+   installed there: `pnpm view <package> time --json` shows whether a new major exists.
+   Container images: the tag on its registry and the digest it resolves to now
+   (`docker buildx imagetools inspect <image>:<tag>`).
+2. **Move the template.** In that copy, `pnpm update --latest <names>` (a new major only after
+   step 5), then `pnpm api:generate` when orval moved; copy `package.json`, `pnpm-lock.yaml` and
+   `src/api/generated/` back. Never run pnpm inside `skills/`. A `devEngines` bump edits
+   `package.json` by hand and runs `pnpm install`. An image moves, tag and digest together, in
+   the template's `Dockerfile` (`<image>:<tag>@sha256:<digest>`) and its
+   `.github/workflows/ci.yml` and `.gitlab-ci.yml` (`<image>@sha256:<digest> # <tag>`), and on
+   STACK.md's container-images line; the add-ons' service images (Keycloak, Centrifugo) move in
+   `keycloak-spa-auth`'s and `frontend-realtime`'s end-to-end references, in the same two forms.
+3. **Update every copy of an exact pin.** Run `python3 scripts/validate_skills.py`: it lists
+   every stale copy of the pnpm, Node and image versions under `skills/` as `file:line`, with
+   the version found and the pin, and fails until none is left. A digest is yours to check:
+   `grep -rn <old digest> skills/` lists every copy, including one that moved under an
+   unchanged tag.
+4. **An add-on** has no lockfile: the snippet run resolves its range to the newest release past
+   the cooldown on top of the template's lockfile, so a release inside the range that breaks a
+   snippet fails `make snippets`. Fix the skill.
+5. **A new major or library** is a decision recorded in STACK.md first (the One Pick table and
+   its range in `## Scaffold packages` or `## Add-on packages`), adopted only after the template
+   gate and the snippet run pass on it.
 6. **Teach the change.** If the new version changes an API a skill teaches, update that
    skill's version-pin line and add a row to its prior-version correction table in the same
    commit.

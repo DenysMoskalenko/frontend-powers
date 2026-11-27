@@ -7,12 +7,12 @@ AI-assisted changes come out predictable. It is not for Next.js, server renderin
 components: the app is static files served with a strict Content Security Policy.
 
 The shipped artifact is [`skills/`](skills/): fourteen Markdown guides an agent loads per domain.
-[`STACK.md`](STACK.md) is the single source of truth for every version and library choice,
+[`STACK.md`](STACK.md) is the single source of truth for every library choice and its major,
 including the rejected alternatives.
 
 ## The Stack
 
-| Package | Pinned | Role |
+| Package | Tested with | Role |
 | --- | --- | --- |
 | Node, pnpm | 26.13, 12.22 | runtime and package manager, pinned in `devEngines` |
 | TypeScript | 7.0 | the native compiler, one strict `tsconfig.json` |
@@ -26,8 +26,10 @@ including the rejected alternatives.
 | Vitest, MSW, Playwright | 5.1, 3.0, 1.65 | route integration tests and end-to-end tests |
 | wrangler, Caddy | 4.165, 2.11 | Cloudflare static assets, or a container on `scratch` |
 
-Add-ons pinned in STACK.md and added only when needed, such as keycloak-js, i18next with
-react-i18next, `centrifuge` and `eventsource-parser`, Grafana Faro, zustand, virtua, TanStack Table.
+A new app starts on the template's tested versions and moves every package whose newest release
+past the three-day cooldown keeps its major to that release. Add-ons are listed in STACK.md by the major
+the skills were checked on and added only when needed, such as keycloak-js, i18next with react-i18next, `centrifuge` and
+`eventsource-parser`, Grafana Faro, zustand, virtua, TanStack Table.
 
 ## What's Inside
 
@@ -187,7 +189,7 @@ document, and the scaffold's `openapi.json` mirrors the `users` API of the rust-
 ## Repository Layout
 
 - `skills/` - the fourteen shipped skills; `skills/frontend-scaffolding/assets/app/` is the template.
-- `STACK.md` - versions, library choices and rejected alternatives.
+- `STACK.md` - library choices and their majors, and rejected alternatives.
 - `AGENTS.md` (symlinked as `CLAUDE.md`) - house conventions and the checklist for changing a skill.
 - `evals/` - per-skill triggering cases, evals and probes ([format](evals/README.md)).
 - `scripts/` - the validator and its tests, the snippet checker and the eval tooling.
@@ -201,7 +203,7 @@ document, and the scaffold's `openapi.json` mirrors the `users` API of the rust-
 
 ```bash
 make check            # everything CI's check job runs; green here predicts a green pull request
-make validate         # validate_skills.py --strict --base $(BASE): house rules, STACK.md parity, stale version and browser-floor copies, version bumps
+make validate         # validate_skills.py --strict --base $(BASE): house rules, scaffold and add-on majors, stale pnpm, Node, image and browser-floor copies, version bumps
 make test-scripts     # seeds a violation per validator check into a temporary copy and asserts the error
 make lint             # prek whitespace, JSON and YAML hooks
 make plugin-validate  # claude plugin validate --strict . (skipped with a notice when claude is not installed)

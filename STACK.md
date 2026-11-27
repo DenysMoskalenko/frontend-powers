@@ -13,13 +13,20 @@ build behind the generated headers, in the `chromium` and `phone` projects), and
 container. The audit gate (`pnpm audit --prod --audit-level=high`, `pnpm audit signatures`) last
 ran on 22 November.
 
-Version policy: exact pins, the newest release older than the three-day cooldown on the day of an
-audit. A new major is adopted only after the scaffold gate and the snippet run pass on it.
-`pnpm outdated` reports neither the `devEngines` pins nor the container images, so every audit
-checks them by hand: `npm view pnpm time`, the Node release index, Caddy's releases, the Playwright
-image tag equal to `@playwright/test`, and each image's digest resolved again from its tag. A
-security release of pnpm itself is taken at the next audit once it is past the cooldown: nothing
-else reports it. The browser floor moves at the same audit (see Build).
+Version policy: exact versions live only in the scaffold's `package.json` and `pnpm-lock.yaml`, the
+baseline every gate above ran on; this file and the skills name a package by its major (and the
+minor a skill's API needs). A new app moves every package whose newest release past the three-day
+cooldown keeps its major to that release (`frontend-scaffolding`); an add-on takes the newest release when the app
+first adds it, and a major above its skill's version-pin line is checked against the installed
+package first (the skills' scope block). A new major is adopted here only after the scaffold gate
+and the snippet run pass on it.
+Exact by design, because they must not float: the `devEngines` pnpm and Node, the container images
+(tag and digest), the Playwright image equal to `@playwright/test`, and CI actions by commit SHA.
+`pnpm outdated` lists both `devEngines` pins (`pnpm (dev)`, `node (dev)`) but not the images, so
+every audit checks those by hand: Caddy's releases, the Playwright image tag equal to
+`@playwright/test`, and each image's digest resolved again from its tag. A security release of pnpm
+itself is taken at the next audit once it is past the cooldown. The browser floor moves at the same
+audit (see Build).
 
 ## One Pick Per Concern
 
@@ -603,66 +610,61 @@ Left out on purpose, so a missing rule here is a decision, not an omission:
 - **Print styles**: not covered; Tailwind's `print:` variant is available.
 - **Server rendering** of any kind: the app is static files under a strict CSP.
 
-## package.json
+## Scaffold packages
 
-The scaffold's `devEngines`, `dependencies` and `devDependencies`. The validator fails when this
-block and `skills/frontend-scaffolding/assets/app/package.json` differ.
+The scaffold's dependencies by major (for a `0.x` package, its minor). The exact versions are the
+scaffold's `package.json` and `pnpm-lock.yaml`; the validator fails when a scaffold dependency is
+missing here, missing there, or outside its range, so a new library or major is recorded here
+first.
 
 ```json
 {
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "12.22.0",
-      "onFail": "download"
-    },
-    "runtime": {
-      "name": "node",
-      "version": "26.13.1",
-      "onFail": "download"
-    }
-  },
   "dependencies": {
-    "@base-ui/react": "1.9.0",
-    "@tanstack/react-form": "1.33.5",
-    "@tanstack/react-query": "5.108.0",
-    "@tanstack/react-router": "1.170.46",
-    "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "zod": "4.6.7"
+    "@base-ui/react": "1",
+    "@tanstack/react-form": "1",
+    "@tanstack/react-query": "5",
+    "@tanstack/react-router": "1",
+    "react": "19",
+    "react-dom": "19",
+    "zod": "4"
   },
   "devDependencies": {
-    "@axe-core/playwright": "4.14.0",
-    "@babel/core": "8.1.2",
-    "@biomejs/biome": "2.6.8",
-    "@faker-js/faker": "10.6.0",
-    "@j178/prek": "0.5.11",
-    "@playwright/test": "1.65.1",
-    "@rolldown/plugin-babel": "0.3.1",
-    "@tailwindcss/vite": "4.3.5",
-    "@tanstack/router-plugin": "1.169.0",
-    "@testing-library/dom": "10.4.2",
-    "@testing-library/jest-dom": "8.0.0",
-    "@testing-library/react": "16.3.3",
-    "@testing-library/user-event": "14.6.13",
-    "@types/node": "26.6.6",
-    "@types/react": "19.3.0",
-    "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "6.3.0",
-    "@vitest/coverage-v8": "5.1.1",
-    "babel-plugin-react-compiler": "1.0.0",
-    "jsdom": "31.0.1",
-    "knip": "6.46.1",
-    "msw": "3.0.7",
-    "orval": "8.48.0",
-    "tailwindcss": "4.3.5",
-    "typescript": "7.0.2",
-    "vite": "8.3.8",
-    "vitest": "5.1.1",
-    "wrangler": "4.165.0"
+    "@axe-core/playwright": "4",
+    "@babel/core": "8",
+    "@biomejs/biome": "2",
+    "@faker-js/faker": "10",
+    "@j178/prek": "0.5",
+    "@playwright/test": "1",
+    "@rolldown/plugin-babel": "0.3",
+    "@tailwindcss/vite": "4",
+    "@tanstack/router-plugin": "1",
+    "@testing-library/dom": "10",
+    "@testing-library/jest-dom": "8",
+    "@testing-library/react": "16",
+    "@testing-library/user-event": "14",
+    "@types/node": "26",
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "@vitejs/plugin-react": "6",
+    "@vitest/coverage-v8": "5",
+    "babel-plugin-react-compiler": "1",
+    "jsdom": "31",
+    "knip": "6",
+    "msw": "3",
+    "orval": "8",
+    "tailwindcss": "4",
+    "typescript": "7",
+    "vite": "8",
+    "vitest": "5",
+    "wrangler": "4"
   }
 }
 ```
+
+## Exact pins
+
+What stays exact, and the validator checks every copy under `skills/`: the `devEngines` pnpm and
+Node and the Playwright image, against the scaffold's `package.json`, and the images below.
 
 Container images: `node:26.13.1-trixie-slim` (build stage), `caddy:2.11.9-alpine` (binary source),
 both pinned by digest in the scaffold's `Dockerfile`; `mcr.microsoft.com/playwright:v1.65.1-noble`
@@ -672,27 +674,28 @@ digest where the skills show them: `quay.io/keycloak/keycloak:26.8.2`,
 
 ## Add-on packages
 
-Not in the scaffold. The snippet check adds them to its copy of the scaffold so that snippets in the
-add-on skills compile; an app adds each one when it first needs it.
+Not in the scaffold. Each is a major range (for a `0.x` package, its minor): the snippet check
+resolves the newest release past the cooldown within it on top of the scaffold's lockfile, as an
+app does when it first adds the package.
 
 ```json
 {
   "dependencies": {
-    "@grafana/faro-web-sdk": "2.14.0",
-    "@grafana/faro-web-tracing": "2.14.0",
-    "@tanstack/react-table": "9.3.1",
-    "centrifuge": "5.8.0",
-    "eventsource-parser": "4.1.3",
-    "i18next": "27.2.2",
-    "keycloak-js": "26.2.5",
-    "lucide-react": "1.76.0",
-    "oidc-client-ts": "3.5.0",
-    "react-i18next": "18.0.3",
-    "virtua": "0.55.0",
-    "zustand": "5.1.0"
+    "@grafana/faro-web-sdk": "2",
+    "@grafana/faro-web-tracing": "2",
+    "@tanstack/react-table": "9",
+    "centrifuge": "5",
+    "eventsource-parser": "4",
+    "i18next": "27",
+    "keycloak-js": "26",
+    "lucide-react": "1",
+    "oidc-client-ts": "3",
+    "react-i18next": "18",
+    "virtua": "0.55",
+    "zustand": "5"
   },
   "devDependencies": {
-    "i18next-cli": "1.91.2"
+    "i18next-cli": "1"
   }
 }
 ```

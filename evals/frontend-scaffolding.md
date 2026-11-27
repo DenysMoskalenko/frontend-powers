@@ -39,12 +39,13 @@
 - `PUBLIC_API_ORIGIN=http://localhost:8080` in `.env.development`.
 - `pnpm check`, then `pnpm build` with `PUBLIC_API_ORIGIN` exported, then `pnpm test:e2e`, run before any feature code.
 - A first commit that includes `pnpm-lock.yaml`.
+- After that commit, `pnpm outdated`, then one `pnpm update --latest` naming only the packages whose Latest keeps the major of Current (without the `pnpm` and `node` `devEngines` pins and `@playwright/test`), `pnpm exec biome migrate --write` and `pnpm api:generate`, `pnpm dedupe`, the gate again with coverage, `pnpm dedupe --check` and the audit, and a second commit when any package moved; any package left on a higher major named in the report.
 
 **Must not produce**:
 
 - `pnpm create vite` or any other generator as the starting point.
 - A `package.json`, `vite.config.ts`, `biome.json`, Dockerfile or CI file written from scratch instead of copied.
-- Caret or tilde version ranges, or an upgrade of the template's versions.
+- Caret or tilde version ranges, an upgrade to a new major, or `pnpm update --latest` with no package names.
 - A `prepare` script that installs the hooks.
 - A `.sh` file the user is told to save and run for the copy and rename.
 
@@ -166,7 +167,9 @@
 
 **Fixture**: empty
 
-**Wrong answer**: `^(?:(?!git\s+commit)[\s\S])*?(?:^|\n)\s*(?:\$\s*)?pnpm\s+(?:-r\s+|--recursive\s+)?(?:up|update|upgrade)\b[^\n]*?\s(?:--latest|-L)\b|(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?::\s*"\^\d)`
+**Wrong answer**: `(?<!(?:^|\n)[^\x60\n]*(?:\x60[^\x60\n]*\x60[^\x60\n]*)*\x60[^\x60\n]*)(?::\s*"\^\d)|(?:^|\n)\s*(?:\$\s*)?pnpm\s+(?:-r\s+|--recursive\s+)?(?:up|update|upgrade)\s+(?:--latest|-L)\s*(?:$|\n|&&|;|#)`
+
+**Right answer**: `pnpm\s+outdated`
 
 ### Probe 5 - hooks without a repository
 

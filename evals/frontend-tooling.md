@@ -292,3 +292,13 @@
 **Fixture**: scaffold
 
 **Wrong answer**: `(?:^|\n)\s*(?:\$\s*)?(?:git\s+)?rm\s+(?:-f\s+)?\.npmrc\b`
+
+### Probe 12 - upgrading orval
+
+**Prompt**: "Upgrade orval in our app to the newest release."
+
+**Fixture**: scaffold
+
+**Wrong answer**: `(?:^|\n)\s*(?:\$\s*)?pnpm\s+(?:add|update|up)\b[^\n]*\borval@[\^~]`
+
+**Right answer**: `pnpm\s+api:generate`

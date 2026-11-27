@@ -2,14 +2,14 @@
 name: frontend-forms
 description: "Use when building or fixing a create or edit form: TanStack Form useAppForm, createFormHook bound fields, revalidateLogic, a zod schema from api.zod.ts as validator, mutateAsync in onSubmit, a 422's or 409's fieldErrors, a form in steps, a dirty-form leave guard, number, select, date, file or array fields, a one-field FormData form. Not for mutation options or invalidation (tanstack-query-api), field wrapper styling (tailwind-base-ui), form tests (frontend-testing), or autocomplete tokens (modern-web-guidance)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Forms with TanStack Form, zod and Base UI Field
 
 Assumes @tanstack/react-form 1.33, zod 4.6, @base-ui/react 1.9, @tanstack/react-query 5.108, @tanstack/react-router 1.170.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 Form UX (labels, error copy, unsaved-changes wording) belongs to `web-design-guidelines`; input types and autofill tokens belong to `modern-web-guidance`. If either skill is available, load it before designing a form's fields and copy. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules.
 

@@ -1,7 +1,7 @@
 {
   "name": "frontend-powers",
   "displayName": "Frontend Powers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Opinionated playbook of fourteen engineering skills for client-rendered Vite SPAs in TypeScript and React: TanStack Router and Query, orval, Tailwind and Base UI, Biome, Vitest, Playwright, pnpm, Keycloak auth, i18n, realtime, static deploy, shared packages, and greenfield scaffolding.",
   "author": {
     "name": "Denys Moskalenko",

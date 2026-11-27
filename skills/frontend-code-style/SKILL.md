@@ -2,14 +2,14 @@
 name: frontend-code-style
 description: "Use when writing, refactoring or reviewing any .ts or .tsx file in a React SPA, alongside the domain skill: TypeScript 7 errors TS2375, TS2379, TS1294, TS1484, TS4114 or TS18048, replacing enum or forwardRef, React 19 APIs (ref as a prop, use), the React Compiler and useMemo, Error subclasses, reportError, console or lint findings, default exports, dates and money. Not for tsconfig or Biome settings (frontend-tooling), file placement (frontend-project-structure) or render-performance rules (vercel-react-best-practices)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Frontend Code Style
 
 Assumes TypeScript 7.0, React 19.3, babel-plugin-react-compiler 1.0, Biome 2.6.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 Render-performance and re-render rules belong to `vercel-react-best-practices`, component API design to `vercel-composition-patterns`, and native web-platform APIs to `modern-web-guidance`. If one of these skills is available, load it before changing that kind of code. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules. Where a third-party rule and this stack disagree, `references/third-party-precedence.md` decides.
 

@@ -2,14 +2,14 @@
 name: frontend-project-structure
 description: "Use when creating a file or folder under src, moving code, adopting this standard in an existing app, deciding where a component, hook, helper, Context or zustand store goes, or fixing a boundaries.grit diagnostic such as A feature never imports another feature, or Import from another folder with the @/ alias, not ../ — feature and shared layers, barrels, kebab-case names, createAppRouter Wrap providers. Not for route options (tanstack-router-spa), biome.json (frontend-tooling) or workspace packages (frontend-shared-packages)."
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Project structure
 
 Assumes TypeScript 7.0, React 19.3, TanStack Router 1.170, Biome 2.6, zustand 5.1.
 
-Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another version of a package than the line above, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
+Names such as `apiFetch`, `ApiError`, `createAppRouter`, `renderRoute` and the `pnpm` scripts come from the frontend-scaffolding template. In a project built differently, read its own modules, helpers, scripts and libraries and use those (a helper with the same name may have another shape), and say so when it has no equivalent instead of adding one, or a package this skill assumes, unasked. Apply these rules to new code; when editing existing code, keep its public contract, structure and tuned configuration, even where a table below calls the pattern older, and report differences instead of rewriting, unless asked. The project's own plan and architecture documents win over this skill. If the project pins another major of a package than the line above, or an older minor, check the API or configuration key in the installed package before using it, follow the project and say which rules do not apply.
 
 Component API and composition patterns belong to `vercel-composition-patterns`. If that skill is available, load it before designing a component's props or splitting one into parts. If it is not installed, continue with this skill alone: do not ask the user to install it and do not reconstruct its rules. Image loading, `srcset` and formats belong to `modern-web-guidance` on the same terms.
 

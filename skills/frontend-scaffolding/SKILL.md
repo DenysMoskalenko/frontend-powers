@@ -2,7 +2,7 @@
 name: frontend-scaffolding
 description: "Use when creating a brand-new frontend from nothing: start, bootstrap or scaffold a new SPA, React app, admin panel, dashboard UI or web client for an OpenAPI backend in a directory without package.json. Copies a template with list, detail and form pages, Vitest, Biome, hooks, GitHub and GitLab CI, a container image and Cloudflare config, green from the first commit. Not for features in an existing app (frontend-project-structure), a second app (frontend-shared-packages) or tooling (frontend-tooling)."
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Frontend Scaffolding (Greenfield Only)
@@ -12,8 +12,8 @@ Assumes pnpm 12.22, Node 26.13, Vite 8.3, TypeScript 7.0, orval 8.48, Playwright
 ## Important
 
 - Copy `assets/app/` whole, dotfiles and `pnpm-lock.yaml` included. Never `pnpm create vite`, a
-  hand-written `package.json`, config file, Dockerfile or CI file, or a version range: its
-  exact versions and configs already pass together.
+  hand-written `package.json`, config file, Dockerfile or CI file, a version range or a version
+  from memory: its exact versions and configs pass together; step 9 moves them within majors.
 - Only into a new or empty directory (step 2). When the target already holds an app, stop and
   name the skill that applies.
 - The gate (step 7: `pnpm check`, the build, `pnpm test:e2e`) is green before any feature code. A
@@ -21,9 +21,10 @@ Assumes pnpm 12.22, Node 26.13, Vite 8.3, TypeScript 7.0, orval 8.48, Playwright
   a threshold.
 - Keep the `users` example until the first real list, detail and form compile, then delete it;
   never ship both.
-- Day one changes names, the API origin and the example domain only. Versions, lint rules, the
-  CSP and the folder layout stay as shipped until their owner in `references/file-map.md` changes
-  them; a new origin goes into `PUBLIC_ENV` through `frontend-deploy`.
+- Day one changes names, the API origin and the example domain only, and versions only within
+  their majors (step 9). Lint rules, the CSP and the folder layout stay as shipped until their
+  owner in `references/file-map.md` changes them; a new origin goes into `PUBLIC_ENV` through
+  `frontend-deploy`.
 
 ## References
 
@@ -149,6 +150,36 @@ git add -A . && git commit -m "Scaffold <name>"
 Run it in `<dest>`. `pnpm-lock.yaml`,
 `.env.development`, `src/routeTree.gen.ts` and `src/api/generated/` are committed by design.
 
+## 9. Move to newer releases within each major
+
+From `<dest>`, after step 8; stage nothing until the gate below is green.
+
+```bash
+pnpm outdated
+pnpm update --latest <names>
+pnpm dedupe
+pnpm exec biome migrate --write
+pnpm api:generate
+```
+
+`pnpm outdated` lists only releases past the three-day cooldown, and exits 1 when it lists any.
+`<names>` are the packages whose Latest keeps the major of Current (for `0.x`, the minor), all in
+one command, except `pnpm (dev)` and `node (dev)` (the `devEngines` pins) and `@playwright/test`
+(it equals the CI image tag). When none qualifies, skip to the report; never run `--latest`
+without names. A package whose Latest is a higher major stays as shipped, since these skills
+teach its current API: name it in the report. `biome migrate` and `api:generate` change nothing
+unless Biome or orval moved.
+
+Run step 7's gate again, with `pnpm test:coverage`, `pnpm dedupe --check` and
+`pnpm audit --prod --audit-level=high`. Green: `git add -A .`, and commit
+(`git commit -m "Update dependencies"`) only where step 8 committed. Red where step 7 was green:
+keep the failing output, restore the baseline, and report the package it names; step 9 may run
+again without that package.
+
+```bash
+cd <dest> && git checkout -- . && git clean -fd . && pnpm install --frozen-lockfile
+```
+
 ## In an existing repository
 
 When `<dest>` is a subdirectory of a repository:
@@ -162,7 +193,8 @@ When `<dest>` is a subdirectory of a repository:
 - `AGENTS.md`, `CLAUDE.md` and `.editorconfig` stay and apply to `<dest>` only; `.vscode/` applies
   when `<dest>` is opened as the workspace folder.
 - Stage `<dest>` (`git add -A .` from it) and the root CI file you merged, by path; never
-  `git add -A` at the root. Commit only when the user asked.
+  `git add -A` at the root. Commit only when the user asked; stage before step 9, whose rollback
+  restores what is staged.
 
 ## Connect the real backend
 
